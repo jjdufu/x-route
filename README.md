@@ -28,6 +28,7 @@
 | 📋 **[项目立项书 (PROPOSAL.md)](./docs/PROPOSAL.md)** | 项目背景、核心目标、交付物清单、里程碑规划（M1~M5）、验收标准与风险矩阵 |
 | 🔬 **[可行性分析与技术勘误报告 (FEASIBILITY_ANALYSIS.md)](./docs/FEASIBILITY_ANALYSIS.md)** | 针对前期方案讨论（会话 `6fe161ac`）的深度工程可行性评估与 **5 大致命技术陷阱勘误** |
 | 🏗️ **[系统架构与技术规范 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)** | 网络拓扑、策略路由表设计、热点动态接管机制、OpenWrt 精简编译配置与 SuKiSU 模块规范 |
+| 📘 **[部署、调试与日常使用手册 (USER_MANUAL.md)](./docs/USER_MANUAL.md)** | 刷入流程、SuKiSU WebUI 使用、本机 NAS 直通挂载、OpenVPN 双向组网及 Termux 调试指南 |
 | 💬 **[前期讨论原始记录](./docs/references/OnePlus13_OpenWrt_Discussion_6fe161ac.md)** | 会话 `6fe161ac-9313-4e63-85c2-0d313b1e5033` 原始技术讨论存档 |
 
 ---
@@ -63,10 +64,12 @@ x-route/
 │   ├── PROPOSAL.md                    # 项目立项书（背景、目标、里程碑、风险控制）
 │   ├── FEASIBILITY_ANALYSIS.md        # 深度可行性分析与原方案勘误报告
 │   ├── ARCHITECTURE.md                # 系统架构、网络拓扑与模块设计规范
+│   ├── USER_MANUAL.md                 # 部署、调试、NAS挂载与OpenVPN组网全流程手册
 │   └── references/
 │       └── OnePlus13_OpenWrt_Discussion_6fe161ac.md
 ├── openwrt-config/                    # ImmortalWrt ARM64 极简定制配置与补丁（M1 阶段交付）
 ├── module/                            # SuKiSU 模块源码（service.sh, action.sh, 网络与保活引擎，M2/M3 交付）
+│   ├── scripts/                       # 虚拟化管理、网络动态编排与四重内核保活守护脚本
 │   └── webroot/                       # SuKiSU 模块内置 WebUI 管理前端（M3 阶段交付）
 └── scripts/                           # 固件自动构建与模块打包脚本
 ```
@@ -77,7 +80,7 @@ x-route/
 
 - [x] **M0：技术调研、可行性论证与项目立项**（已完成）
 - [x] **M1：ImmortalWrt ARM64 极简固件定制与 Gunyah pVM 内核适配**（已完成）
-- [ ] **M2：SuKiSU 核心网络编排引擎（5G WAN 动态 NAT + 热点无感桥接 + 本机回流）**
-- [ ] **M3：SuKiSU WebUI 控制面板 + 四重内核级保活引擎 + NAS 目录直通**
-- [ ] **M4：OpenVPN 异地组网联调 + 旁路供电/温控/唤醒锁稳定性压测**
-- [ ] **M5：一键构建流水线（GitHub Actions）与完整实操手册发布**
+- [x] **M2：SuKiSU 核心网络编排引擎（5G WAN 动态 NAT + 热点无感桥接 + 本机回流）**（已完成）
+- [x] **M3：SuKiSU WebUI 控制面板 + 四重内核级保活引擎 + NAS 目录直通**（已完成）
+- [ ] **M4：OpenVPN 异地组网联调 + 旁路供电/温控/唤醒锁真机长稳压测**（待真机刷入实测）
+- [x] **M5：一键构建流水线（GitHub Actions）与完整实操手册发布**（已完成）

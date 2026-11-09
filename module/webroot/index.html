@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>x-route 随身软路由 & 内核保活控制台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">XR</div>
+      <div>
+        <h1>x-route 控制台</h1>
+        <p class="subtitle">OnePlus 13 · Gunyah/QEMU OpenWrt & 四重内核保活</p>
+      </div>
+    </div>
+    <span id="env-badge" class="badge badge-info">检测环境中...</span>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tab-dashboard">仪表盘</button>
+    <button class="tab-btn" data-tab="tab-keepalive">应用保活</button>
+    <button class="tab-btn" data-tab="tab-settings">路由与NAS配置</button>
+    <button class="tab-btn" data-tab="tab-logs">运行日志</button>
+  </nav>
+
+  <main class="container">
+    <!-- TAB 1: DASHBOARD -->
+    <section id="tab-dashboard" class="tab-panel active">
+      <div class="status-grid">
+        <div class="card status-card">
+          <div class="card-header">
+            <span class="card-title">OpenWrt 虚拟机</span>
+            <span id="vm-status-pill" class="pill pill-stopped">未运行</span>
+          </div>
+          <div class="metric-row">
+            <span>虚拟化引擎:</span>
+            <strong id="vm-backend-val">-</strong>
+          </div>
+          <div class="metric-row">
+            <span>PID / 资源:</span>
+            <strong id="vm-resource-val">-</strong>
+          </div>
+          <div class="metric-row">
+            <span>LAN 网关连通:</span>
+            <strong id="gw-online-val">-</strong>
+          </div>
+        </div>
+
+        <div class="card status-card">
+          <div class="card-header">
+            <span class="card-title">WAN / 热点网桥 / 回流</span>
+            <span id="net-status-pill" class="pill pill-stopped">待命</span>
+          </div>
+          <div class="metric-row">
+            <span>5G/4G WAN 出口:</span>
+            <strong id="wan-if-val">未检测</strong>
+          </div>
+          <div class="metric-row">
+            <span>Wi-Fi 热点桥接:</span>
+            <strong id="ap-if-val">未开启热点</strong>
+          </div>
+          <div class="metric-row">
+            <span>本机流量回流:</span>
+            <strong id="redirect-state-val">未启用</strong>
+          </div>
+          <div class="metric-row">
+            <span>LAN 下挂客户端:</span>
+            <strong id="lan-clients-val">0 台</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>快捷控制与后台入口</h3>
+        <div class="btn-grid">
+          <button id="btn-start-router" class="btn btn-primary">▶ 启动 / 重载软路由</button>
+          <button id="btn-stop-router" class="btn btn-danger">■ 停止软路由并还原网络</button>
+          <button id="btn-sync-net" class="btn btn-secondary">↻ 立即同步 WAN 与热点网桥</button>
+          <button id="btn-toggle-redirect" class="btn btn-secondary">⇄ 切换手机本机流量回流</button>
+        </div>
+        <div class="link-grid">
+          <a href="http://192.168.100.1" target="_blank" class="ext-link">
+            <span>🌐 打开 OpenWrt LuCI 后台</span>
+            <code>http://192.168.100.1</code>
+          </a>
+          <a href="http://192.168.100.1:5244" target="_blank" class="ext-link">
+            <span>📂 打开 OpenList / Alist 私有云</span>
+            <code>http://192.168.100.1:5244</code>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: 4-LAYER KERNEL KEEP-ALIVE -->
+    <section id="tab-keepalive" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>四重内核级应用保活引擎</h3>
+            <p class="hint">Doze/网络白名单 + OOM(-1000)锁定 + Cgroup v2/Hans解冻与根组迁移 + 掉线静默复活</p>
+          </div>
+          <span id="ka-status-pill" class="pill pill-running">守护中</span>
+        </div>
+
+        <div class="form-row">
+          <label for="chk-keepalive-enabled">启用四重内核级后台保活守护</label>
+          <input type="checkbox" id="chk-keepalive-enabled" checked />
+        </div>
+
+        <div class="input-group">
+          <input type="text" id="input-new-pkg" placeholder="输入应用包名，例如 com.leohao.android.alistlite" />
+          <button id="btn-add-pkg" class="btn btn-primary">+ 添加保活</button>
+        </div>
+
+        <div class="toolbar-row">
+          <button id="btn-scan-pkgs" class="btn btn-secondary btn-sm">🔍 扫描手机已安装第三方应用选择添加</button>
+          <button id="btn-run-ka-now" class="btn btn-secondary btn-sm">⚡ 立即执行一次保活巡检</button>
+        </div>
+
+        <div id="installed-picker" class="pkg-picker hidden">
+          <div class="picker-header">
+            <strong>点击勾选要加入保活的已安装应用：</strong>
+            <button id="btn-close-picker" class="btn-text">关闭</button>
+          </div>
+          <div id="installed-pkg-list" class="picker-list"></div>
+        </div>
+
+        <h4>当前受保护应用实时状态</h4>
+        <div id="protected-apps-list" class="app-list"></div>
+      </div>
+
+      <div class="card">
+        <h3>功耗锁与一加 13 旁路/停充保护</h3>
+        <div class="form-row">
+          <label for="chk-wakelock">持有内核唤醒锁 (防止息屏后深度休眠断流)</label>
+          <input type="checkbox" id="chk-wakelock" checked />
+        </div>
+        <div class="form-row">
+          <label for="chk-bypass-charge">启用长期插电电池保护 (电量 ≥70% 停充旁路，≤60% 恢复)</label>
+          <input type="checkbox" id="chk-bypass-charge" />
+        </div>
+        <div class="metric-row">
+          <span>当前电池状态:</span>
+          <strong id="battery-info-val">读取中...</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: ROUTER & NAS SETTINGS -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="card">
+        <h3>虚拟化与网络拓扑参数</h3>
+        <div class="form-row">
+          <label for="chk-router-autostart">开机自动启动 OpenWrt 软路由</label>
+          <input type="checkbox" id="chk-router-autostart" checked />
+        </div>
+        <div class="form-row">
+          <label for="sel-vm-backend">虚拟化引擎后端</label>
+          <select id="sel-vm-backend">
+            <option value="auto">自动优选 (Gunyah crosvm 优先)</option>
+            <option value="gunyah">强制 Gunyah 硬件虚拟化 (/dev/gunyah + crosvm)</option>
+            <option value="qemu">强制 QEMU (KVM / MTTCG 多线程兼容模式)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="sel-vm-cpus">分配 vCPU 核心数</label>
+          <select id="sel-vm-cpus">
+            <option value="2">2 核 (推荐，极致省电)</option>
+            <option value="4">4 核 (高吞吐 OpenVPN / NAS)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="sel-vm-mem">分配运行内存 (RAM)</label>
+          <select id="sel-vm-mem">
+            <option value="256">256 MB (极简固件推荐)</option>
+            <option value="384">384 MB (均衡)</option>
+            <option value="512">512 MB (多插件充裕模式)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="chk-hotspot-bridge">自动接管手机 Wi-Fi 热点至 OpenWrt LAN (192.168.100.X)</label>
+          <input type="checkbox" id="chk-hotspot-bridge" checked />
+        </div>
+        <div class="form-row">
+          <label for="chk-host-redirect">将手机本机应用流量与 DNS 重定向至 OpenWrt 网关</label>
+          <input type="checkbox" id="chk-host-redirect" checked />
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>本机 NAS 目录直通挂载 (virtio-fs / virtio-9p)</h3>
+        <p class="hint">将一加 13 物理存储目录直通挂载至 OpenWrt 内部 <code>/mnt/nas</code>（绕过 Android FUSE 层）</p>
+        <div class="form-row">
+          <label for="chk-nas-mount">启用本机共享目录挂载</label>
+          <input type="checkbox" id="chk-nas-mount" checked />
+        </div>
+        <div class="form-col">
+          <label for="input-nas-path">宿主机物理目录路径 (F2FS 原生路径)</label>
+          <input type="text" id="input-nas-path" value="/data/media/0/NAS" />
+        </div>
+        <button id="btn-save-settings" class="btn btn-primary btn-block">💾 保存全部配置并应用</button>
+      </div>
+    </section>
+
+    <!-- TAB 4: LOGS & DIAGNOSTICS -->
+    <section id="tab-logs" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <h3>运行日志与诊断输出</h3>
+          <div class="toolbar-inline">
+            <select id="sel-log-source">
+              <option value="x-route">x-route 编排与保活日志</option>
+              <option value="vm-console">OpenWrt 虚拟机串口控制台日志</option>
+              <option value="net-diag">宿主路由表与网桥实时诊断</option>
+            </select>
+            <button id="btn-refresh-logs" class="btn btn-secondary btn-sm">刷新</button>
+          </div>
+        </div>
+        <pre id="log-viewer" class="log-box">正在加载日志...</pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

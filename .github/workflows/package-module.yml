@@ -1,0 +1,45 @@
+name: Package SuKiSU Module (Lite Zip & Shell Check)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'module/**'
+      - 'scripts/package-module.sh'
+      - '.github/workflows/package-module.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package-module:
+    name: Validate Scripts & Build SuKiSU Module Zip
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Shell Scripts Syntax
+        run: |
+          for s in module/*.sh module/scripts/*.sh module/META-INF/com/google/android/update-binary; do
+            echo "Checking POSIX sh syntax: $s"
+            sh -n "$s"
+          done
+          for b in scripts/*.sh; do
+            echo "Checking Bash syntax: $b"
+            bash -n "$b"
+          done
+
+      - name: Package SuKiSU Module Zip
+        run: |
+          chmod +x scripts/package-module.sh
+          ./scripts/package-module.sh
+
+      - name: Upload SuKiSU Module Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-route-sukisu-lite-module
+          path: dist/x-route-sukisu-lite-*.zip
+          if-no-files-found: error

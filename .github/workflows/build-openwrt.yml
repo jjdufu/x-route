@@ -59,11 +59,17 @@ jobs:
             --branch "${{ inputs.immortalwrt_branch || 'openwrt-24.10' }}" \
             --jobs "$(nproc)"
 
-      - name: Upload Firmware Artifacts
+      - name: Package SuKiSU Module (Lite & Full All-in-One Zip)
+        run: |
+          chmod +x scripts/package-module.sh
+          ./scripts/package-module.sh
+
+      - name: Upload Firmware & SuKiSU Module Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: x-route-openwrt-arm64-firmware
+          name: x-route-openwrt-and-sukisu-module
           path: |
+            dist/x-route-sukisu-*.zip
             dist/openwrt/Image
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2
@@ -75,9 +81,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: firmware-${{ github.run_number }}
-          name: "x-route ImmortalWrt ARM64 Firmware (Build #${{ github.run_number }})"
+          name: "x-route ImmortalWrt ARM64 & SuKiSU Module (Build #${{ github.run_number }})"
           body: |
-            ### x-route Custom Minimal ImmortalWrt ARM64 Firmware
+            ### x-route All-in-One SuKiSU Module & Custom ImmortalWrt ARM64 Firmware
+            - **One-Click Flashable Module**: `x-route-sukisu-full-v1.0.0.zip` (includes SuKiSU scripts, WebUI, 4-Layer Keep-Alive & compiled OpenWrt `Image` + `openwrt-rootfs.img.gz`)
             - **Target**: `armsr/armv8` (Linux 6.6)
             - **OnePlus 13 (SM8750) Gunyah pVM Adaptation**: `CONFIG_DMA_RESTRICTED_POOL=y`, `CONFIG_SWIOTLB=y`
             - **Built-in Drivers**: `virtio-net`, `virtio-blk`, `virtio-pci`, `virtio-fs`, `virtio-9p`, `tun`, `8250` (`ttyS0`) + `PL011` (`ttyAMA0`)
@@ -85,6 +92,7 @@ jobs:
             - **Default LAN**: `192.168.100.1/24` (`eth1` / MAC `52:54:00:12:34:57`)
             - **Default WAN**: `172.16.1.2/24` -> Gateway `172.16.1.1` (`eth0` / MAC `52:54:00:12:34:56`)
           files: |
+            dist/x-route-sukisu-*.zip
             dist/openwrt/Image
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2
