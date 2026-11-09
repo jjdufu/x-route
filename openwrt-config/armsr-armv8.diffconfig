@@ -9,7 +9,6 @@ CONFIG_TARGET_armsr_armv8=y
 CONFIG_TARGET_armsr_armv8_DEVICE_generic=y
 
 # --- 2. Rootfs & Image Format ---
-# 采用纯 ext4 根文件系统（512MB 稀疏镜像，便于 crosvm 直接挂载及在线扩容），关闭冗余镜像格式
 CONFIG_TARGET_ROOTFS_EXT4FS=y
 # CONFIG_TARGET_ROOTFS_SQUASHFS is not set
 # CONFIG_TARGET_ROOTFS_TARGZ is not set
@@ -19,6 +18,9 @@ CONFIG_TARGET_ROOTFS_PARTSIZE=512
 CONFIG_TARGET_IMAGES_GZIP=y
 CONFIG_QCOW2_IMAGES=y
 # CONFIG_VMDK_IMAGES is not set
+# CONFIG_GRUB_IMAGES is not set
+# CONFIG_GRUB_EFI_IMAGES is not set
+# CONFIG_GDB is not set
 
 # --- 3. Virtualization & Host Directory Sharing Modules ---
 CONFIG_PACKAGE_kmod-virtio=y
@@ -34,7 +36,6 @@ CONFIG_PACKAGE_kmod-fs-virtiofs=y
 CONFIG_PACKAGE_kmod-fuse=y
 
 # --- 4. Core Routing, Firewall (fw4/nftables + iptables-nft) & TTL Anti-Detection ---
-# 使用 dnsmasq-full 支持完整 ipset/nftset 分流与 DHCP 高级选项
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_dhcp=y
@@ -60,8 +61,12 @@ CONFIG_PACKAGE_kmod-ipt-ipopt=y
 CONFIG_PACKAGE_kmod-tun=y
 
 # --- 5. LuCI Web Management & System Utilities ---
+# 注意：ImmortalWrt 24.10 默认包含 libustream-openssl，切勿启用依赖 mbedtls 的 luci-ssl，
+# 否则在 package/install 阶段会发生 libustream-openssl 与 libustream-mbedtls 文件冲突！
 CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_luci-ssl=y
+# CONFIG_PACKAGE_luci-ssl is not set
+# CONFIG_PACKAGE_libustream-mbedtls is not set
+CONFIG_PACKAGE_libustream-openssl=y
 CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-lib-ipkg=y
 CONFIG_PACKAGE_luci-theme-bootstrap=y
@@ -97,6 +102,7 @@ CONFIG_PACKAGE_luci-i18n-openlist-zh-cn=y
 # CONFIG_PACKAGE_ppp is not set
 # CONFIG_PACKAGE_ppp-mod-pppoe is not set
 # CONFIG_PACKAGE_automount is not set
+# CONFIG_PACKAGE_uboot-armsr-qemu_armv8 is not set
 # CONFIG_PACKAGE_wpad-basic-mbedtls is not set
 # CONFIG_PACKAGE_hostapd-common is not set
 # CONFIG_PACKAGE_kmod-cfg80211 is not set
