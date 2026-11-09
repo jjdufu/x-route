@@ -1,0 +1,116 @@
+# ==============================================================================
+# x-route: Minimal ImmortalWrt 24.10 (ARMv8 64-bit VM) Configuration Seed
+# Target: armsr/armv8 (Generic ARM64 Virtual Machine for crosvm Gunyah & QEMU)
+# ==============================================================================
+
+# --- 1. Target System & Architecture ---
+CONFIG_TARGET_armsr=y
+CONFIG_TARGET_armsr_armv8=y
+CONFIG_TARGET_armsr_armv8_DEVICE_generic=y
+
+# --- 2. Rootfs & Image Format ---
+# 采用纯 ext4 根文件系统（512MB 稀疏镜像，便于 crosvm 直接挂载及在线扩容），关闭冗余镜像格式
+CONFIG_TARGET_ROOTFS_EXT4FS=y
+# CONFIG_TARGET_ROOTFS_SQUASHFS is not set
+# CONFIG_TARGET_ROOTFS_TARGZ is not set
+# CONFIG_TARGET_ROOTFS_CPIOGZ is not set
+CONFIG_TARGET_KERNEL_PARTSIZE=32
+CONFIG_TARGET_ROOTFS_PARTSIZE=512
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_QCOW2_IMAGES=y
+# CONFIG_VMDK_IMAGES is not set
+
+# --- 3. Virtualization & Host Directory Sharing Modules ---
+CONFIG_PACKAGE_kmod-virtio=y
+CONFIG_PACKAGE_kmod-virtio-net=y
+CONFIG_PACKAGE_kmod-virtio-blk=y
+CONFIG_PACKAGE_kmod-virtio-pci=y
+CONFIG_PACKAGE_kmod-virtio-mmio=y
+CONFIG_PACKAGE_kmod-virtio-console=y
+CONFIG_PACKAGE_kmod-virtio-balloon=y
+CONFIG_PACKAGE_kmod-fs-9p=y
+CONFIG_PACKAGE_kmod-9pnet-virtio=y
+CONFIG_PACKAGE_kmod-fs-virtiofs=y
+CONFIG_PACKAGE_kmod-fuse=y
+
+# --- 4. Core Routing, Firewall (fw4/nftables + iptables-nft) & TTL Anti-Detection ---
+# 使用 dnsmasq-full 支持完整 ipset/nftset 分流与 DHCP 高级选项
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_dhcp=y
+CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+CONFIG_PACKAGE_dnsmasq_full_dnssec=y
+CONFIG_PACKAGE_dnsmasq_full_auth=y
+CONFIG_PACKAGE_dnsmasq_full_ipset=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+CONFIG_PACKAGE_dnsmasq_full_conntrack=y
+
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_nftables=y
+CONFIG_PACKAGE_kmod-nft-core=y
+CONFIG_PACKAGE_kmod-nft-nat=y
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-bridge=y
+CONFIG_PACKAGE_iptables-nft=y
+CONFIG_PACKAGE_ip6tables-nft=y
+CONFIG_PACKAGE_iptables-mod-ipopt=y
+CONFIG_PACKAGE_kmod-ipt-ipopt=y
+CONFIG_PACKAGE_kmod-tun=y
+
+# --- 5. LuCI Web Management & System Utilities ---
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-lib-ipkg=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
+
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ip-bridge=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_ca-certificates=y
+CONFIG_PACKAGE_tcpdump-mini=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_nano=y
+CONFIG_PACKAGE_losetup=y
+CONFIG_PACKAGE_resize2fs=y
+CONFIG_PACKAGE_blkid=y
+
+# --- 6. OpenVPN Client (Cross-CGNAT Site-to-Site Mesh with Home/Datacenter) ---
+CONFIG_PACKAGE_openvpn-openssl=y
+CONFIG_PACKAGE_luci-app-openvpn=y
+CONFIG_PACKAGE_luci-i18n-openvpn-zh-cn=y
+
+# --- 7. Built-in NAS File Sharing (OpenList / Alist fork in ImmortalWrt 24.10) ---
+CONFIG_PACKAGE_openlist=y
+CONFIG_PACKAGE_luci-app-openlist=y
+CONFIG_PACKAGE_luci-i18n-openlist-zh-cn=y
+
+# --- 8. Strip Redundant Physical Hardware Drivers & Legacy Dial-up Bloat ---
+# CONFIG_PACKAGE_ppp is not set
+# CONFIG_PACKAGE_ppp-mod-pppoe is not set
+# CONFIG_PACKAGE_automount is not set
+# CONFIG_PACKAGE_wpad-basic-mbedtls is not set
+# CONFIG_PACKAGE_hostapd-common is not set
+# CONFIG_PACKAGE_kmod-cfg80211 is not set
+# CONFIG_PACKAGE_kmod-mac80211 is not set
+# CONFIG_PACKAGE_kmod-usb-core is not set
+# CONFIG_PACKAGE_kmod-usb2 is not set
+# CONFIG_PACKAGE_kmod-usb3 is not set
+# CONFIG_PACKAGE_kmod-sound-core is not set
+# CONFIG_PACKAGE_kmod-amazon-ena is not set
+# CONFIG_PACKAGE_kmod-e1000e is not set
+# CONFIG_PACKAGE_kmod-vmxnet3 is not set
+# CONFIG_PACKAGE_kmod-r8169 is not set
+# CONFIG_PACKAGE_kmod-igb is not set
+# CONFIG_PACKAGE_kmod-ixgbe is not set
+# CONFIG_PACKAGE_kmod-mvneta is not set
+# CONFIG_PACKAGE_kmod-mvpp2 is not set
+# CONFIG_PACKAGE_kmod-thunderx-net is not set

@@ -76,7 +76,7 @@ x-route/
 ## 🗺️ 研发路线图 (Roadmap)
 
 - [x] **M0：技术调研、可行性论证与项目立项**（已完成）
-- [ ] **M1：ImmortalWrt ARM64 极简固件定制与 Gunyah pVM 内核适配**
+- [x] **M1：ImmortalWrt ARM64 极简固件定制与 Gunyah pVM 内核适配**（已完成）
 - [ ] **M2：SuKiSU 核心网络编排引擎（5G WAN 动态 NAT + 热点无感桥接 + 本机回流）**
 - [ ] **M3：SuKiSU WebUI 控制面板 + 四重内核级保活引擎 + NAS 目录直通**
 - [ ] **M4：OpenVPN 异地组网联调 + 旁路供电/温控/唤醒锁稳定性压测**

@@ -1,0 +1,12 @@
+# ==============================================================================
+# x-route: Carrier Hotspot Anti-Detection (TTL / HopLimit Normalization)
+# Included automatically by firewall4 (/etc/nftables.d/*.nft inside table inet fw4)
+# Unifies all outbound packets on WAN (eth0) to TTL=64 / HopLimit=64 so cellular
+# carriers cannot distinguish tethered hotspot clients from native phone traffic.
+# ==============================================================================
+
+chain mangle_postrouting_x_route_ttl {
+    type filter hook postrouting priority mangle; policy accept;
+    oifname $wan_devices ip ttl set 64
+    oifname $wan_devices ip6 hoplimit set 64
+}

@@ -1,0 +1,9 @@
+# Build and distribution directories
+/build/
+/dist/
+*.qcow2
+*.raw
+*.img
+*.img.gz
+*.zip
+.DS_Store

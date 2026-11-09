@@ -1,0 +1,38 @@
+#!/bin/sh /etc/rc.common
+# ==============================================================================
+# x-route-netmap: Pre-network MAC-based WAN/LAN Interface Mapper
+# Guarantees WAN (52:54:00:12:34:56) and LAN (52:54:00:12:34:57) never swap
+# when switching between crosvm (Gunyah) and QEMU backends.
+# ==============================================================================
+
+START=18
+
+boot() {
+    local wan_dev=""
+    local lan_dev=""
+    local netdev devname mac
+
+    for netdev in /sys/class/net/*; do
+        devname="$(basename "$netdev")"
+        [ "$devname" = "lo" ] && continue
+        mac="$(cat "$netdev/address" 2>/dev/null | tr 'A-F' 'a-f')"
+        case "$mac" in
+            "52:54:00:12:34:56") wan_dev="$devname" ;;
+            "52:54:00:12:34:57") lan_dev="$devname" ;;
+        esac
+    done
+
+    local changed=0
+    if [ -n "$wan_dev" ] && [ "$(uci -q get network.wan.device)" != "$wan_dev" ]; then
+        uci set network.wan.device="$wan_dev"
+        changed=1
+    fi
+
+    if [ -n "$lan_dev" ] && [ "$(uci -q get network.br_lan.ports)" != "$lan_dev" ]; then
+        uci -q delete network.br_lan.ports
+        uci add_list network.br_lan.ports="$lan_dev"
+        changed=1
+    fi
+
+    [ "$changed" -eq 1 ] && uci commit network
+}
