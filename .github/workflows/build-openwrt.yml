@@ -41,9 +41,9 @@ jobs:
           sudo apt-get install -y \
             build-essential clang flex bison g++ gawk bc \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gettext git libncurses5-dev libssl-dev \
+            gettext git libncurses5-dev libssl-dev libelf-dev \
             python3-setuptools python3-pyelftools rsync \
-            swig unzip zip zlib1g-dev file wget curl qemu-utils zstd
+            swig unzip zip zlib1g-dev file wget curl qemu-utils zstd xz-utils cpio kmod
 
       - name: Build ImmortalWrt Kernel (Image) & Minimal Rootfs
         run: |

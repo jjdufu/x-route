@@ -31,8 +31,7 @@ CONFIG_PACKAGE_kmod-virtio-mmio=y
 CONFIG_PACKAGE_kmod-virtio-console=y
 CONFIG_PACKAGE_kmod-virtio-balloon=y
 CONFIG_PACKAGE_kmod-fs-9p=y
-CONFIG_PACKAGE_kmod-9pnet-virtio=y
-CONFIG_PACKAGE_kmod-fs-virtiofs=y
+CONFIG_PACKAGE_kmod-9pnet=y
 CONFIG_PACKAGE_kmod-fuse=y
 
 # --- 4. Core Routing, Firewall (fw4/nftables + iptables-nft) & TTL Anti-Detection ---

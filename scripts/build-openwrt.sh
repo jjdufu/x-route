@@ -19,7 +19,7 @@ BUILD_MODE="fast"
 IMMORTALWRT_REPO="https://github.com/immortalwrt/immortalwrt.git"
 IMMORTALWRT_BRANCH="openwrt-24.10"
 IMMORTALWRT_RELEASE="24.10.6"
-KERNEL_VER="6.6.87"
+KERNEL_VER="6.6.133"
 WORK_DIR="${REPO_ROOT}/build"
 OUTPUT_DIR="${REPO_ROOT}/dist/openwrt"
 JOBS="$(nproc 2>/dev/null || echo 4)"
@@ -108,10 +108,8 @@ build_fast_mode() {
         tar --use-compress-program=unzstd -xf "${WORK_DIR}/${ib_tar}" -C "${ib_dir}" --strip-components=1
     fi
 
-    # Configure ImageBuilder for pure ext4 512MB rootfs (no squashfs/grub/uboot bloat)
+    # Configure ImageBuilder for 512MB ext4 rootfs (skip squashfs & vmdk to save time)
     sed -i 's/^CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is not set/' "${ib_dir}/.config"
-    sed -i 's/^CONFIG_GRUB_IMAGES=y/# CONFIG_GRUB_IMAGES is not set/' "${ib_dir}/.config"
-    sed -i 's/^CONFIG_GRUB_EFI_IMAGES=y/# CONFIG_GRUB_EFI_IMAGES is not set/' "${ib_dir}/.config"
     sed -i 's/^CONFIG_VMDK_IMAGES=y/# CONFIG_VMDK_IMAGES is not set/' "${ib_dir}/.config"
     sed -i 's/^CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=512/' "${ib_dir}/.config"
 
@@ -120,17 +118,20 @@ build_fast_mode() {
     cp -a "${FILES_OVERLAY}" "${overlay_stage}"
     chmod +x "${overlay_stage}/etc/uci-defaults/"* "${overlay_stage}/etc/init.d/"* 2>/dev/null || true
 
-    # Note: Explicitly remove -dnsmasq and -libustream-mbedtls while selecting libustream-openssl
+    # Note:
+    # - Explicitly remove -dnsmasq and -libustream-mbedtls while selecting libustream-openssl
+    # - 9pnet_virtio is included in kmod-9pnet; virtiofs is compiled built-in (=y) in our kernel Image
     local pkg_list="dnsmasq-full -dnsmasq -libustream-mbedtls libustream-openssl \
         firewall4 nftables iptables-nft ip6tables-nft kmod-ipt-ipopt iptables-mod-ipopt \
-        kmod-tun kmod-fs-9p kmod-9pnet-virtio kmod-fs-virtiofs kmod-fuse \
+        kmod-tun kmod-fs-9p kmod-9pnet kmod-fuse \
         luci luci-compat luci-lib-ipkg luci-theme-argon \
         luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn \
         luci-app-ttyd luci-i18n-ttyd-zh-cn \
         openvpn-openssl luci-app-openvpn luci-i18n-openvpn-zh-cn \
         openlist luci-app-openlist luci-i18n-openlist-zh-cn \
         ip-full ip-bridge curl ca-bundle ca-certificates tcpdump-mini htop nano losetup resize2fs blkid \
-        -ppp -ppp-mod-pppoe -automount -uboot-armsr-qemu_armv8 \
+        -ppp -ppp-mod-pppoe -automount -mkf2fs -uboot-armsr-qemu_armv8 \
+        -kmod-atlantic -kmod-bcmgenet -kmod-octeontx2-net -kmod-renesas-net-avb \
         -kmod-amazon-ena -kmod-e1000e -kmod-vmxnet3 -kmod-mvneta -kmod-mvpp2 \
         -kmod-fsl-dpaa1-net -kmod-fsl-dpaa2-net -kmod-fsl-enetc-net -kmod-dwmac-imx \
         -kmod-fsl-fec -kmod-dwmac-rockchip -kmod-dwmac-sun8i -kmod-thunderx-net \
@@ -154,11 +155,17 @@ build_fast_mode() {
     cp -f "${rootfs_gz}" "${OUTPUT_DIR}/openwrt-rootfs.img.gz"
     gzip -dc "${OUTPUT_DIR}/openwrt-rootfs.img.gz" > "${OUTPUT_DIR}/openwrt-rootfs.raw"
 
-    # Extract ImageBuilder's bundled kernel Modules from rootfs so we can preserve them or inspect kernel version
+    # Compile custom ARM64 kernel with Gunyah pVM (CONFIG_DMA_RESTRICTED_POOL=y) & built-in VirtIO/VirtioFS/9p
     echo "[3/4] Preparing & Compiling Gunyah pVM + VirtIO Linux ${KERNEL_VER} ARM64 Kernel (Image)..."
     if [[ ! -d "${k_dir}" ]]; then
         local k_tar="linux-${KERNEL_VER}.tar.xz"
-        wget -q --show-progress -O "${WORK_DIR}/${k_tar}" "https://cdn.kernel.org/pub/linux/kernel/v6.x/${k_tar}"
+        if ! wget -q --show-progress -O "${WORK_DIR}/${k_tar}" "https://cdn.kernel.org/pub/linux/kernel/v6.x/${k_tar}"; then
+            echo "[WARN] linux-${KERNEL_VER}.tar.xz not found on cdn.kernel.org, falling back to 6.6.87..."
+            KERNEL_VER="6.6.87"
+            k_dir="${WORK_DIR}/linux-${KERNEL_VER}"
+            k_tar="linux-${KERNEL_VER}.tar.xz"
+            wget -q --show-progress -O "${WORK_DIR}/${k_tar}" "https://cdn.kernel.org/pub/linux/kernel/v6.x/${k_tar}"
+        fi
         tar -xf "${WORK_DIR}/${k_tar}" -C "${WORK_DIR}"
     fi
 
@@ -212,7 +219,7 @@ with open(path, "r", encoding="utf-8") as f:
 content = re.sub(r"^\s*UBOOT\s*:=\s*.*$", "", content, flags=re.MULTILINE)
 content = re.sub(
     r"DEVICE_PACKAGES\s*\+=.*?(?=\nendef)",
-    "DEVICE_PACKAGES += kmod-virtio-net kmod-virtio-blk kmod-fs-9p kmod-fs-virtiofs",
+    "DEVICE_PACKAGES += kmod-virtio-net kmod-virtio-blk kmod-fs-9p kmod-9pnet",
     content,
     flags=re.DOTALL,
 )
