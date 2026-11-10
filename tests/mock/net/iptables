@@ -1,0 +1,20 @@
+#!/bin/sh
+# 假 iptables：维护 FORWARD/POSTROUTING 是否挂载自定义链，以及 XR_FWD/XR_NAT 规则内容
+[ "$1" = -w ] && shift
+echo "iptables $*" >> "$MOCK/calls"
+t=filter; [ "$1" = -t ] && { t=$2; shift 2; }
+case "$t:$*" in
+  "filter:-S FORWARD") echo "-P FORWARD ACCEPT"; [ -f "$MOCK/fwd_hook" ] && echo "-A FORWARD -j XR_FWD"; exit 0 ;;
+  "filter:-D FORWARD -j XR_FWD") [ -f "$MOCK/fwd_hook" ] && rm -f "$MOCK/fwd_hook" && exit 0; exit 1 ;;
+  "filter:-I FORWARD 1 -j XR_FWD") : > "$MOCK/fwd_hook" ;;
+  "nat:-C POSTROUTING -j XR_NAT") [ -f "$MOCK/nat_hook" ]; exit ;;
+  "nat:-I POSTROUTING 1 -j XR_NAT") : > "$MOCK/nat_hook" ;;
+  "nat:-D POSTROUTING -j XR_NAT") [ -f "$MOCK/nat_hook" ] && rm -f "$MOCK/nat_hook" && exit 0; exit 1 ;;
+  "filter:-F XR_FWD") : > "$MOCK/XR_FWD" ;;
+  "nat:-F XR_NAT") : > "$MOCK/XR_NAT" ;;
+  "filter:-X XR_FWD") rm -f "$MOCK/XR_FWD" ;;
+  "nat:-X XR_NAT") rm -f "$MOCK/XR_NAT" ;;
+  "filter:-A XR_FWD "*) shift 2; echo "$*" >> "$MOCK/XR_FWD" ;;
+  "nat:-A XR_NAT "*) shift 2; echo "$*" >> "$MOCK/XR_NAT" ;;
+esac
+exit 0

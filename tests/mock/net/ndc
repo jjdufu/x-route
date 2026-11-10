@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "ndc $*" >> "$MOCK/calls"
+if [ -n "${NDC_FAIL:-}" ]; then echo "400 0 failed"; else echo "200 0 ok"; fi

@@ -1,0 +1,14 @@
+#!/bin/sh
+# 假 ip：记录调用；查询类命令从 $MOCK 下的文件读取
+echo "ip $*" >> "$MOCK/calls"
+case "$*" in
+  rule|"rule show") cat "$MOCK/iprule" 2>/dev/null ;;
+  "rule del"*) exit 1 ;;
+  "link show xr0") [ -f "$MOCK/xr0" ] ;;
+  "tuntap add xr0"*) : > "$MOCK/xr0" ;;
+  "link del xr0") rm -f "$MOCK/xr0" ;;
+  "route show table local_network") cat "$MOCK/lnroutes" 2>/dev/null ;;
+  "route show table 97") cat "$MOCK/t97" 2>/dev/null ;;
+  "-4 -o addr show dev "*) cat "$MOCK/addr.$6" 2>/dev/null ;;
+esac
+exit 0
