@@ -10,6 +10,8 @@ case "$*" in
   "route show table local_network") cat "$MOCK/lnroutes" 2>/dev/null ;;
   "route show table 97") cat "$MOCK/t97" 2>/dev/null ;;
   "-4 route show table "*) cat "$MOCK/rt.$5" 2>/dev/null ;;
+  "-4 route show dev "*) cat "$MOCK/devrt.$5" 2>/dev/null ;;
+  "route show dev "*) cat "$MOCK/devrt.$4" 2>/dev/null ;;
   "-4 -o addr show dev "*) cat "$MOCK/addr.$6" 2>/dev/null ;;
 esac
 exit 0

@@ -24,7 +24,7 @@ needs_restart() {
 # 返回非 0 时把原因写到 stdout（单行）
 after_set() {
   case "$1" in
-    XR_EXPOSE|VPN_ROUTES)
+    XR_EXPOSE|XR_MODE|VPN_ROUTES)
       vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
     AUTOSTART)
       load_config

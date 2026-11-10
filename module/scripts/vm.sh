@@ -37,6 +37,7 @@ fuse_watch() {
   done
   if ! ready_seen; then log_err vm "${READY_TIMEOUT_SEC} 秒内未就绪，停止 VM"; XR_IN_WATCH=1 vm_stop; return; fi
   echo ready > "${RUN}/state"; log_info vm "XR_READY（$(ready_channel)）"
+  sh "${MODDIR}/scripts/net.sh" sync
   t=0
   while [ "$t" -lt "${STABLE_SEC}" ]; do
     vm_running || { rm -f "${FUSE}"; sync; log_err vm "稳定期内 crosvm 退出"; return; }

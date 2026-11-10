@@ -36,4 +36,14 @@ U
   fi
   uci -q commit network
   uci -q commit firewall
+
+  # 单臂 NAT：发往默认网关、目的不是本网段的流量伪装成 .254，回程才能再进虚拟机。
+  # 只匹配 eth0，不影响 tun+ 上「本网段出隧道不 NAT」的网点约定。
+  mkdir -p /etc/nftables.d
+  cat > /etc/nftables.d/xrouter-onelink.nft <<N
+chain xrouter_onelink {
+  type nat hook postrouting priority 110;
+  oifname "eth0" ip daddr != ${net}.0/24 masquerade
+}
+N
 }

@@ -26,7 +26,7 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
-chk '$XR get | grep -qx "XR_EXPOSE=hotspot" && [ "$($XR get | wc -l)" -eq 20 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=hotspot" && [ "$($XR get | wc -l)" -eq 21 ]'
 cp "$CONF" "$T/conf.bak"
 out="$($XR set VM_MEM_MB 99999)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "\"ok\":false" && cmp -s "$CONF" "$T/conf.bak"'
 out="$($XR set 'X;rm' 1)"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'

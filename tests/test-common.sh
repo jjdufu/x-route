@@ -16,6 +16,7 @@ no valid_kv XR_NET_PREFIX 172.32.1;     ok valid_kv XR_NET_PREFIX 192.168.7; ok 
 ok valid_kv XR_VM_MAC 52:54:00:1d:e9:fe; no valid_kv XR_VM_MAC 52:54:00:1D:e9:fe
 ok valid_kv XR_DNS "223.5.5.5 119.29.29.29"; no valid_kv XR_DNS ""; no valid_kv XR_DNS "1.1.1.1 2.2.2.2 3.3.3.3 4.4.4.4"; no valid_kv XR_DNS "1.1.1.300"
 ok valid_kv XR_EXPOSE hotspot; no valid_kv XR_EXPOSE lan
+ok valid_kv XR_MODE global; ok valid_kv XR_MODE bypass; no valid_kv XR_MODE site
 ok valid_kv VM_CPUS 4; no valid_kv VM_CPUS 5; no valid_kv VM_CPUS x
 ok valid_kv VM_MEM_MB 512; no valid_kv VM_MEM_MB 256; no valid_kv VM_MEM_MB 99999999
 ok valid_kv VM_SWIOTLB_MB 64; no valid_kv VM_SWIOTLB_MB 48

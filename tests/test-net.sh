@@ -39,6 +39,8 @@ chk '[ "$(sed -n 3p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD"'
 chk '[ "$(tail -2 "$FWD" | tr "\n" "|")" = "-o xr0 -j DROP|-i xr0 -j DROP|" ]'
 chk '$NET status | grep -q "\"mode\":\"ndc\",\"up_if\":\"rmnet_data2\",\"expose\":\"hotspot\",\"expose_if\":\[\"wlan1\"\]"'
+# 默认全局，但 VM 未就绪：不得安装接管规则，以免把手机上网搞断
+chk '! grep -q "rule add pref 19100" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
 
 # 2. 上游切到 Wi-Fi，XR_EXPOSE=all -> Wi-Fi 也暴露；蜂窝永不暴露
 set_kv XR_EXPOSE all
@@ -87,5 +89,34 @@ chk 'grep -q "^ip rule add pref 18900 iif xr0 lookup rmnet_data2" "$MOCK/calls"'
 chk 'grep -q "^ip route replace 10.8.0.0/24 via 172.29.233.254 dev xr0 table 97" "$MOCK/calls" && grep -q "^ip rule add pref 4801 to 10.8.0.0/24 lookup 97" "$MOCK/calls"'
 NDC_FAIL=1 $NET down
 chk '[ "$(cat "$T/proc/sys/net/ipv4/ip_forward")" = 0 ] && grep -q "^ip route del 10.8.0.0/24 table 97" "$MOCK/calls"'
+
+# 6. 运行模式：全局且就绪 -> 表 98 + pref 19100 + 热点进 xr0；旁路或未就绪则撤销
+echo "default via 10.0.0.1 dev rmnet_data2" > "$MOCK/devrt.rmnet_data2"
+echo "192.168.43.0/24 dev wlan1 proto kernel scope link src 192.168.43.1" > "$MOCK/devrt.wlan1"
+set_kv XR_MODE global
+echo ready > "$RUN/state"
+echo "$$" > "$RUN/crosvm.pid"
+: > "$MOCK/calls"
+# 保证 xr0 存在（上次 down 已删）
+mkdir -p "$T/sysnet/xr0"
+# 上一段 down 清掉了链，需要重新 up
+$NET up
+chk 'grep -q "ip rule add pref 19100 lookup 98" "$MOCK/calls"'
+chk 'grep -q "ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 98" "$MOCK/calls"'
+chk 'grep -q "192.168.43.0/24 dev wlan1" "$MOCK/calls" && grep -q "table 98" "$MOCK/calls"'
+chk '[ "$(cat "$RUN/net.gw")" = 1 ]'
+chk 'grep -qx -- "-i wlan1 -o xr0 -j ACCEPT" "$FWD" && grep -qx -- "-i xr0 -o wlan1 -j ACCEPT" "$FWD"'
+chk 'grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
+# 未就绪立即撤销
+rm -f "$RUN/state" "$RUN/crosvm.pid"; : > "$MOCK/calls"; $NET sync
+chk 'grep -q "ip rule del pref 19100" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
+chk '! grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
+# 旁路即使就绪也不接管
+echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
+set_kv XR_MODE bypass; : > "$MOCK/calls"; $NET sync
+chk '! grep -q "pref 19100 lookup 98" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
+# 仍不改写 VM 出站包
+chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
+$NET down
 
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

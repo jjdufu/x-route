@@ -97,6 +97,56 @@ upstream_out() {
   } | sort -u | tr '\n' ' '
 }
 
+
+# ---- 运行模式：全局时（且 VM 已就绪）把本机与热点默认上网导入 VM；旁路不接管 ----
+# 表 98 + pref 19100：默认路由经 172.29.233.254。pref 18900（iif xr0 走上游）优先级更高，防止环路。
+# VM 未就绪、已停止或切到旁路时立即撤掉，避免把手机自己的上网搞断。
+GW_PREF=19100
+GW_TABLE=98
+
+vm_alive() {
+  p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
+  is_pid_running "$p"
+}
+
+vm_is_ready() {
+  vm_alive || return 1
+  s="$(cat "${RUN}/state" 2>/dev/null)"
+  [ "$s" = ready ] || [ "$s" = stable ]
+}
+
+want_gateway() {
+  [ "${XR_MODE:-global}" = global ] && vm_is_ready
+}
+
+copy_dev_routes() {
+  dev="$1"
+  [ -n "$dev" ] && [ "$dev" != "${XR_IF}" ] || return 0
+  ip -4 route show dev "$dev" 2>/dev/null | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    # shellcheck disable=SC2086
+    set -- $line
+    [ "$1" = "default" ] && continue
+    # shellcheck disable=SC2086
+    ip route replace $line table "${GW_TABLE}" 2>/dev/null
+  done
+}
+
+gw_install() {
+  ip route flush table "${GW_TABLE}" 2>/dev/null
+  for d in $outs $(tether_ifaces); do copy_dev_routes "$d"; done
+  ip route replace default via "${XR_NET_PREFIX}.254" dev "${XR_IF}" src "${XR_NET_PREFIX}.1" table "${GW_TABLE}"
+  while ip rule del pref "${GW_PREF}" 2>/dev/null; do :; done
+  ip rule add pref "${GW_PREF}" lookup "${GW_TABLE}"
+  echo 1 > "${RUN}/net.gw"
+}
+
+gw_remove() {
+  while ip rule del pref "${GW_PREF}" 2>/dev/null; do :; done
+  ip route flush table "${GW_TABLE}" 2>/dev/null
+  rm -f "${RUN}/net.gw"
+}
+
 # ---- 根据当前状态重建上游、NAT 和 XR_FWD（幂等）----
 # 标准路由器语义：手机当前上游（Wi-Fi、蜂窝或其他，不做区分）就是 VM 的 WAN，默认不信任：
 #   - 出站：-i xr0 -o <上游出口> 放行，并在 XR_NAT 中 MASQUERADE；
@@ -136,17 +186,28 @@ sync_all() {
   for o in $outs; do   # WAN 入站（未被 XR_EXPOSE=all 放行的上游）显式丢弃
     case " $ex " in *" $o "*) ;; *) ${IPT} -A XR_FWD -i "$o" -o "${XR_IF}" -j DROP ;; esac
   done
+  if want_gateway; then
+    for i in $(tether_ifaces); do
+      ${IPT} -A XR_FWD -i "$i" -o "${XR_IF}" -j ACCEPT
+      ${IPT} -A XR_FWD -i "${XR_IF}" -o "$i" -j ACCEPT
+      for o in $outs; do ${IPT} -A XR_FWD -i "$i" -o "$o" -j DROP; done
+    done
+  fi
   ${IPT} -A XR_FWD -o "${XR_IF}" -j DROP
   ${IPT} -A XR_FWD -i "${XR_IF}" -j DROP
   fwd_first
+  if want_gateway; then gw_install; else gw_remove; fi
 }
 
 net_watch() {
   while [ -d "${SYSNET}/${XR_IF}" ]; do
     sleep 10; load_config
     up="$(upstream_iface)"; outs="$(upstream_out "$up")"; ex="$(expose_ifaces | tr '\n' ' ')"
+    have_gw=0; [ -f "${RUN}/net.gw" ] && have_gw=1
+    if want_gateway; then want_gw=1; else want_gw=0; fi
     if [ "$up" != "$(cat "${RUN}/net.up_if" 2>/dev/null)" ] || [ "$outs" != "$(cat "${RUN}/net.up_out" 2>/dev/null)" ] \
-       || [ "$ex" != "$(cat "${RUN}/net.expose_if" 2>/dev/null)" ]; then sync_all; fi
+       || [ "$ex" != "$(cat "${RUN}/net.expose_if" 2>/dev/null)" ] \
+       || [ "$want_gw" != "$have_gw" ]; then sync_all; fi
     fwd_first; nat_first
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     if [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = fallback ]; then
@@ -158,6 +219,7 @@ net_watch() {
 
 net_down() {
   w="$(cat "${RUN}/net_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
+  gw_remove
   routes_clear
   while ${IPT} -D FORWARD -j XR_FWD 2>/dev/null; do :; done
   ${IPT} -F XR_FWD 2>/dev/null; ${IPT} -X XR_FWD 2>/dev/null
