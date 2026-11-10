@@ -18,8 +18,9 @@
 2. 刷入 `xrouter-sukisu-full-<版本>.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
 3. 重启手机：VM **没有**自动启动（`AUTOSTART=0`），`module.log` 有记录 “AUTOSTART=0”。
 4. 在 WebUI 点“启动”：
+   - 底部四个页面为：主页、互联、日志、设置；
    - `READY_TIMEOUT_SEC` 内出现 `XR_READY`，记录走的是 hvc 还是 ttyS0；
-   - 经过 `STABLE_SEC` 后进入 stable 状态，写入 `last_good`。
+   - 启动完成后主页显示「运行中」（不要出现「已稳定」）；后台在 `STABLE_SEC` 后写入 `last_good`。
 5. 连续启动、停止 VM 10 次：整机不重启，每次停止后 `ip link show xr0` 都不存在，`ip rule` 恢复原样。
 
 ## 2 稳定性与熔断
@@ -54,28 +55,31 @@
 | 热点客户端，`XR_EXPOSE=hotspot` | 能访问 `.254`；`XR_EXPOSE=off` 时访问不了，切换不需要重启 VM |
 | `XR_EXPOSE=all`，上级路由器配置静态路由 | 局域网其他设备能访问 `.254`（这一项需用户同意后在路由器上临时配置，测完删除） |
 | 关闭热点后再打开 | 规则自动恢复 |
-| 停止 VM | XR_FWD、XR_NAT、规则 4800/4801/18900、table 97 全部清空；`ndc ipfwd` 恢复；`ip_forward` 恢复原值 |
+| 停止 VM | XR_FWD、XR_NAT、规则 4800/4801/18900/19100、table 97/98 全部清空；`ndc ipfwd` 恢复；`ip_forward` 恢复原值 |
+| 运行模式「全局」，虚拟机已就绪 | 手机和热点访问公网经 `.254`；虚拟机自己访问公网不回灌（`iif xr0` 仍走上游） |
+| 运行模式「旁路」，或虚拟机未就绪 / 已停止 | 手机和热点自行出网，不被导入虚拟机 |
 
 ## 5 共享
 
 按 docs/v2-plan/09-share.md 的验收逐项执行：关闭、ro、rw（仅在 `RW_MAP_OPT` 非空时）、未解锁时启动、大文件读取。
+路径填写 `/sdcard` 或 `/storage/emulated/0` 时，应挂载 `/data/media/0`。
 
 ## 6 OpenVPN
 
-1. 用 rtvpn 单独为本设备签发证书，在 LuCI 导入并启动：`tun0` 获得地址，`logread` 中没有报错。
+1. 在互联页上传并启用 `.ovpn`，或在 LuCI 导入并启用：不重启虚拟机；`tun0` 获得地址，`logread` 中没有报错。两种导入方式连上后，服务器 push 的网段都应出现在「已接入的网段」，并自动同步到手机。
 2. 记录 DCO 状态（QEMU 中 openvpn 显示 `[DCO]` 且官方 `ovpn` 模块可加载，真机上以实际日志为准），以及 DNS 推送的行为。需要时按 docs/v2-plan/08-openvpn.md 设置 `dns-updown disable`。
-3. 在 WebUI 的 `VPN_ROUTES` 填写对端网段：
+3. 连上后：
    - 手机 `ip route get <对端地址>` 经过 xr0；
    - 手机能访问对端服务；
-   - 删除该网段后立即失效。
-4. 填写非法网段（公网、和 VM 网段重叠、未对齐）：进入 `routes_rejected`，不下发。
-5. `VPN_MODE=site`，对端配置好 iroute 后：对端能访问手机侧的 `172.29.233.0/24`；改回 terminal 并重启 VM 后，对端访问不了。
+   - 默认路由 / redirect-gateway 不同步到手机。
+4. 与 VM 网段重叠或未对齐的网段进入 `routes_rejected`，不下发。
+5. 对端配置好 iroute 后：对端能访问手机侧的 `172.29.233.0/24`；热点网段出隧道仍做 NAT。
 6. MTU：`ping -M do -s 1300 <对端>` 成功；大文件下载没有卡住。
 7. 断开重连：关闭 Wi-Fi 30 秒后再打开，OpenVPN 自动重连，手机路由仍然有效。
 
 ## 7 卸载
 
-在管理器卸载模块并重启：`/data/adb/xrouter` 被删除；`ip rule`、iptables、`ndc` 网络中都没有本模块的残留；没有 `xrouter` 唤醒锁。
+在管理器卸载模块并重启：进程退出；`/data/adb/xrouter`（含日志和系统盘）被删除；`ip rule`、iptables、`ndc` 网络中没有本模块残留（含 19100 / table 98）；通知和 `xrouter` 唤醒锁清除。Download 里此前导出的日志包可以保留。
 
 ## 建议的首测顺序
 
@@ -95,3 +99,17 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
 插 5G 卡、关闭 Wi-Fi 时另外确认：VM 内 `ping 223.5.5.5`、`curl -I https://downloads.immortalwrt.org` 成功；
 手机 `iptables -S XR_FWD` 中有 `-i xr0 -o rmnet_dataX -j ACCEPT` 与 `-i rmnet_dataX -o xr0 -j DROP`，
 纯 IPv6 运营商（464xlat）时还应出现 `v4-rmnet_dataX` 的同类规则和 MASQUERADE。
+
+
+## 附：本机已跑过的检查（发版前）
+
+环境：Grok Bot box，Asia/Shanghai。下列结果不得用来代替真机测试。
+
+| 检查 | 结果 |
+|---|---|
+| `sh scripts/lint.sh`（shellcheck、`sh -n`、全部 `tests/test-*.sh` 在 dash / mksh / busybox sh 下） | 通过 |
+| `sh scripts/check-config-keys.sh` | 通过（19 个配置键） |
+| `bash scripts/package-module.sh --lite-only` | 生成 `xrouter-sukisu-lite-v3.0.0.zip`：`id=xrouter`，无旧路径，无 META-INF |
+| `tests/test-webui.sh`（node） | 通过 |
+| `tests/e2e-qemu.sh` | 通过（先用当前源码重新构建 rootfs，再启动；已核对主机名 XRouter、型号、zh_cn、fw4、OpenVPN、透明代理能力） |
+

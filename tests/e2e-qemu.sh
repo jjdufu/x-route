@@ -23,7 +23,7 @@ sh "$T/mod/scripts/vm.sh" start; chk '[ $? -eq 0 ]'
 i=0; while [ $i -lt 240 ] && [ "$(cat "$RUN/state" 2>/dev/null)" != ready ] && [ "$(cat "$RUN/state" 2>/dev/null)" != stable ]; do sleep 2; i=$((i+2)); done
 chk 'grep -q "^XR_READY" "$RUN/vm-ctl.log"'
 chk 'grep -aq "Linux version 6.12.103" "$RUN/console.log"'
-out="$($S 'uname -r; ip -4 -o addr show eth0 | awk "{print \$4}"; ip route | grep default; fw4 check >/dev/null 2>&1 && echo FW4_OK; uci get luci.main.lang; uci get system.@system[0].hostname; cat /tmp/sysinfo/model; uci -q get firewall.vpn_lan || echo no_vpn_lan; which openvpn tcpdump apk; df -m / | awk "NR==2{print \$2}"; grep "^root:" /etc/shadow | cut -d: -f2 | wc -c; ping -c1 -W3 172.29.233.1 >/dev/null && echo GW_OK' </dev/null 2>&1)"
+out="$($S 'uname -r; ip -4 -o addr show eth0 | awk "{print \$4}"; ip route | grep default; fw4 check >/dev/null 2>&1 && echo FW4_OK; uci get luci.main.lang; uci get system.@system[0].hostname; cat /tmp/sysinfo/model; uci -q get firewall.vpn.input; uci -q get firewall.vpn_lan.dest; uci -q get firewall.lan_vpn.dest; which openvpn tcpdump apk; df -m / | awk "NR==2{print \$2}"; grep "^root:" /etc/shadow | cut -d: -f2 | wc -c; ping -c1 -W3 172.29.233.1 >/dev/null && echo GW_OK' </dev/null 2>&1)"
 echo "$out" | sed 's/^/  vm> /'
 chk 'echo "$out" | grep -qx 6.12.103'
 chk 'echo "$out" | grep -qx 172.29.233.254/24'
@@ -35,7 +35,7 @@ chk '[ "$(echo "$out" | grep -E "^[0-9]+$" | sed -n 1p)" -gt 900 ]'
 caps="$($S sh -s < "$ROOT/tests/vm-caps.sh" 2>&1)"
 echo "$caps" | sed 's/^/  caps> /'
 chk 'echo "$caps" | grep -qx CAPS_OK'
-chk 'echo "$out" | grep -qx vpn_lan'
+chk 'echo "$out" | grep -qx REJECT && echo "$out" | grep -qx lan && echo "$out" | grep -qx vpn'
 i=0; while [ $i -lt 200 ] && [ "$(cat "$RUN/state" 2>/dev/null)" != stable ]; do sleep 2; i=$((i+2)); done
 chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(config_hash)" ]'
 sh "$T/mod/scripts/vm.sh" stop

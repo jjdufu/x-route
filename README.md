@@ -7,7 +7,7 @@
 [![Firmware](https://img.shields.io/badge/ImmortalWrt-25.12.2-green)](https://github.com/jjdufu/x-route)
 [![Status](https://img.shields.io/badge/Status-v3%20Pre--release%20(未经真机验证)-orange)](./docs/TESTING.md)
 
-> **XRouter v3 是一次完整重写，目前只通过了单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
+> **XRouter v3 是一次完整重写，目前只通过了本机单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
 
 ## 1. 是什么
 
@@ -33,12 +33,17 @@
 
 ## 4. 首次使用
 
-- 浏览器打开 `http://172.29.233.254`（LuCI），终端 `http://172.29.233.254:7681`（ttyd），或 `ssh root@172.29.233.254`。
+- 模块 WebUI 有四个页面：主页、互联、日志、设置。主页可启动或停止虚拟机，并打开 LuCI。
+- 浏览器打开 `http://172.29.233.254`（LuCI）。终端 `http://172.29.233.254:7681`（ttyd）和 SSH 的开关、端口都在 LuCI 里设置。
 - 用户 `root`，**空密码（上游默认）**。热点设备默认也能访问 VM，请尽快在 LuCI → 系统 → 管理权 中设置密码。
 
 ## 5. 网络
 
 - 地址规划：`172.29.233.0/24`，手机 `xr0` 为 `.1`，VM `eth0` 为 `.254`（网关 `.1`）。前缀可通过 `XR_NET_PREFIX` 修改。
+- 运行模式（设置里切换，需确认后生效）：
+  - `全局`（默认）：手机本机和热点的上网都先进入 OpenWrt，处理后再从当时的 WAN（5G、4G 或 Wi-Fi）出去；
+  - `旁路`：不接管手机和热点上网，只有访问这台路由或已同步的对端网段时才进入虚拟机。
+  虚拟机未就绪或已停止时不会接管，避免把手机自己的上网搞断。
 - `XR_EXPOSE`（谁能访问 VM 网段）：
   - `off`：只有手机本机；
   - `hotspot`（默认）：再加热点 / USB 共享的设备；
@@ -46,7 +51,7 @@
 - WAN：VM 经手机当前默认上游（netd 选择的网络，Wi-Fi 或蜂窝均可；纯 IPv6 蜂窝的 464xlat `v4-*` 出口也已覆盖）上网。按标准路由器语义处理：放行 VM 出站和回包，丢弃上游主动发往 VM 的入站。
 - 手机侧不改写 VM 发出的包：不限制 UDP/QUIC、不限目标端口、不改 fwmark/DSCP；MASQUERADE 只匹配源 `172.29.233.0/24`。VM 内的 OpenVPN、Clash 插件看到的是普通 NAT 上行。
 - 手机侧只给 VM 提供 IPv4 上行（`xr0` 关闭了 IPv6）；VM 内核本身支持 IPv6。
-- netd 的 `ndc` 不可用时自动退回 table 97 + 策略规则，WebUI 状态里显示“退回模式”。
+- netd 的 `ndc` 不可用时自动退回 table 97 + 策略规则。
 
 ## 6. OpenVPN
 
@@ -57,7 +62,7 @@
 ## 7. 目录共享
 
 - 默认关闭。开启后手机目录经 virtiofs 挂载到 VM 的 `/mnt/sdcard`。
-- 路径只能是 `/data/media/0` 或其子目录（底层路径，不走 FUSE）；手机未解锁时本次启动不共享。
+- 路径只能是 `/data/media/0` 或其子目录（底层路径，不走 FUSE）；填写 `/sdcard` 或 `/storage/emulated/0` 时按同一处存储处理。手机未解锁时本次启动不共享。
 - `ro`（默认）：在 crosvm 自己的挂载命名空间里做只读绑定，手机侧内核强制只读，Android 侧看不到这次挂载。
 - `rw`：只有当前 crosvm 支持属主映射时才可用（否则 WebUI 置灰）。VM 写入的文件不经过 MediaStore，相册、文件管理器需要手动扫描或重启后才能看到；不要写入 `Android/data`、`Android/obb`。
 
@@ -79,7 +84,8 @@ $XR set KEY VALUE                   # 修改配置（会校验，返回 {"ok":..
 $XR ack-trip                        # 确认熔断
 $XR expand MB | reset-disk          # 扩容 / 重置系统盘（需先停止 VM）
 $XR sync                            # 立即重建手机侧网络规则
-$XR log [xr|console|ctl|vmm] [N]    # 查看日志
+$XR log [xr|module|console|ctl|vmm] [N]   # 查看日志
+$XR log-export [all|module|console|ctl|vmm]  # 导出到 Download
 ```
 
 ## 10. 构建
@@ -98,8 +104,8 @@ sh tests/e2e-qemu.sh              # 可选：用 QEMU 启动真实镜像做端�
 
 ## 11. 日志与卸载
 
-- 日志：`/data/adb/xrouter/log/module.log`、`vmm.log`；VM 串口：`/data/adb/xrouter/run/console.log`、`vm-ctl.log`。
-- 卸载：在管理器里卸载模块并重启，会删除 `/data/adb/xrouter`（**包括 VM 系统盘**），并清除手机侧的网络规则。
+- 日志写在 `/data/adb/xrouter` 下（`log/module.log`、`log/vmm.log`，以及 `run/console.log`、`run/vm-ctl.log`），会轮转，不写到 `/sdcard`。可在日志页一键导出到 Download，也可导出当前正在看的那一类。
+- 卸载：在管理器里卸载模块并重启，会清除进程、网络规则、通知、唤醒锁，并删除 `/data/adb/xrouter`（**包括日志和 VM 系统盘**），不留与模块有关的文件。导出到 Download 的压缩包不会删除。
 
 ## 12. 已知限制
 

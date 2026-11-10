@@ -48,15 +48,18 @@ echo "[+] ${FULL}"
 KREL="$(sed -n 's/^# Linux\/arm64 \([0-9.]*\) Kernel Configuration$/\1/p' "${OW}/kernel.config" | head -1)"
 cat > "${DIST}/RELEASE_NOTES.md" <<EOF
 ### ${NAME} \`${VER}\`（作者：\`${AUTHOR}\`）
-- **预发布，尚未真机测试**：这是破坏性更新，只通过了单元测试（mksh / busybox sh / dash）和 QEMU \`virt\` 启动冒烟测试，真机验证仍待进行（见 \`docs/TESTING.md\`）。
+- **预发布，尚未真机测试**：这是破坏性更新（产品更名为 XRouter），目前只通过了本机单元测试（mksh / busybox sh / dash）和 QEMU \`virt\` 启动冒烟测试，真机验证仍待进行（见 \`docs/TESTING.md\`）。
 - **完整模块**：\`${FULL##*/}\`（含 WebUI、\`xr\` 命令行，以及预置 \`Image\` 与 \`openwrt-rootfs.img.gz\`）
 - **精简模块**：\`${LITE##*/}\`（仅脚本和 WebUI，使用 \`/data/adb/xrouter/images\` 中已有镜像）
-- **固件**：ImmortalWrt 25.12.2（\`armsr/armv8\` ImageBuilder，\`apk\`），Linux \`${KREL:-6.12.103}\` + Gunyah pVM；官方 25.12 的 \`kmod-*\` 可用 \`apk\` 安装
+- **固件**：ImmortalWrt 25.12.2（\`armsr/armv8\` ImageBuilder，\`apk\`），Linux \`${KREL:-6.12.103}\` + Gunyah pVM；官方 25.12 的 \`kmod-*\` 可用 \`apk\` 安装。主机名 \`XRouter\`，概览型号为 \`AMD Ryzen Threadripper PRO 9995WX\`。预装包管理简体中文语言包。
 - **安全默认**：
   - 安装后不自启（\`AUTOSTART="0"\`）；需用同一配置手动启动成功一次后，才允许打开自启
   - \`--no-balloon --swiotlb 64 --mem 512\`，\`ulimit -l unlimited\`，以及启动熔断（启动过程中若整机复位，将关闭自启，需在 WebUI 确认后才能再启动）
+- **WebUI**：主页、互联、日志、设置四页；运行模式默认「全局」，可切换为「旁路」
 - **网络**：\`172.29.233.0/24\`（手机 \`xr0\` 为 \`.1\`，虚拟机 \`eth0\` 为 \`.254\`）；LuCI \`http://172.29.233.254\`
+- **运行模式**：全局时，手机本机和热点上网先经 OpenWrt 再从当时 WAN 出去；旁路不接管。虚拟机未就绪时不接管。
 - **WAN**：手机当前上游（Wi-Fi 或蜂窝，含 464xlat 的 \`v4-*\`）作为虚拟机的 WAN：放行出站与回包，丢弃主动入站；不改写虚拟机发出的包；仅对 \`172.29.233.0/24\` 做 MASQUERADE
+- **OpenVPN**：可在互联页或 LuCI 导入启用，连上后自动同步服务器 push 的路由（不同步默认路由）；本网段出隧道不做 NAT
 - **透明代理内核**：netfilter / nftables / TUN / inet_diag 划分与官方 25.12.2 内核一致（\`=m\`）；预装 \`kmod-nft-tproxy\`、\`kmod-nft-socket\`、\`kmod-nft-fullcone\`、\`kmod-inet-diag\`
 - **登录**：用户 \`root\`，**空密码**（上游默认），请在 LuCI → 系统 → 管理权 中设置
 - **仅支持全新安装**：请先在管理器卸载旧版并重启，不做旧配置迁移
