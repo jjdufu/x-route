@@ -3,7 +3,18 @@
 # XRouter: customize.sh / service.sh / uninstall.sh 的模拟测试（假 MODPATH、假 getprop）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+T="$(mktemp -d)"; cleanup() {
+  if [ -f "${XR_DATA:-}/run/daemon.pid" ]; then
+    p="$(cat "$XR_DATA/run/daemon.pid" 2>/dev/null)"
+    [ -n "$p" ] && kill "$p" 2>/dev/null
+  fi
+  if [ -f "$T/live/uninstall.sh" ]; then
+    MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
+  fi
+  rm -rf "$T"
+}
+trap cleanup EXIT
+
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
 mkdir -p "$T/bin"
 cat > "$T/bin/getprop" <<'G'

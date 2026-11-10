@@ -12,7 +12,7 @@ chmod +x "$T/bin/getprop"
 # 假 net.sh：只记录调用
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
 [ -f "$T/mod/scripts/share.sh" ] || printf 'share_prepare() { share_spec=""; share_mode=off; share_wrap=""; }\n' > "$T/mod/scripts/share.sh"
-export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
+export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
 trap 'sh "$T/mod/scripts/vm.sh" stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 . "$T/mod/scripts/common.sh"; ensure_dirs
 cp "$T/mod/config/config.conf" "$CONF"

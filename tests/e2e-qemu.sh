@@ -11,7 +11,7 @@ mkdir -p "$T/bin" "$T/mod"; cp -a "$ROOT/module/." "$T/mod/"
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"; chmod +x "$T/bin/getprop"
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
 [ -f "$T/mod/scripts/share.sh" ] || printf "share_prepare() { share_spec=; share_mode=off; share_wrap=; }\n" > "$T/mod/scripts/share.sh"
-export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm-qemu"
+export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm-qemu"
 trap 'sh "$T/mod/scripts/vm.sh" stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 . "$T/mod/scripts/common.sh"; ensure_dirs; cp "$T/mod/config/config.conf" "$CONF"
 sed -i "s/^STABLE_SEC=.*/STABLE_SEC=\"${E2E_STABLE:-60}\"/; s/^VPN_MODE=.*/VPN_MODE=\"${E2E_VPNMODE:-terminal}\"/" "$CONF"

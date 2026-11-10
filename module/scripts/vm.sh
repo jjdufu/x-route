@@ -47,7 +47,7 @@ fuse_watch() {
 }
 
 # ---- 启动 ----
-vm_start() {
+vm_start_exec() {
   load_config
   vm_running && { log_info vm "已在运行"; return 0; }
   [ -f "${TRIPPED}" ] && { log_err vm "熔断未确认（xr ack-trip）"; return 1; }
@@ -82,7 +82,8 @@ vm_start() {
   [ "${VM_WAKELOCK}" = 1 ] && wakelock_on
 
   # shellcheck disable=SC2086
-  ${share_wrap} nohup "${CROSVM}" --log-level=info run \
+  # setsid：即使调用方是守护进程，crosvm 也不跟 WebUI 的进程组绑在一起
+  ${share_wrap} setsid nohup "${CROSVM}" --log-level=info run \
     --hypervisor gunyah --protected-vm-without-firmware --disable-sandbox \
     --no-balloon --swiotlb "${VM_SWIOTLB_MB}" --cpus "${VM_CPUS}" --mem "${mem}" \
     ${net_args} \
@@ -92,7 +93,7 @@ vm_start() {
     --socket "${SOCK}" \
     ${share_spec:+--shared-dir} ${share_spec:+"${share_spec}"} \
     --params "${params}" \
-    "${IMG}/Image" >> "${VMM_LOG}" 2>&1 &
+    "${IMG}/Image" </dev/null >> "${VMM_LOG}" 2>&1 &
   echo $! > "${PID_F}"
   sleep 2
   if ! vm_running; then
@@ -107,7 +108,7 @@ vm_start() {
 }
 
 # ---- 停止 ----
-vm_stop() {
+vm_stop_exec() {
   # 由 fuse_watch 自身调用时不能杀掉自己
   if [ "${XR_IN_WATCH:-0}" != 1 ]; then
     w="$(cat "${RUN}/fuse_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
@@ -142,6 +143,37 @@ vm_status() {
   ch="$(ready_channel)"; [ "$ch" = null ] || ch="\"$ch\""
   printf '{"running":%s,"pid":%s,"state":"%s","uptime_s":%s,"tripped":%s,"last_good_match":%s,"ready_channel":%s}' \
     "$running" "$pid" "$state" "$up" "$tr" "$lg" "$ch"
+}
+
+
+# 未在守护进程内、且未开前台模式时，把启停交给独立会话中的 daemon.sh
+_ensure_send() {
+  if ! type daemon_send >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    . "${MODDIR}/scripts/daemon.sh"
+  fi
+}
+
+vm_start() {
+  if [ "${XR_IN_DAEMON}" = 1 ] || [ "${XR_DAEMON_FOREGROUND}" = 1 ]; then
+    vm_start_exec
+    return $?
+  fi
+  _ensure_send
+  daemon_send start
+}
+
+vm_stop() {
+  if [ "${XR_IN_DAEMON}" = 1 ] || [ "${XR_DAEMON_FOREGROUND}" = 1 ]; then
+    vm_stop_exec
+    return $?
+  fi
+  _ensure_send
+  if daemon_running; then
+    daemon_send stop
+    return $?
+  fi
+  vm_stop_exec
 }
 
 # ---- 磁盘 ----

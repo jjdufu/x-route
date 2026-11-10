@@ -16,7 +16,7 @@ echo "net \$*" >> "$T/net.calls"
 [ "\$1" = sync ] && printf '10.8.0.0/24\n' > "$T/data/run/routes.active"
 exit 0
 EOS
-export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
+export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
 XR="sh $T/mod/scripts/xr"
 trap '$XR stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 . "$T/mod/scripts/common.sh"; ensure_dirs

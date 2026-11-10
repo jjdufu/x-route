@@ -7,6 +7,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 ensure_dirs
 . "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
+. "${MODDIR}/scripts/daemon.sh"
 
 RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH VPN_MODE"
 
