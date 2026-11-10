@@ -152,8 +152,19 @@ build_fast_mode() {
     local ib_bin="${ib_dir}/bin/targets/armsr/armv8"
     local rootfs_gz
     rootfs_gz="$(ls "${ib_bin}"/*-armsr-armv8-generic-ext4-rootfs.img.gz | head -n 1)"
-    cp -f "${rootfs_gz}" "${OUTPUT_DIR}/openwrt-rootfs.img.gz"
-    gzip -dc "${OUTPUT_DIR}/openwrt-rootfs.img.gz" > "${OUTPUT_DIR}/openwrt-rootfs.raw"
+    gzip -dc "${rootfs_gz}" > "${OUTPUT_DIR}/openwrt-rootfs.raw"
+
+    # Strip ImageBuilder's mismatched kmod autoload entries since all required drivers are built-in (=y)
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        local mnt_tmp
+        mnt_tmp="$(mktemp -d)"
+        if sudo mount -o loop "${OUTPUT_DIR}/openwrt-rootfs.raw" "${mnt_tmp}"; then
+            sudo rm -rf "${mnt_tmp}/etc/modules.d/"* "${mnt_tmp}/etc/modules-boot.d/"* 2>/dev/null || true
+            sudo umount "${mnt_tmp}"
+        fi
+        rmdir "${mnt_tmp}" 2>/dev/null || true
+    fi
+    gzip -9c "${OUTPUT_DIR}/openwrt-rootfs.raw" > "${OUTPUT_DIR}/openwrt-rootfs.img.gz"
 
     # Compile custom ARM64 kernel with Gunyah pVM (CONFIG_DMA_RESTRICTED_POOL=y) & built-in VirtIO/VirtioFS/9p
     echo "[3/4] Preparing & Compiling Gunyah pVM + VirtIO Linux ${KERNEL_VER} ARM64 Kernel (Image)..."
@@ -174,8 +185,14 @@ build_fast_mode() {
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
         merge_kernel_config "${k_dir}/.config"
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-        echo "[INFO] Verified Gunyah pVM & VirtIO symbols in kernel .config:"
-        grep -E "CONFIG_DMA_RESTRICTED_POOL=|CONFIG_SWIOTLB=|CONFIG_VIRTIO_FS=|CONFIG_9P_FS=|CONFIG_NF_TABLES=" "${k_dir}/.config"
+        # Re-apply merge once more after olddefconfig to catch any newly unlocked submenu symbols
+        merge_kernel_config "${k_dir}/.config"
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+        echo "[INFO] Verified Gunyah pVM & VirtIO built-in (=y) symbols in kernel .config:"
+        grep -E "CONFIG_DMA_RESTRICTED_POOL=|CONFIG_SWIOTLB=|CONFIG_VIRTIO_FS=|CONFIG_9P_FS=|CONFIG_NF_TABLES=|CONFIG_NF_CONNTRACK=|CONFIG_VIRTIO_BALLOON" "${k_dir}/.config"
+        grep -q "^CONFIG_DMA_RESTRICTED_POOL=y$" "${k_dir}/.config"
+        grep -q "^CONFIG_NF_TABLES=y$" "${k_dir}/.config"
+        ! grep -q "^CONFIG_VIRTIO_BALLOON=y$" "${k_dir}/.config"
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"${JOBS}" Image
     )
 

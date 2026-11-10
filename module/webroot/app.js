@@ -6,13 +6,15 @@
 const MODDIR = "/data/adb/modules/x_route";
 const CONF_FILE = "/data/adb/x-route/config/config.conf";
 let currentConfig = {
-  ROUTER_ENABLED: "1",
+  CONFIG_SCHEMA_VER: "101",
+  ROUTER_ENABLED: "0",
   VM_BACKEND: "auto",
   VM_CPUS: "2",
-  VM_MEM_MB: "256",
+  VM_MEM_MB: "512",
+  VM_SWIOTLB_MB: "64",
   HOTSPOT_BRIDGE_ENABLED: "1",
   HOST_REDIRECT_ENABLED: "1",
-  NAS_MOUNT_ENABLED: "1",
+  NAS_MOUNT_ENABLED: "0",
   NAS_HOST_PATH: "/data/media/0/NAS",
   KEEPALIVE_ENABLED: "1",
   KEEPALIVE_PACKAGES: "com.leohao.android.alistlite",
@@ -128,7 +130,7 @@ function syncConfigToForm() {
   document.getElementById("chk-router-autostart").checked = currentConfig.ROUTER_ENABLED === "1";
   document.getElementById("sel-vm-backend").value = currentConfig.VM_BACKEND || "auto";
   document.getElementById("sel-vm-cpus").value = currentConfig.VM_CPUS || "2";
-  document.getElementById("sel-vm-mem").value = currentConfig.VM_MEM_MB || "256";
+  document.getElementById("sel-vm-mem").value = currentConfig.VM_MEM_MB || "512";
   document.getElementById("chk-hotspot-bridge").checked = currentConfig.HOTSPOT_BRIDGE_ENABLED === "1";
   document.getElementById("chk-host-redirect").checked = currentConfig.HOST_REDIRECT_ENABLED === "1";
   document.getElementById("chk-nas-mount").checked = currentConfig.NAS_MOUNT_ENABLED === "1";
@@ -139,10 +141,11 @@ function syncConfigToForm() {
 }
 
 async function saveConfigToDevice() {
+  currentConfig.CONFIG_SCHEMA_VER = "101";
   currentConfig.ROUTER_ENABLED = document.getElementById("chk-router-autostart").checked ? "1" : "0";
   currentConfig.VM_BACKEND = document.getElementById("sel-vm-backend").value;
   currentConfig.VM_CPUS = document.getElementById("sel-vm-cpus").value;
-  currentConfig.VM_MEM_MB = document.getElementById("sel-vm-mem").value;
+  currentConfig.VM_MEM_MB = document.getElementById("sel-vm-mem").value || "512";
   currentConfig.HOTSPOT_BRIDGE_ENABLED = document.getElementById("chk-hotspot-bridge").checked ? "1" : "0";
   currentConfig.HOST_REDIRECT_ENABLED = document.getElementById("chk-host-redirect").checked ? "1" : "0";
   currentConfig.NAS_MOUNT_ENABLED = document.getElementById("chk-nas-mount").checked ? "1" : "0";
@@ -155,7 +158,7 @@ async function saveConfigToDevice() {
     .map(([k, v]) => `${k}="${v}"`)
     .join("\n");
 
-  await execRoot(`mkdir -p /data/adb/x-route/config && cat <<'EOF' > ${CONF_FILE}\n${content}\nEOF`);
+  await execRoot(`mkdir -p /data/adb/x-route/config && cat <<'EOF' > ${CONF_FILE}\n${content}\nEOF\nsync`);
   showToast("配置已保存至 " + CONF_FILE);
 }
 
@@ -170,6 +173,12 @@ async function refreshStatus() {
     data = JSON.parse(stdout.trim());
   } catch (e) {
     return;
+  }
+
+  const fuseAlert = document.getElementById("fuse-alert");
+  if (fuseAlert) {
+    if (data.bootloop_tripped) fuseAlert.classList.remove("hidden");
+    else fuseAlert.classList.add("hidden");
   }
 
   // 1. VM Card

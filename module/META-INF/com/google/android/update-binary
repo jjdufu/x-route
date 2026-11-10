@@ -10,8 +10,12 @@ MODID="x_route"
 MODPATH="/data/adb/modules_update/${MODID}"
 
 ui_print() {
-    echo "ui_print $1" > "/proc/self/fd/${OUTFD}"
-    echo "ui_print" > "/proc/self/fd/${OUTFD}"
+    if [ -n "${OUTFD:-}" ] && [ -e "/proc/self/fd/${OUTFD}" ]; then
+        echo "ui_print $1" > "/proc/self/fd/${OUTFD}"
+        echo "ui_print" > "/proc/self/fd/${OUTFD}"
+    else
+        echo "$1"
+    fi
 }
 
 abort() {
@@ -23,14 +27,16 @@ abort() {
 set_perm() {
     chown "$2:$3" "$1" || return 1
     chmod "$4" "$1" || return 1
+    local CON="${5:-u:object_r:system_file:s0}"
+    chcon "${CON}" "$1" 2>/dev/null || true
 }
 
 set_perm_recursive() {
     find "$1" -type d 2>/dev/null | while read -r dir; do
-        set_perm "$dir" "$2" "$3" "$5"
+        set_perm "$dir" "$2" "$3" "$4" "${6:-}"
     done
     find "$1" -type f -o -type l 2>/dev/null | while read -r file; do
-        set_perm "$file" "$2" "$3" "$6"
+        set_perm "$file" "$2" "$3" "$5" "${6:-}"
     done
 }
 
@@ -59,6 +65,8 @@ else
     mkdir -p "/data/adb/modules/${MODID}"
     touch "/data/adb/modules/${MODID}/update"
     cp -af "${MODPATH}/module.prop" "/data/adb/modules/${MODID}/module.prop"
+    chmod 0644 "/data/adb/modules/${MODID}/module.prop"
 fi
 
+sync
 exit 0

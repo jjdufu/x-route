@@ -11,8 +11,8 @@
     <div class="brand">
       <div class="brand-logo">XR</div>
       <div>
-        <h1>x-route 控制台</h1>
-        <p class="subtitle">OnePlus 13 · Gunyah/QEMU OpenWrt & 四重内核保活</p>
+        <h1>x-route 随身软路由与内核保活</h1>
+        <p class="subtitle">v1.0.1 · Author: jjdufu · OnePlus 13 (Gunyah pVM)</p>
       </div>
     </div>
     <span id="env-badge" class="badge badge-info">检测环境中...</span>
@@ -26,6 +26,9 @@
   </nav>
 
   <main class="container">
+    <div id="fuse-alert" class="card hidden" style="border-left:4px solid #ef4444;background:rgba(239,68,68,0.12);margin-bottom:12px;">
+      <strong>⚠️ 防死机熔断器已触发保护：</strong> 检测到上次虚拟机启动未满 30 秒发生异常复位，已自动关闭“开机自启软路由”。您可在此手动验证启动，稳定运行 30 秒后自动解除警告。
+    </div>
     <!-- TAB 1: DASHBOARD -->
     <section id="tab-dashboard" class="tab-panel active">
       <div class="status-grid">
@@ -153,8 +156,8 @@
       <div class="card">
         <h3>虚拟化与网络拓扑参数</h3>
         <div class="form-row">
-          <label for="chk-router-autostart">开机自动启动 OpenWrt 软路由</label>
-          <input type="checkbox" id="chk-router-autostart" checked />
+          <label for="chk-router-autostart">开机自动启动 OpenWrt 软路由 (建议手动验证稳定后再开启)</label>
+          <input type="checkbox" id="chk-router-autostart" />
         </div>
         <div class="form-row">
           <label for="sel-vm-backend">虚拟化引擎后端</label>
@@ -174,9 +177,9 @@
         <div class="form-row">
           <label for="sel-vm-mem">分配运行内存 (RAM)</label>
           <select id="sel-vm-mem">
-            <option value="256">256 MB (极简固件推荐)</option>
-            <option value="384">384 MB (均衡)</option>
-            <option value="512">512 MB (多插件充裕模式)</option>
+            <option value="384">384 MB (轻量模式)</option>
+            <option value="512" selected>512 MB (一加 13 Gunyah pVM 推荐)</option>
+            <option value="768">768 MB (多插件充裕模式)</option>
           </select>
         </div>
         <div class="form-row">
@@ -194,7 +197,7 @@
         <p class="hint">将一加 13 物理存储目录直通挂载至 OpenWrt 内部 <code>/mnt/nas</code>（绕过 Android FUSE 层）</p>
         <div class="form-row">
           <label for="chk-nas-mount">启用本机共享目录挂载</label>
-          <input type="checkbox" id="chk-nas-mount" checked />
+          <input type="checkbox" id="chk-nas-mount" />
         </div>
         <div class="form-col">
           <label for="input-nas-path">宿主机物理目录路径 (F2FS 原生路径)</label>

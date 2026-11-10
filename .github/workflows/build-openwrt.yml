@@ -70,19 +70,30 @@ jobs:
             dist/openwrt/sha256sums.txt
           if-no-files-found: error
 
+      - name: Read Module Metadata
+        id: meta
+        run: |
+          VER="$(awk -F= '/^version=/{print $2}' module/module.prop | tr -d '\r ')"
+          NAME="$(awk -F= '/^name=/{print substr($0, index($0,$2))}' module/module.prop | tr -d '\r')"
+          AUTHOR="$(awk -F= '/^author=/{print $2}' module/module.prop | tr -d '\r ')"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "author=${AUTHOR}" >> "$GITHUB_OUTPUT"
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0-build.${{ github.run_number }}
-          name: "x-route v1.0.0 (Build #${{ github.run_number }} - All-in-One SuKiSU Module & ImmortalWrt ARM64)"
+          tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
+          name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }} (Build #${{ github.run_number }} by ${{ steps.meta.outputs.author }})"
           body: |
-            ### x-route All-in-One SuKiSU Module & Custom ImmortalWrt ARM64 Firmware
-            - **One-Click Flashable Module**: `x-route-sukisu-full-v1.0.0.zip` (includes SuKiSU scripts, WebUI, 4-Layer Keep-Alive & compiled OpenWrt `Image` + `openwrt-rootfs.img.gz`)
-            - **Lite Module**: `x-route-sukisu-lite-v1.0.0.zip`
-            - **Target**: `armsr/armv8` (Linux 6.6)
-            - **OnePlus 13 (SM8750) Gunyah pVM Adaptation**: `CONFIG_DMA_RESTRICTED_POOL=y`, `CONFIG_SWIOTLB=y`
-            - **Built-in Drivers**: `virtio-net`, `virtio-blk`, `virtio-pci`, `virtio-fs`, `virtio-9p`, `tun`, `nftables`, `iptables`, `8250` (`ttyS0`) + `PL011` (`ttyAMA0`)
-            - **Pre-installed Packages**: `luci` (zh-cn), `dnsmasq-full`, `firewall4` (`nftables` + `TTL=64` anti-detection), `openvpn-openssl` + `luci-app-openvpn`, `openlist` + `luci-app-openlist`, `ttyd`
+            ### ${{ steps.meta.outputs.name }} `${{ steps.meta.outputs.version }}` (Author: `${{ steps.meta.outputs.author }}`)
+            - **One-Click Flashable Module**: `x-route-sukisu-full-${{ steps.meta.outputs.version }}.zip` (includes SuKiSU Hot-Install metadata, WebUI, 4-Layer Keep-Alive & compiled OpenWrt `Image` + `openwrt-rootfs.img.gz`)
+            - **Lite Module**: `x-route-sukisu-lite-${{ steps.meta.outputs.version }}.zip`
+            - **Module Identity Fixed & Verified**: Complete `name`, `author` (`jjdufu`), `skip_mount`, SuKiSU Hot-Install (`MODULE_HOT_INSTALL_REQUEST=true`, takes effect immediately without reboot), and F2FS `sync` + `module.prop` self-healing
+            - **OnePlus 13 (SM8750) Real-Device Gunyah pVM Verified**:
+              - `--no-balloon --swiotlb 64 --mem 512` + `ulimit -l unlimited` + `# CONFIG_VIRTIO_BALLOON is not set` (eliminates Gunyah EL2 Stage-2 SoC reset)
+              - Safe non-autostart default (`ROUTER_ENABLED="0"` on install/upgrade) + 15s post-unlock window + hardware-reset-proof `vm_booting.fuse` anti-bootloop protection
+              - 100% built-in `nftables` (`CONFIG_NF_TABLES=y`, `CONFIG_LIBCRC32C=y`, `CONFIG_NF_CONNTRACK=y`) & stripped mismatched `.ko` autoload warnings
             - **Default LAN**: `192.168.100.1/24` (`eth1` / MAC `52:54:00:12:34:57`)
             - **Default WAN**: `172.16.1.2/24` -> Gateway `172.16.1.1` (`eth0` / MAC `52:54:00:12:34:56`)
           files: |

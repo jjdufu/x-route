@@ -108,10 +108,10 @@ start_vm_gunyah() {
 
     rm -f "${CROSVM_SOCK}"
     local nas_args=""
-    if [ "${NAS_MOUNT_ENABLED:-1}" = "1" ] && [ -n "${NAS_HOST_PATH}" ]; then
+    if [ "${NAS_MOUNT_ENABLED:-0}" = "1" ] && [ -n "${NAS_HOST_PATH}" ]; then
         mkdir -p "${NAS_HOST_PATH}" 2>/dev/null || true
         if [ -d "${NAS_HOST_PATH}" ]; then
-            nas_args="--shared-dir ${NAS_HOST_PATH}:host_nas:type=fs:cache=always"
+            nas_args="--shared-dir ${NAS_HOST_PATH}:host_nas:type=fs:cache=auto:timeout=5:writeback=false:posix_acl=true"
             log_info "vm_manager" "Enabling virtio-fs passthrough: ${NAS_HOST_PATH} -> host_nas"
         fi
     fi
@@ -122,15 +122,29 @@ start_vm_gunyah() {
         hp_args="--hugepages --prepare-lend-mthp"
     fi
 
-    log_info "vm_manager" "Starting OpenWrt VM via Gunyah (${crosvm_bin}, vCPUs=${VM_CPUS:-2}, RAM=${VM_MEM_MB:-256}MB)"
-    # Launch crosvm in background
+    local mem_mb="${VM_MEM_MB:-512}"
+    [ "${mem_mb}" -lt 384 ] 2>/dev/null && mem_mb="512"
+    local swiotlb_mb="${VM_SWIOTLB_MB:-64}"
+
+    # Arm hardware-reset-proof bootloop fuse on UFS flash BEFORE touching /dev/gunyah
+    date '+%s' > "${BOOT_FUSE_FILE}"
+    sync
+    sleep 1
+
+    # Remove Android 64KB RLIMIT_MEMLOCK cap required by Gunyah vm_mgr_mem account_locked_vm
+    ulimit -l unlimited 2>/dev/null || true
+
+    log_info "vm_manager" "Starting OpenWrt VM via Gunyah (${crosvm_bin}, vCPUs=${VM_CPUS:-2}, RAM=${mem_mb}MB, SWIOTLB=${swiotlb_mb}MB)"
+    # Launch crosvm in background with verified OnePlus 13 Gunyah pVM flags (--no-balloon is critical!)
     # shellcheck disable=SC2086
     nohup "${crosvm_bin}" --log-level=info run \
         --hypervisor gunyah \
         --protected-vm-without-firmware \
         --disable-sandbox \
+        --no-balloon \
+        --swiotlb "${swiotlb_mb}" \
         --cpus "${VM_CPUS:-2}" \
-        --mem "${VM_MEM_MB:-256}" \
+        --mem "${mem_mb}" \
         --net "tap-name=${WAN_TAP},mac=${WAN_MAC}" \
         --net "tap-name=${LAN_TAP},mac=${LAN_MAC}" \
         --block "${IMG_DIR}/openwrt-rootfs.raw,lock=false,root=true" \
@@ -146,10 +160,19 @@ start_vm_gunyah() {
     sleep 2
     if kill -0 "${pid}" 2>/dev/null; then
         log_info "vm_manager" "OpenWrt Gunyah VM started successfully (PID=${pid})"
+        # Disarm bootloop fuse after VM runs stably for 30 seconds
+        (
+            sleep 30
+            if kill -0 "${pid}" 2>/dev/null; then
+                rm -f "${BOOT_FUSE_FILE}" "${BOOT_TRIPPED_FILE}"
+                sync
+            fi
+        ) >/dev/null 2>&1 &
         return 0
     else
         log_err "vm_manager" "crosvm exited prematurely. Check ${LOG_DIR}/vmm-runtime.log"
-        rm -f "${VM_PID_FILE}"
+        rm -f "${VM_PID_FILE}" "${BOOT_FUSE_FILE}"
+        sync
         return 1
     fi
 }
@@ -282,7 +305,8 @@ stop_vm() {
             kill -KILL "${pid}" 2>/dev/null || true
         fi
     fi
-    rm -f "${VM_PID_FILE}" "${CROSVM_SOCK}"
+    rm -f "${VM_PID_FILE}" "${CROSVM_SOCK}" "${BOOT_FUSE_FILE}"
+    sync
     release_wakelock
     log_info "vm_manager" "OpenWrt VM stopped."
 }
@@ -298,7 +322,7 @@ status_vm() {
         pid="$(cat "${VM_PID_FILE}")"
     fi
     printf '{"running":%s,"pid":"%s","backend":"%s","cpus":%s,"mem_mb":%s}\n' \
-        "${running}" "${pid}" "${backend}" "${VM_CPUS:-2}" "${VM_MEM_MB:-256}"
+        "${running}" "${pid}" "${backend}" "${VM_CPUS:-2}" "${VM_MEM_MB:-512}"
 }
 
 case "${1:-}" in

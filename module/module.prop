@@ -1,8 +1,6 @@
 id=x_route
-name=x-route Pocket OpenWrt & Keep-Alive
-version=v1.0.0
-versionCode=100
+name=x-route 随身软路由与内核保活 (OnePlus 13)
+version=v1.0.1
+versionCode=101
 author=jjdufu
-description=OnePlus 13 (SM8750 / Android 15·16) Gunyah/QEMU Virtualized OpenWrt Soft Router (5G WAN + Fixed 192.168.100.1 Hotspot LAN + Host Loopback + NAS Mount) & 4-Layer Kernel App Keep-Alive Engine.
-webui=true
-action=true
+description=一加 13 (骁龙8至尊版 / Android 15-16) Gunyah/QEMU 硬件虚拟化 OpenWrt 随身软路由 (5G WAN + 192.168.100.1 热点接管 + 本机回流 + NAS 挂载) 与四重内核级应用保活引擎。

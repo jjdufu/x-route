@@ -11,6 +11,7 @@ export MODDIR
 . "${MODDIR}/scripts/common.sh"
 
 load_config
+ensure_module_prop
 
 start_all() {
     echo "[*] 正在初始化虚拟网卡与网桥 (tap-wan / br-lan)..."
@@ -35,11 +36,12 @@ stop_all() {
 }
 
 status_json() {
-    local vm_json net_json ka_json
+    local vm_json net_json ka_json tripped="false"
+    [ -f "${BOOT_TRIPPED_FILE}" ] && tripped="true"
     vm_json="$("${MODDIR}/scripts/vm_manager.sh" status 2>/dev/null || echo '{"running":false}')"
     net_json="$("${MODDIR}/scripts/net_orchestrator.sh" status 2>/dev/null || echo '{}')"
     ka_json="$("${MODDIR}/scripts/keepalive_daemon.sh" status 2>/dev/null || echo '{}')"
-    printf '{"vm":%s,"net":%s,"keepalive":%s}\n' "${vm_json}" "${net_json}" "${ka_json}"
+    printf '{"vm":%s,"net":%s,"keepalive":%s,"bootloop_tripped":%s}\n' "${vm_json}" "${net_json}" "${ka_json}" "${tripped}"
 }
 
 case "${1:-toggle}" in

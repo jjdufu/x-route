@@ -9,6 +9,8 @@ MODDIR="${MODDIR:-/data/adb/modules/x_route}"
 PERSIST_DIR="/data/adb/x-route"
 CONF_DIR="${PERSIST_DIR}/config"
 CONF_FILE="${CONF_DIR}/config.conf"
+BOOT_FUSE_FILE="${CONF_DIR}/vm_booting.fuse"
+BOOT_TRIPPED_FILE="${CONF_DIR}/bootloop_tripped.flag"
 IMG_DIR="${PERSIST_DIR}/images"
 RUN_DIR="${PERSIST_DIR}/run"
 LOG_DIR="${PERSIST_DIR}/logs"
@@ -23,6 +25,28 @@ LAN_MAC="52:54:00:12:34:57"
 ROUTE_TABLE_REDIRECT="100"
 FWMARK_EXEMPT="0x100/0x100"
 WAKELOCK_NAME="x_route_wakelock"
+
+ensure_module_prop() {
+    local prop="${MODDIR}/module.prop"
+    if [ -d "${MODDIR}" ]; then
+        if [ ! -s "${prop}" ] || ! grep -q "^name=" "${prop}" 2>/dev/null || ! grep -q "^author=" "${prop}" 2>/dev/null; then
+            cat <<'EOF' > "${prop}"
+id=x_route
+name=x-route 随身软路由与内核保活 (OnePlus 13)
+version=v1.0.1
+versionCode=101
+author=jjdufu
+description=一加 13 (骁龙8至尊版 / Android 15-16) Gunyah/QEMU 硬件虚拟化 OpenWrt 随身软路由 (5G WAN + 192.168.100.1 热点接管 + 本机回流 + NAS 挂载) 与四重内核级应用保活引擎。
+EOF
+            chmod 0644 "${prop}" 2>/dev/null || true
+            sync
+        fi
+    fi
+}
+
+is_module_disabled() {
+    [ -f "${MODDIR}/disable" ] || [ -f "${MODDIR}/remove" ]
+}
 
 ensure_dirs() {
     mkdir -p "${CONF_DIR}" "${IMG_DIR}" "${RUN_DIR}" "${LOG_DIR}" "${BIN_DIR}"
@@ -51,6 +75,7 @@ save_config_kv() {
     else
         echo "${key}=\"${val}\"" >> "${CONF_FILE}"
     fi
+    sync
 }
 
 log_msg() {
