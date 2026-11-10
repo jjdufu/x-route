@@ -23,6 +23,7 @@
 | 11 | [11-packaging-readme.md](11-packaging-readme.md) | 打包、README、发布 rc1 |
 | 12 | [12-device-tests.md](12-device-tests.md) | 真机测试清单 |
 | 13 | [13-risks.md](13-risks.md) | 风险与待确认项 |
+| 14 | [14-deviations.md](14-deviations.md) | 实施记录：与方案的偏差（以代码为准） |
 
 ## 全局约定
 
