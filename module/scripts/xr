@@ -1,0 +1,102 @@
+#!/system/bin/sh
+# ==============================================================================
+# x-route v2: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
+# 用法：xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|log [xr|console|ctl|vmm] [N]
+# ==============================================================================
+MODDIR="${MODDIR:-/data/adb/modules/x_route}"
+. "${MODDIR}/scripts/common.sh"
+ensure_dirs
+. "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
+
+RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH VPN_MODE"
+
+jstr() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r\t')"; }
+jarr() { _o=""; for _e in $1; do _o="${_o:+${_o},}$(jstr "$_e")"; done; printf '[%s]' "$_o"; }
+
+needs_restart() {
+  for k in ${RESTART_KEYS}; do
+    [ "$k" = "$1" ] && { vm_running && echo true || echo false; return; }
+  done
+  echo false
+}
+
+# 返回非 0 时把原因写到 stdout（单行）
+after_set() {
+  case "$1" in
+    XR_EXPOSE|VPN_ROUTES)
+      vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
+    AUTOSTART)
+      load_config
+      if [ "${AUTOSTART}" = 1 ]; then
+        if [ -f "${TRIPPED}" ]; then set_kv AUTOSTART 0; echo "存在未确认的熔断，不能开启自启"; return 1; fi
+        if [ "$(cat "${LAST_GOOD}" 2>/dev/null)" != "$(config_hash)" ]; then
+          set_kv AUTOSTART 0; echo "需先用当前配置手动启动成功一次"; return 1
+        fi
+      fi ;;
+  esac
+  return 0
+}
+
+routes_rejected() {
+  act="$(cat "${RUN}/routes.active" 2>/dev/null)"
+  for c in $(echo "${VPN_ROUTES}" | tr ',' ' '); do
+    echo "$act" | grep -qx "$c" || echo "$c"
+  done
+}
+
+status_json() {
+  load_config
+  vmj="$(vm_status)"
+  netj="$(sh "${MODDIR}/scripts/net.sh" status 2>/dev/null)"
+  [ -n "$netj" ] || netj='{"mode":"down"}'
+  act="$(cat "${RUN}/routes.active" 2>/dev/null)"
+  if vm_running; then smode="$(cat "${RUN}/share.mode" 2>/dev/null)"; fi
+  ce=false; ce_ready && ce=true
+  rw=false; [ -n "${RW_MAP_OPT}" ] && rw=true
+  cfg=""
+  v=""; for k in ${KEYS}; do eval "v=\"\${${k}}\""; cfg="${cfg:+${cfg},}\"${k}\":$(jstr "$v")"; done
+  printf '{"vm":%s,"net":%s,"vpn":{"mode":%s,"routes_active":%s,"routes_rejected":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
+    "$vmj" "$netj" "$(jstr "${VPN_MODE}")" "$(jarr "$act")" "$(jarr "$(routes_rejected)")" \
+    "$([ "${VM_SHARE}" = 1 ] && echo true || echo false)" "$(jstr "${smode:-off}")" "$(jstr "${VM_SHARE_PATH}")" \
+    "$ce" "$rw" "$cfg"
+}
+
+status_line() {
+  load_config
+  if vm_running; then
+    r="运行中"
+    case "$(cat "${RUN}/state" 2>/dev/null)" in
+      stable) s="已稳定" ;; ready) s="已就绪" ;; *) s="启动中" ;;
+    esac
+  else r="已停止"; s="-"; fi
+  n="$(grep -c . "${RUN}/routes.active" 2>/dev/null)"
+  t=""; [ -f "${TRIPPED}" ] && t=" / 熔断未确认"
+  echo "${r} / ${s} / ${XR_NET_PREFIX}.254 / 暴露=${XR_EXPOSE} / VPN网段=${n:-0}${t}"
+}
+
+cmd="$1"; [ $# -gt 0 ] && shift
+case "$cmd" in
+  start)       vm_start ;;
+  stop)        vm_stop ;;
+  running)     vm_running ;;
+  status-json) status_json ;;
+  status-line) status_line ;;
+  get)         load_config; for k in ${KEYS}; do eval "printf '%s=%s\n' $k \"\${$k}\""; done ;;
+  set)
+    [ $# -eq 2 ] || { echo '{"ok":false,"error":"用法：xr set KEY VALUE"}'; exit 2; }
+    set_kv "$1" "$2" || { printf '{"ok":false,"error":%s}\n' "$(jstr "取值不合法：$1")"; exit 1; }
+    if ! msg="$(after_set "$1")"; then printf '{"ok":false,"error":%s}\n' "$(jstr "$msg")"; exit 1; fi
+    echo "{\"ok\":true,\"restart\":$(needs_restart "$1")}" ;;
+  ack-trip)    rm -f "${TRIPPED}"; sync; log_info xr "熔断已确认" ;;
+  expand)      is_uint "${1:-}" || { echo "usage: xr expand MB"; exit 2; }; disk_expand "$1" ;;
+  reset-disk)  disk_reset ;;
+  sync)        vm_running && sh "${MODDIR}/scripts/net.sh" sync ;;
+  log)
+    case "${1:-xr}" in
+      console) f="${CON_LOG}" ;; ctl) f="${CTL_LOG}" ;; vmm) f="${VMM_LOG}" ;; xr) f="${LOG}" ;;
+      *) echo "usage: xr log [xr|console|ctl|vmm] [N]"; exit 2 ;;
+    esac
+    n="${2:-200}"; in_range "$n" 1 5000 || n=200
+    tail -n "$n" "$f" 2>/dev/null ;;
+  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|log [xr|console|ctl|vmm] [N]"; exit 2 ;;
+esac

@@ -102,6 +102,7 @@ vm_start() {
   fi
   ( fuse_watch ) >/dev/null 2>&1 &
   echo $! > "${RUN}/fuse_watch.pid"
+  echo "${share_mode}" > "${RUN}/share.mode"
   log_info vm "已启动 pid=$(cat "${PID_F}") mem=${mem}MB cpus=${VM_CPUS} share=${share_mode}"
 }
 
@@ -118,7 +119,7 @@ vm_stop() {
     if vm_running; then kill -TERM "$p" 2>/dev/null; sleep 5; fi
     if vm_running; then kill -KILL "$p" 2>/dev/null; fi
   fi
-  rm -f "${PID_F}" "${SOCK}" "${RUN}/state" "${RUN}/fuse_watch.pid" "${FUSE}"; sync
+  rm -f "${PID_F}" "${SOCK}" "${RUN}/state" "${RUN}/fuse_watch.pid" "${RUN}/share.mode" "${FUSE}"; sync
   sh "${MODDIR}/scripts/net.sh" down
   wakelock_off
   log_info vm "已停止"

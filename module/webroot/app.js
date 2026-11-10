@@ -1,408 +1,232 @@
 // ==============================================================================
-// x-route: SuKiSU / KernelSU WebUI Frontend Controller (app.js)
-// Uses window.ksu.exec(cmd, options, callback) to interact with module scripts
+// x-route v2 WebUI（docs/v2-plan/10-cli-webui.md）
+// 只通过 ksu.exec 调用 scripts/xr，不直接读写配置文件。
 // ==============================================================================
+"use strict";
 
-const MODDIR = "/data/adb/modules/x_route";
-const CONF_FILE = "/data/adb/x-route/config/config.conf";
-let currentConfig = {
-  CONFIG_SCHEMA_VER: "101",
-  ROUTER_ENABLED: "0",
-  VM_BACKEND: "auto",
-  VM_CPUS: "2",
-  VM_MEM_MB: "512",
-  VM_SWIOTLB_MB: "64",
-  HOTSPOT_BRIDGE_ENABLED: "1",
-  HOST_REDIRECT_ENABLED: "1",
-  NAS_MOUNT_ENABLED: "0",
-  NAS_HOST_PATH: "/data/media/0/NAS",
-  KEEPALIVE_ENABLED: "1",
-  KEEPALIVE_PACKAGES: "com.leohao.android.alistlite",
-  WAKELOCK_ENABLED: "1",
-  BYPASS_CHARGE_ENABLED: "0",
-};
+const XR = "sh /data/adb/modules/x_route/scripts/xr";
+const SET_KEYS = [
+  "XR_EXPOSE", "VPN_MODE", "VPN_ROUTES", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
+  "AUTOSTART", "AUTOSTART_DELAY_SEC", "VM_CPUS", "VM_MEM_MB", "VM_SWIOTLB_MB",
+  "READY_TIMEOUT_SEC", "STABLE_SEC", "VM_NET", "VM_DISK_RW",
+];
+const ARG_RE = /^[A-Za-z0-9_\-]+$/;
+let status = null;
+let seq = 0;
+let timer = null;
 
-let ksuCallbackSeq = 0;
+const $ = (id) => document.getElementById(id);
+const hasKsu = () => typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
 
-function isKsuEnv() {
-  return typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
+// 单引号包裹，值里的 ' 转义为 '\''
+function shq(v) {
+  return "'" + String(v).replace(/'/g, "'\\''") + "'";
 }
 
-function execRoot(cmd) {
+function exec(cmd) {
   return new Promise((resolve) => {
-    if (!isKsuEnv()) {
-      resolve({ errno: 0, stdout: mockExec(cmd), stderr: "" });
+    if (!hasKsu()) {
+      resolve({ errno: 1, stdout: "", stderr: "不在 KernelSU 管理器中" });
       return;
     }
-    const cbName = `__xroute_cb_${Date.now()}_${++ksuCallbackSeq}`;
-    window[cbName] = function (errno, stdout, stderr) {
-      delete window[cbName];
-      resolve({
-        errno: typeof errno === "number" ? errno : 0,
-        stdout: stdout || "",
-        stderr: stderr || "",
-      });
+    const cb = `__xr_cb_${Date.now()}_${++seq}`;
+    window[cb] = (errno, stdout, stderr) => {
+      delete window[cb];
+      resolve({ errno: typeof errno === "number" ? errno : 0, stdout: stdout || "", stderr: stderr || "" });
     };
     try {
-      window.ksu.exec(cmd, "{}", cbName);
+      window.ksu.exec(cmd, "{}", cb);
     } catch (e) {
-      delete window[cbName];
+      delete window[cb];
       resolve({ errno: 1, stdout: "", stderr: String(e) });
     }
   });
 }
 
-function mockExec(cmd) {
-  if (cmd.includes("action.sh status-json")) {
-    return JSON.stringify({
-      vm: { running: true, pid: "14820", backend: "gunyah", cpus: 2, mem_mb: 256 },
-      net: {
-        cell_if: "rmnet_data0",
-        ap_if: "ap0",
-        host_redirect: "active",
-        gw_online: true,
-        lan_gw: "192.168.100.1",
-        lan_clients: 2,
-      },
-      keepalive: {
-        daemon_running: true,
-        daemon_pid: "14502",
-        enabled: true,
-        battery_cap: 68,
-        battery_status: "Discharging (Bypass Active)",
-        apps: [
-          {
-            pkg: "com.leohao.android.alistlite",
-            installed: true,
-            running: true,
-            pids: "15210 15244",
-            oom_score_adj: "-1000",
-          },
-        ],
-      },
-    });
-  }
-  if (cmd.includes("cat " + CONF_FILE)) {
-    return Object.entries(currentConfig)
-      .map(([k, v]) => `${k}="${v}"`)
-      .join("\n");
-  }
-  if (cmd.includes("pm list packages -3")) {
-    return "package:com.leohao.android.alistlite\npackage:com.termux\npackage:org.telegram.messenger\n";
-  }
-  return "[演示模式] 命令已执行: " + cmd;
+// xr 子命令：子命令与非值参数都要过白名单
+function xr(sub, ...args) {
+  if (!ARG_RE.test(sub)) return Promise.reject(new Error("bad command"));
+  return exec(`${XR} ${sub} ${args.map(shq).join(" ")}`.trim());
 }
 
-function showToast(msg) {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.classList.remove("hidden");
-  clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => el.classList.add("hidden"), 2800);
+function toast(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast " + (bad ? "toast-bad" : "toast-ok");
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => t.classList.add("hidden"), 4000);
 }
 
-// --- Tab Navigation ---
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById(btn.dataset.tab).classList.add("active");
-    if (btn.dataset.tab === "tab-logs") {
-      refreshLogs();
-    }
+async function setKey(key, value) {
+  if (!SET_KEYS.includes(key)) return false;
+  const r = await xr("set", key, value);
+  let res = null;
+  try { res = JSON.parse(r.stdout.trim().split("\n").pop()); } catch (e) { res = null; }
+  if (!res || !res.ok) {
+    toast(`保存失败：${(res && res.error) || r.stderr || "未知错误"}`, true);
+    await refresh();
+    return false;
+  }
+  toast(res.restart ? "已保存，需重启 VM 生效" : "已保存");
+  await refresh();
+  return true;
+}
+
+// ---- CIDR 前端校验（与 common.sh 同规则：格式、私网、主机位为 0）----
+function ip2int(s) {
+  const p = s.split(".").map(Number);
+  if (p.length !== 4 || p.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return null;
+  return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
+}
+function cidrOk(c) {
+  const m = /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/.exec(c);
+  if (!m) return "格式错误";
+  const ip = ip2int(m[1]); const pfx = Number(m[2]);
+  if (ip === null || pfx < 8 || pfx > 32) return "格式错误";
+  const mask = pfx === 0 ? 0 : (0xffffffff << (32 - pfx)) >>> 0;
+  if (((ip & mask) >>> 0) !== ip) return "主机位不为 0";
+  const a = ip >>> 24; const b = (ip >>> 16) & 255;
+  const priv = (a === 10 && pfx >= 8) || (a === 172 && b >= 16 && b <= 31 && pfx >= 12) ||
+    (a === 192 && b === 168 && pfx >= 16) || (a === 100 && b >= 64 && b <= 127 && pfx >= 10);
+  return priv ? "" : "不是私网地址";
+}
+
+function fmtUptime(s) {
+  s = Number(s) || 0;
+  const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60);
+  return h ? `${h} 小时 ${m} 分` : `${m} 分 ${s % 60} 秒`;
+}
+
+const STATE_TXT = { stopped: "已停止", booting: "启动中", ready: "已就绪", stable: "已稳定" };
+
+function render(d) {
+  const vm = d.vm || {}; const net = d.net || {}; const vpn = d.vpn || {}; const sh = d.share || {}; const cfg = d.config || {};
+  const pill = $("vm-pill");
+  pill.textContent = STATE_TXT[vm.state] || vm.state || "-";
+  pill.className = "pill " + (vm.running ? (vm.state === "stable" ? "pill-ok" : "pill-warn") : "pill-off");
+  $("st-vm").textContent = vm.running ? `运行中（pid ${vm.pid}，就绪通道 ${vm.ready_channel || "-"}）` : "已停止";
+  $("st-uptime").textContent = vm.running ? fmtUptime(vm.uptime_s) : "-";
+  $("st-netmode").textContent = net.mode === "ndc" ? "ndc（netd 本地网络）" : net.mode === "fallback" ? "退回模式（table 97）" : "未启用";
+  $("st-up").textContent = net.up_if || "-";
+  $("st-expose").textContent = (net.expose_if && net.expose_if.length) ? net.expose_if.join(", ") : "无";
+  $("st-vpn").textContent = `${vpn.mode || "-"}，生效 ${(vpn.routes_active || []).length} 条`;
+  $("st-share").textContent = sh.enabled ? `开启（本次 ${sh.mode}${sh.ce_ready ? "" : "，手机未解锁"}）` : "关闭";
+
+  // 熔断
+  const tripped = vm.tripped !== null && vm.tripped !== undefined;
+  $("trip-bar").classList.toggle("hidden", !tripped);
+  if (tripped) $("trip-time").textContent = vm.tripped;
+  $("btn-start").disabled = tripped || vm.running;
+  $("btn-stop").disabled = !vm.running;
+  $("btn-expand").disabled = vm.running;
+  $("btn-reset").disabled = vm.running;
+
+  // 访问链接
+  const pre = cfg.XR_NET_PREFIX || "172.29.233";
+  $("lnk-luci").href = $("lnk-luci").textContent = `http://${pre}.254`;
+  $("lnk-ttyd").href = $("lnk-ttyd").textContent = `http://${pre}.254:7681`;
+  $("txt-ssh").textContent = `ssh root@${pre}.254`;
+  $("txt-route").textContent = `${pre}.0/24 via <手机 IP>`;
+
+  // 表单（正在编辑的控件不覆盖）
+  document.querySelectorAll("[data-key]").forEach((el) => {
+    if (el === document.activeElement) return;
+    const v = cfg[el.dataset.key];
+    if (v === undefined) return;
+    if (el.type === "checkbox") el.checked = v === "1"; else el.value = v;
   });
-});
+  if (document.activeElement !== $("ta-routes")) {
+    $("ta-routes").value = (cfg.VPN_ROUTES || "").split(",").filter(Boolean).join("\n");
+  }
+  $("vpn-active").textContent = (vpn.routes_active || []).join(", ") || "无";
+  $("vpn-rejected").textContent = (vpn.routes_rejected || []).join(", ") || "无";
+  $("hint-all").classList.toggle("hidden", cfg.XR_EXPOSE !== "all");
 
-// --- Load & Parse Config ---
-async function loadConfigFromDevice() {
-  const { stdout } = await execRoot(`cat ${CONF_FILE} 2>/dev/null || cat ${MODDIR}/config/config.conf 2>/dev/null`);
-  stdout.split("\n").forEach((line) => {
-    const m = line.trim().match(/^([A-Z0-9_]+)="?([^"]*)"?$/);
-    if (m) {
-      currentConfig[m[1]] = m[2];
-    }
-  });
-  syncConfigToForm();
+  $("opt-rw").disabled = !sh.rw_supported;
+  $("hint-norw").classList.toggle("hidden", !!sh.rw_supported);
+
+  const as = $("cb-autostart"); const ah = $("hint-autostart");
+  let why = "";
+  if (tripped) why = "存在未确认的熔断，不能开启自启。";
+  else if (!vm.last_good_match) why = "需先用当前配置手动启动成功一次（运行到“已稳定”），才能开启自启。";
+  as.disabled = !!why && cfg.AUTOSTART !== "1";
+  ah.textContent = why;
+  ah.classList.toggle("hidden", !why);
 }
 
-function syncConfigToForm() {
-  document.getElementById("chk-router-autostart").checked = currentConfig.ROUTER_ENABLED === "1";
-  document.getElementById("sel-vm-backend").value = currentConfig.VM_BACKEND || "auto";
-  document.getElementById("sel-vm-cpus").value = currentConfig.VM_CPUS || "2";
-  document.getElementById("sel-vm-mem").value = currentConfig.VM_MEM_MB || "512";
-  document.getElementById("chk-hotspot-bridge").checked = currentConfig.HOTSPOT_BRIDGE_ENABLED === "1";
-  document.getElementById("chk-host-redirect").checked = currentConfig.HOST_REDIRECT_ENABLED === "1";
-  document.getElementById("chk-nas-mount").checked = currentConfig.NAS_MOUNT_ENABLED === "1";
-  document.getElementById("input-nas-path").value = currentConfig.NAS_HOST_PATH || "/data/media/0/NAS";
-  document.getElementById("chk-keepalive-enabled").checked = currentConfig.KEEPALIVE_ENABLED === "1";
-  document.getElementById("chk-wakelock").checked = currentConfig.WAKELOCK_ENABLED === "1";
-  document.getElementById("chk-bypass-charge").checked = currentConfig.BYPASS_CHARGE_ENABLED === "1";
-}
-
-async function saveConfigToDevice() {
-  currentConfig.CONFIG_SCHEMA_VER = "101";
-  currentConfig.ROUTER_ENABLED = document.getElementById("chk-router-autostart").checked ? "1" : "0";
-  currentConfig.VM_BACKEND = document.getElementById("sel-vm-backend").value;
-  currentConfig.VM_CPUS = document.getElementById("sel-vm-cpus").value;
-  currentConfig.VM_MEM_MB = document.getElementById("sel-vm-mem").value || "512";
-  currentConfig.HOTSPOT_BRIDGE_ENABLED = document.getElementById("chk-hotspot-bridge").checked ? "1" : "0";
-  currentConfig.HOST_REDIRECT_ENABLED = document.getElementById("chk-host-redirect").checked ? "1" : "0";
-  currentConfig.NAS_MOUNT_ENABLED = document.getElementById("chk-nas-mount").checked ? "1" : "0";
-  currentConfig.NAS_HOST_PATH = document.getElementById("input-nas-path").value.trim() || "/data/media/0/NAS";
-  currentConfig.KEEPALIVE_ENABLED = document.getElementById("chk-keepalive-enabled").checked ? "1" : "0";
-  currentConfig.WAKELOCK_ENABLED = document.getElementById("chk-wakelock").checked ? "1" : "0";
-  currentConfig.BYPASS_CHARGE_ENABLED = document.getElementById("chk-bypass-charge").checked ? "1" : "0";
-
-  const content = Object.entries(currentConfig)
-    .map(([k, v]) => `${k}="${v}"`)
-    .join("\n");
-
-  await execRoot(`mkdir -p /data/adb/x-route/config && cat <<'EOF' > ${CONF_FILE}\n${content}\nEOF\nsync`);
-  showToast("配置已保存至 " + CONF_FILE);
-}
-
-// --- Refresh Live Status ---
-async function refreshStatus() {
-  const envBadge = document.getElementById("env-badge");
-  envBadge.textContent = isKsuEnv() ? "SuKiSU Root 已连接" : "浏览器预览模式";
-
-  const { stdout } = await execRoot(`sh ${MODDIR}/action.sh status-json`);
-  let data;
+async function refresh() {
+  const r = await xr("status-json");
   try {
-    data = JSON.parse(stdout.trim());
+    status = JSON.parse(r.stdout);
+    render(status);
+    $("env-badge").textContent = "已连接";
+    $("env-badge").className = "badge badge-ok";
   } catch (e) {
-    return;
+    $("env-badge").textContent = hasKsu() ? "读取状态失败" : "需在 KernelSU 管理器中打开";
+    $("env-badge").className = "badge badge-bad";
   }
-
-  const fuseAlert = document.getElementById("fuse-alert");
-  if (fuseAlert) {
-    if (data.bootloop_tripped) fuseAlert.classList.remove("hidden");
-    else fuseAlert.classList.add("hidden");
-  }
-
-  // 1. VM Card
-  const vm = data.vm || {};
-  const net = data.net || {};
-  const ka = data.keepalive || {};
-
-  const vmPill = document.getElementById("vm-status-pill");
-  if (vm.running) {
-    vmPill.textContent = "运行中";
-    vmPill.className = "pill pill-running";
-  } else {
-    vmPill.textContent = "已停止";
-    vmPill.className = "pill pill-stopped";
-  }
-  document.getElementById("vm-backend-val").textContent =
-    vm.backend === "gunyah" ? "Gunyah (crosvm pVM)" : vm.backend === "qemu" ? "QEMU (ARM64)" : "未启动";
-  document.getElementById("vm-resource-val").textContent = vm.running
-    ? `PID ${vm.pid} · ${vm.cpus}核 / ${vm.mem_mb}MB`
-    : "-";
-  document.getElementById("gw-online-val").textContent = net.gw_online
-    ? `在线 (${net.lan_gw || "192.168.100.1"})`
-    : "离线 / 启动中";
-
-  // 2. Network Card
-  const netPill = document.getElementById("net-status-pill");
-  if (net.gw_online) {
-    netPill.textContent = "转发就绪";
-    netPill.className = "pill pill-running";
-  } else {
-    netPill.textContent = "待命";
-    netPill.className = "pill pill-warn";
-  }
-  document.getElementById("wan-if-val").textContent = net.cell_if || "未检测到蜂窝网卡";
-  document.getElementById("ap-if-val").textContent = net.ap_if
-    ? `${net.ap_if} -> br-lan (已接管)`
-    : "热点未开启 (开启后0.5秒自动接管)";
-  document.getElementById("redirect-state-val").textContent =
-    net.host_redirect === "active"
-      ? "已启用 (本机走 OpenWrt)"
-      : net.host_redirect === "pending"
-      ? "等待网关就绪..."
-      : "未启用 (仅热点走 OpenWrt)";
-  document.getElementById("lan-clients-val").textContent = `${net.lan_clients || 0} 台`;
-
-  // 3. Keep-Alive Card
-  const kaPill = document.getElementById("ka-status-pill");
-  kaPill.textContent = ka.daemon_running ? `守护中 (PID ${ka.daemon_pid})` : "已停止";
-  kaPill.className = ka.daemon_running ? "pill pill-running" : "pill pill-stopped";
-  document.getElementById("battery-info-val").textContent = `${ka.battery_cap ?? "-"}% (${ka.battery_status || "-"})`;
-
-  renderProtectedApps(ka.apps || []);
 }
 
-function renderProtectedApps(apps) {
-  const container = document.getElementById("protected-apps-list");
-  container.innerHTML = "";
-  const configuredPkgs = (currentConfig.KEEPALIVE_PACKAGES || "")
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+function startPolling() {
+  stopPolling();
+  timer = setInterval(refresh, 5000);
+}
+function stopPolling() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
 
-  if (configuredPkgs.length === 0) {
-    container.innerHTML = `<div class="hint">暂无保活应用，请在上方输入包名添加。</div>`;
-    return;
-  }
+async function action(btn, sub, args, okMsg) {
+  btn.disabled = true;
+  const r = await xr(sub, ...args);
+  if (r.errno === 0) toast(okMsg);
+  else toast(`失败：${(r.stdout + r.stderr).trim().split("\n").pop() || r.errno}`, true);
+  await refresh();
+}
 
-  configuredPkgs.forEach((pkg) => {
-    const info = apps.find((a) => a.pkg === pkg) || { pkg, installed: true, running: false, pids: "", oom_score_adj: "N/A" };
-    const row = document.createElement("div");
-    row.className = "app-item";
-    const statusText = !info.installed
-      ? "未安装"
-      : info.running
-      ? `运行中 (PID: ${info.pids} · OOM: ${info.oom_score_adj})`
-      : "未运行 (等待看门狗拉起)";
-
-    row.innerHTML = `
-      <div>
-        <strong>${pkg}</strong>
-        <div class="app-item-meta">${statusText}</div>
-      </div>
-      <button class="btn btn-danger btn-sm" data-remove-pkg="${pkg}">移除</button>
-    `;
-    container.appendChild(row);
-  });
-
-  container.querySelectorAll("[data-remove-pkg]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const target = btn.getAttribute("data-remove-pkg");
-      const list = (currentConfig.KEEPALIVE_PACKAGES || "")
-        .split(/[\s,]+/)
-        .filter((p) => p && p !== target);
-      currentConfig.KEEPALIVE_PACKAGES = list.join(" ");
-      await saveConfigToDevice();
-      await execRoot(`sh ${MODDIR}/scripts/keepalive_daemon.sh run-once`);
-      refreshStatus();
+function bind() {
+  $("btn-start").onclick = (e) => action(e.target, "start", [], "已启动，等待就绪");
+  $("btn-stop").onclick = (e) => action(e.target, "stop", [], "已停止");
+  $("btn-ack").onclick = (e) => action(e.target, "ack-trip", [], "熔断已确认");
+  $("btn-expand").onclick = (e) => {
+    const mb = $("in-expand").value.trim();
+    if (!/^\d+$/.test(mb) || Number(mb) < 512 || Number(mb) > 16384) { toast("请输入 512–16384 之间的 MB 数", true); return; }
+    action(e.target, "expand", [mb], `系统盘已扩容到 ${mb} MB，下次开机生效`);
+  };
+  $("btn-reset").onclick = (e) => {
+    if (!confirm("重置系统盘会清空 VM 内的全部数据和设置，确定继续？")) return;
+    if (!confirm("再次确认：VM 内数据将全部丢失。")) return;
+    action(e.target, "reset-disk", [], "系统盘已重置");
+  };
+  $("btn-log").onclick = async () => {
+    const which = $("sel-log").value;
+    if (!["xr", "console", "ctl", "vmm"].includes(which)) return;
+    const r = await xr("log", which, "200");
+    const box = $("log-box");
+    box.textContent = r.stdout || "（空）";
+    box.classList.remove("hidden");
+    box.scrollTop = box.scrollHeight;
+  };
+  $("btn-routes").onclick = () => {
+    const lines = $("ta-routes").value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length > 64) { toast("最多 64 条", true); return; }
+    for (const c of lines) {
+      const err = cidrOk(c);
+      if (err) { toast(`${c}：${err}`, true); return; }
+    }
+    setKey("VPN_ROUTES", lines.join(","));
+  };
+  document.querySelectorAll("[data-key]").forEach((el) => {
+    el.addEventListener("change", () => {
+      const v = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value.trim();
+      setKey(el.dataset.key, v);
     });
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopPolling(); else { refresh(); startPolling(); }
+  });
 }
 
-// --- Button Handlers ---
-document.getElementById("btn-start-router").addEventListener("click", async () => {
-  showToast("正在启动 OpenWrt 软路由与网络编排...");
-  await execRoot(`sh ${MODDIR}/action.sh start`);
-  await refreshStatus();
-  showToast("OpenWrt 软路由启动指令已下发！");
-});
-
-document.getElementById("btn-stop-router").addEventListener("click", async () => {
-  showToast("正在安全停止软路由并还原网络...");
-  await execRoot(`sh ${MODDIR}/action.sh stop`);
-  await refreshStatus();
-  showToast("软路由已停止，手机原生网络已恢复。");
-});
-
-document.getElementById("btn-sync-net").addEventListener("click", async () => {
-  showToast("正在同步 WAN 与热点网桥...");
-  await execRoot(`sh ${MODDIR}/scripts/net_orchestrator.sh reload`);
-  await refreshStatus();
-  showToast("网络与热点网桥同步完成！");
-});
-
-document.getElementById("btn-toggle-redirect").addEventListener("click", async () => {
-  const next = currentConfig.HOST_REDIRECT_ENABLED === "1" ? "0" : "1";
-  currentConfig.HOST_REDIRECT_ENABLED = next;
-  syncConfigToForm();
-  await saveConfigToDevice();
-  if (next === "1") {
-    await execRoot(`sh ${MODDIR}/scripts/net_orchestrator.sh enable-host-redirect`);
-    showToast("已开启手机本机流量回流至 OpenWrt");
-  } else {
-    await execRoot(`sh ${MODDIR}/scripts/net_orchestrator.sh disable-host-redirect`);
-    showToast("已关闭手机本机流量回流");
-  }
-  await refreshStatus();
-});
-
-document.getElementById("btn-add-pkg").addEventListener("click", async () => {
-  const input = document.getElementById("input-new-pkg");
-  const pkg = input.value.trim();
-  if (!pkg) return;
-  const set = new Set((currentConfig.KEEPALIVE_PACKAGES || "").split(/[\s,]+/).filter(Boolean));
-  set.add(pkg);
-  currentConfig.KEEPALIVE_PACKAGES = Array.from(set).join(" ");
-  input.value = "";
-  await saveConfigToDevice();
-  await execRoot(`sh ${MODDIR}/scripts/keepalive_daemon.sh run-once`);
-  await refreshStatus();
-});
-
-document.getElementById("btn-run-ka-now").addEventListener("click", async () => {
-  showToast("正在执行四重内核级保活巡检...");
-  await saveConfigToDevice();
-  await execRoot(`sh ${MODDIR}/scripts/keepalive_daemon.sh run-once`);
-  await refreshStatus();
-  showToast("四重保活巡检已完成！");
-});
-
-document.getElementById("btn-scan-pkgs").addEventListener("click", async () => {
-  const picker = document.getElementById("installed-picker");
-  const listEl = document.getElementById("installed-pkg-list");
-  picker.classList.remove("hidden");
-  listEl.innerHTML = `<div class="hint">正在扫描已安装应用...</div>`;
-  const { stdout } = await execRoot(`pm list packages -3 2>/dev/null | sed 's/package://g' | sort`);
-  const pkgs = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-  const currentSet = new Set((currentConfig.KEEPALIVE_PACKAGES || "").split(/[\s,]+/).filter(Boolean));
-
-  listEl.innerHTML = "";
-  pkgs.forEach((pkg) => {
-    const row = document.createElement("div");
-    row.className = "picker-row";
-    const checked = currentSet.has(pkg) ? "checked" : "";
-    row.innerHTML = `
-      <span>${pkg}</span>
-      <input type="checkbox" data-pick-pkg="${pkg}" ${checked} />
-    `;
-    listEl.appendChild(row);
-  });
-
-  listEl.querySelectorAll("[data-pick-pkg]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      const p = cb.getAttribute("data-pick-pkg");
-      const set = new Set((currentConfig.KEEPALIVE_PACKAGES || "").split(/[\s,]+/).filter(Boolean));
-      if (cb.checked) set.add(p);
-      else set.delete(p);
-      currentConfig.KEEPALIVE_PACKAGES = Array.from(set).join(" ");
-      await saveConfigToDevice();
-      await refreshStatus();
-    });
-  });
-});
-
-document.getElementById("btn-close-picker").addEventListener("click", () => {
-  document.getElementById("installed-picker").classList.add("hidden");
-});
-
-document.getElementById("btn-save-settings").addEventListener("click", async () => {
-  await saveConfigToDevice();
-  await execRoot(`sh ${MODDIR}/scripts/net_orchestrator.sh reload`);
-  await execRoot(`sh ${MODDIR}/scripts/keepalive_daemon.sh run-once`);
-  await refreshStatus();
-});
-
-async function refreshLogs() {
-  const src = document.getElementById("sel-log-source").value;
-  const viewer = document.getElementById("log-viewer");
-  viewer.textContent = "正在读取...";
-  let cmd = `tail -n 120 /data/adb/x-route/logs/x-route.log 2>/dev/null || echo '暂无日志'`;
-  if (src === "vm-console") {
-    cmd = `tail -n 120 /data/adb/x-route/logs/vm-console.log 2>/dev/null || echo '暂无虚拟机串口日志'`;
-  } else if (src === "net-diag") {
-    cmd = `echo '=== IP RULES ==='; ip rule show; echo '\n=== BR-LAN / TAP ==='; ip addr show dev br-lan 2>/dev/null; ip addr show dev tap-wan 2>/dev/null; echo '\n=== TABLE 100 ==='; ip route show table 100 2>/dev/null`;
-  }
-  const { stdout } = await execRoot(cmd);
-  viewer.textContent = stdout || "无输出";
-}
-
-document.getElementById("btn-refresh-logs").addEventListener("click", refreshLogs);
-document.getElementById("sel-log-source").addEventListener("change", refreshLogs);
-
-// Initialize
-(async function init() {
-  await loadConfigFromDevice();
-  await refreshStatus();
-  setInterval(refreshStatus, 6000);
-})();
+bind();
+refresh();
+startPolling();
