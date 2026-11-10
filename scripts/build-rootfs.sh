@@ -95,14 +95,14 @@ e2fsck -fy "${RAW}" >/dev/null 2>&1 || [ $? -le 1 ]
 
 # 检查：关键文件存在，禁止的文件不存在，只有 apk 没有 opkg
 for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/bin/apk /lib/apk/db/installed \
-         /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh; do
+         /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
 done
 for f in /usr/bin/htop /usr/bin/owut /usr/lib/opkg /bin/opkg /usr/bin/easyrsa; do
   if debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:"; then echo "forbidden ${f}"; exit 1; fi
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh; do
+for f in /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 
@@ -111,5 +111,8 @@ if command -v qemu-img >/dev/null 2>&1; then
   qemu-img convert -f raw -O qcow2 -c "${RAW}" "${DIST}/openwrt.qcow2"
 fi
 cp "bin/targets/armsr/armv8/immortalwrt-${IMM}-armsr-armv8-generic.manifest" "${DIST}/openwrt.manifest" 2>/dev/null || true
+if [ -f "${DIST}/openwrt.manifest" ]; then
+  grep -q 'luci-i18n-package-manager-zh-cn' "${DIST}/openwrt.manifest" || { echo "missing luci-i18n-package-manager-zh-cn"; exit 1; }
+fi
 rm -f "${RAW}"
 echo "[+] ${DIST}/openwrt-rootfs.img.gz ($(du -h "${DIST}/openwrt-rootfs.img.gz" | cut -f1))"

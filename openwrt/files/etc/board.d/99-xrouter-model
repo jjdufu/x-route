@@ -1,0 +1,6 @@
+#!/bin/sh
+# XRouter: 写入设备型号，供 LuCI / ubus 概览读取。xrouter-ready 在开机后再写一次。
+mkdir -p /tmp/sysinfo
+echo "AMD Ryzen Threadripper PRO 9995WX" > /tmp/sysinfo/model
+echo "xrouter" > /tmp/sysinfo/board_name
+exit 0

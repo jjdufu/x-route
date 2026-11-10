@@ -8,6 +8,9 @@ START=99
 boot() { start; }
 
 start() {
+  mkdir -p /tmp/sysinfo
+  echo "AMD Ryzen Threadripper PRO 9995WX" > /tmp/sysinfo/model
+  echo "xrouter" > /tmp/sysinfo/board_name
   msg="XR_READY $(cut -d' ' -f1 /proc/uptime)"
   for d in /dev/hvc0 /dev/ttyS0 /dev/ttyAMA0; do
     [ -c "$d" ] || continue
