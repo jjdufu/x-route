@@ -7,6 +7,7 @@
 MODDIR="${MODDIR:-/data/adb/modules/x_route}"
 XR_DATA="${XR_DATA:-/data/adb/x-route}"
 BB="${BB:-/data/adb/ksu/bin/busybox}"
+MEDIA="${XR_MEDIA:-/data/media/0}"   # 共享目录允许的根（底层路径，不用 FUSE 的 /storage/emulated/0）
 CONF="${XR_DATA}/config/config.conf"
 RUN="${XR_DATA}/run"
 LOG="${XR_DATA}/log/xr.log"
@@ -64,8 +65,8 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
     VM_SHARE_MODE)
       case "$2" in ro) ;; rw) [ -n "${RW_MAP_OPT}" ] ;; *) return 1;; esac ;;
     VM_SHARE_PATH)
-      case "$2" in /data/media/0|/data/media/0/*) ;; *) return 1;; esac
-      case "$2" in *..*|*\"*|*\'*|*' '*) return 1;; esac
+      case "$2" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1;; esac
+      case "$2" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*) return 1;; esac
       [ -d "$2" ] ;;
     VPN_MODE)
       case "$2" in terminal|site) ;; *) return 1;; esac ;;
