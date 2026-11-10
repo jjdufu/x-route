@@ -91,9 +91,9 @@ chk 'grep -q "^ip route replace 10.8.0.0/24 via 172.29.233.254 dev xr0 table 97"
 NDC_FAIL=1 $NET down
 chk '[ "$(cat "$T/proc/sys/net/ipv4/ip_forward")" = 0 ] && grep -q "^ip route del 10.8.0.0/24 table 97" "$MOCK/calls"'
 
-# 6. 运行模式：全局且就绪 -> 表 98 + pref 19100 + 热点进 xr0；旁路或未就绪则撤销
-echo "default via 10.0.0.1 dev rmnet_data2" > "$MOCK/devrt.rmnet_data2"
-echo "192.168.43.0/24 dev wlan1 proto kernel scope link src 192.168.43.1" > "$MOCK/devrt.wlan1"
+# 6. 运行模式：全局且就绪 -> 表 233 + pref 19100 + 热点进 xr0；旁路或未就绪则撤销
+echo "default via 10.0.0.1" > "$MOCK/devrt.rmnet_data2"
+echo "192.168.43.0/24 proto kernel scope link src 192.168.43.1" > "$MOCK/devrt.wlan1"
 set_kv XR_MODE global
 echo ready > "$RUN/state"
 echo "$$" > "$RUN/crosvm.pid"
@@ -102,9 +102,11 @@ echo "$$" > "$RUN/crosvm.pid"
 mkdir -p "$T/sysnet/xr0"
 # 上一段 down 清掉了链，需要重新 up
 $NET up
-chk 'grep -q "ip rule add pref 19100 lookup 98" "$MOCK/calls"'
-chk 'grep -q "ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 98" "$MOCK/calls"'
-chk 'grep -q "192.168.43.0/24 dev wlan1" "$MOCK/calls" && grep -q "table 98" "$MOCK/calls"'
+chk 'grep -q "ip rule add pref 19100 lookup 233" "$MOCK/calls"'
+chk 'grep -q "^ip rule add pref 18800 iif xr0 lookup local_network" "$MOCK/calls"'
+chk 'grep -q "^ip rule add pref 18900 iif xr0 lookup rmnet_data2" "$MOCK/calls"'
+chk 'grep -q "ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 233" "$MOCK/calls"'
+chk 'grep -q "192.168.43.0/24 proto kernel scope link src 192.168.43.1 dev wlan1 table 233" "$MOCK/calls"'
 chk '[ "$(cat "$RUN/net.gw")" = 1 ]'
 chk 'grep -qx -- "-i wlan1 -o xr0 -j ACCEPT" "$FWD" && grep -qx -- "-i xr0 -o wlan1 -j ACCEPT" "$FWD"'
 chk 'grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
@@ -115,7 +117,7 @@ chk '! grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
 # 旁路即使就绪也不接管
 echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
 set_kv XR_MODE bypass; : > "$MOCK/calls"; $NET sync
-chk '! grep -q "pref 19100 lookup 98" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
+chk '! grep -q "pref 19100 lookup 233" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
 # 仍不改写 VM 出站包
 chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
 $NET down

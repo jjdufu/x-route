@@ -99,10 +99,11 @@ upstream_out() {
 
 
 # ---- 运行模式：全局时（且 VM 已就绪）把本机与热点默认上网导入 VM；旁路不接管 ----
-# 表 98 + pref 19100：默认路由经 172.29.233.254。pref 18900（iif xr0 走上游）优先级更高，防止环路。
+# 表 233 + pref 19100：默认路由经 172.29.233.254。pref 18900（iif xr0 走上游）恒在其前，防止环路。
+# 不用 97/98/99：分别是 Android 的 local_network / legacy_network / legacy_system。
 # VM 未就绪、已停止或切到旁路时立即撤掉，避免把手机自己的上网搞断。
 GW_PREF=19100
-GW_TABLE=98
+GW_TABLE=233
 
 vm_alive() {
   p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
@@ -128,7 +129,7 @@ copy_dev_routes() {
     set -- $line
     [ "$1" = "default" ] && continue
     # shellcheck disable=SC2086
-    ip route replace $line table "${GW_TABLE}" 2>/dev/null
+    ip route replace $line dev "$dev" table "${GW_TABLE}" 2>/dev/null
   done
 }
 
@@ -159,11 +160,14 @@ sync_all() {
   old_up="$(cat "${RUN}/net.up_if" 2>/dev/null)"; old_outs="$(cat "${RUN}/net.up_out" 2>/dev/null)"
   if [ "$up" != "$old_up" ] || [ "$outs" != "$old_outs" ] || [ ! -f "${RUN}/net.up_if" ]; then
     for o in $old_outs; do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
+    while ip rule del pref 18800 2>/dev/null; do :; done
     while ip rule del pref 18900 2>/dev/null; do :; done
     if [ -n "$up" ]; then
-      fb=0
-      for o in $outs; do ndc_ok ipfwd add "${XR_IF}" "$o" || fb=1; done
-      [ $fb = 0 ] || ip rule add pref 18900 iif "${XR_IF}" lookup "$up"
+      for o in $outs; do ndc ipfwd add "${XR_IF}" "$o" >/dev/null 2>&1; done
+      # ndc ipfwd 的 pref 21000 排在 19000/19100 之后，VM 出站会被导回 VM，必须由 18900 兜住；
+      # 18800 先查本地网络表，VM 回热点等直连网段不走上游
+      ip rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
+      ip rule add pref 18900 iif "${XR_IF}" lookup "$up"
     fi
     echo "$up" > "${RUN}/net.up_if"; echo "$outs" > "${RUN}/net.up_out"
     log_info net "上游 ${old_up:-无} -> ${up:-无}（出口 ${outs:-无}）"
@@ -212,6 +216,8 @@ net_watch() {
        || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
     fwd_first; nat_first
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
+    [ -z "$up" ] || ip rule 2>/dev/null | grep -q "^18800:.*iif ${XR_IF}" || ip rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
+    [ -z "$up" ] || ip rule 2>/dev/null | grep -q "^18900:.*iif ${XR_IF} lookup ${up}" || ip rule add pref 18900 iif "${XR_IF}" lookup "$up"
     if [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = fallback ]; then
       ip route show table 97 2>/dev/null | grep -q "^${NET} dev ${XR_IF}" || ip route replace "${NET}" dev "${XR_IF}" table 97
       routes_reassert
@@ -228,6 +234,7 @@ net_down() {
   while ${IPT} -t nat -D POSTROUTING -j XR_NAT 2>/dev/null; do :; done
   ${IPT} -t nat -F XR_NAT 2>/dev/null; ${IPT} -t nat -X XR_NAT 2>/dev/null
   for o in $(cat "${RUN}/net.up_out" 2>/dev/null); do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
+  while ip rule del pref 18800 2>/dev/null; do :; done
   while ip rule del pref 18900 2>/dev/null; do :; done
   while ip rule del pref 4800 2>/dev/null; do :; done
   ndc ipfwd disable xrouter >/dev/null 2>&1

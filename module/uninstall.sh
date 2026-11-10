@@ -60,11 +60,11 @@ ${IPT} -t nat -X XR_NAT 2>/dev/null
 ndc ipfwd disable xrouter >/dev/null 2>&1
 ndc ipfwd disable xroute >/dev/null 2>&1
 # pref：访问 VM 网段、VPN 网段、VM 出网、全局接管（见 docs/xrouter-plan/04）
-for pref in 4800 4801 18900 19100; do
+for pref in 4800 4801 18800 18900 19100; do
   while ip rule del pref "${pref}" 2>/dev/null; do :; done
 done
 ip route flush table 97 2>/dev/null
-ip route flush table 98 2>/dev/null
+ip route flush table 233 2>/dev/null
 ip link del xr0 2>/dev/null
 
 # 4. 通知与唤醒锁
