@@ -19,6 +19,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js (WebUI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install WebUI dependencies
+        run: npm ci --prefix webui --no-fund --no-audit
+
       - name: Install shellcheck
         run: |
           sudo apt-get update

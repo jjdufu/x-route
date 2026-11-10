@@ -42,8 +42,8 @@ chk '[ -f "$XR_DATA/config/config.conf" ] && [ -f "$XR_DATA/images/Image" ] && [
 chk '[ "$(stat -c %s "$XR_DATA/images/openwrt-rootfs.img")" -eq $((1024*1024*1024)) ]'
 chk '[ ! -d "$T/mod/data" ] && [ -f "$T/mod/skip_mount" ]'
 # 重装保留用户数据
-sed -i 's/^XR_EXPOSE=.*/XR_EXPOSE="off"/' "$XR_DATA/config/config.conf"; echo keep >> "$XR_DATA/images/openwrt-rootfs.img"
-install_pkg full; chk 'grep -q "XR_EXPOSE=\"off\"" "$XR_DATA/config/config.conf" && tail -c5 "$XR_DATA/images/openwrt-rootfs.img" | grep -q keep'
+sed -i 's/^XR_EXPOSE=.*/XR_EXPOSE="local"/' "$XR_DATA/config/config.conf"; echo keep >> "$XR_DATA/images/openwrt-rootfs.img"
+install_pkg full; chk 'grep -q "XR_EXPOSE=\"local\"" "$XR_DATA/config/config.conf" && tail -c5 "$XR_DATA/images/openwrt-rootfs.img" | grep -q keep'
 # Lite：已有镜像可装；没有镜像时中止
 install_pkg lite; chk 'grep -q "Lite" "$T/install.log" && ! grep -q "^! 缺少" "$T/install.log"'
 rm -rf "$XR_DATA"; install_pkg lite; chk 'grep -q "缺少" "$T/install.log"'

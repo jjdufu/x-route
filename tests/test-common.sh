@@ -15,7 +15,7 @@ ok valid_kv XR_NET_PREFIX 172.29.233;   no valid_kv XR_NET_PREFIX 8.8.8;   no va
 no valid_kv XR_NET_PREFIX 172.32.1;     ok valid_kv XR_NET_PREFIX 192.168.7; ok valid_kv XR_NET_PREFIX 10.1.2
 ok valid_kv XR_VM_MAC 52:54:00:1d:e9:fe; no valid_kv XR_VM_MAC 52:54:00:1D:e9:fe
 ok valid_kv XR_DNS "223.5.5.5 119.29.29.29"; no valid_kv XR_DNS ""; no valid_kv XR_DNS "1.1.1.1 2.2.2.2 3.3.3.3 4.4.4.4"; no valid_kv XR_DNS "1.1.1.300"
-ok valid_kv XR_EXPOSE hotspot; no valid_kv XR_EXPOSE lan
+ok valid_kv XR_EXPOSE lan; ok valid_kv XR_EXPOSE local; no valid_kv XR_EXPOSE hotspot; no valid_kv XR_EXPOSE off
 ok valid_kv XR_MODE global; ok valid_kv XR_MODE bypass; no valid_kv XR_MODE site
 ok valid_kv VM_CPUS 4; no valid_kv VM_CPUS 5; no valid_kv VM_CPUS x
 ok valid_kv VM_MEM_MB 512; no valid_kv VM_MEM_MB 256; no valid_kv VM_MEM_MB 99999999
@@ -37,7 +37,7 @@ ok cidr_overlap 192.168.0.0/16 192.168.50.0/24; no cidr_overlap 192.168.50.0/24 
 ok cidr_overlap 172.29.233.0/24 172.16.0.0/12; no cidr_overlap 10.0.0.0/8 172.29.233.0/24
 
 # set_kv：合法值写入，非法值不改文件
-ok set_kv XR_EXPOSE off; grep -qx 'XR_EXPOSE="off"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }
+ok set_kv XR_EXPOSE local; grep -qx 'XR_EXPOSE="local"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }
 h1="$(sha256sum "$CONF")"; no set_kv XR_EXPOSE bad; [ "$h1" = "$(sha256sum "$CONF")" ] || { echo "FAIL: set_kv modified on invalid"; fail=1; }
 ok set_kv XR_MODE bypass; load_config; [ "$XR_MODE" = "bypass" ] || { echo "FAIL: reload"; fail=1; }
 h="$(config_hash)"; [ "${#h}" -eq 16 ] || { echo "FAIL: config_hash"; fail=1; }

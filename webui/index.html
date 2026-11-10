@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>XRouter</title>
+  <script type="module" src="./src/main.js"></script>
+</head>
+<body>
+  <div class="shell" unresolved>
+    <header class="appbar">
+      <span class="title">XRouter</span>
+      <span id="chip" class="chip chip-off"><span class="dot"></span><span id="chip-text">已停止</span></span>
+    </header>
+
+    <md-tabs id="tabs" class="tabs" aria-label="页面">
+      <md-primary-tab data-page="0"><md-icon slot="icon" data-icon="dashboard"></md-icon>概览</md-primary-tab>
+      <md-primary-tab data-page="1"><md-icon slot="icon" data-icon="hub"></md-icon>组网</md-primary-tab>
+      <md-primary-tab data-page="2"><md-icon slot="icon" data-icon="receipt_long"></md-icon>日志</md-primary-tab>
+      <md-primary-tab data-page="3"><md-icon slot="icon" data-icon="settings"></md-icon>设置</md-primary-tab>
+    </md-tabs>
+
+    <main id="pager" class="pager">
+      <!-- 概览 -->
+      <section class="page" id="page-home">
+        <div id="trip" class="card alert" hidden>
+          <md-icon data-icon="warning"></md-icon>
+          <span class="grow">整机复位后自启已关闭</span>
+          <md-filled-tonal-button id="btn-ack">确认</md-filled-tonal-button>
+        </div>
+
+        <div class="power-area">
+          <div id="power-wrap" class="power-wrap stopped">
+            <svg class="ring" viewBox="0 0 140 140" aria-hidden="true"><circle cx="70" cy="70" r="66"></circle></svg>
+            <button id="power" class="power" type="button" aria-label="电源">
+              <md-ripple></md-ripple>
+              <md-focus-ring></md-focus-ring>
+              <md-icon data-icon="power_settings_new"></md-icon>
+            </button>
+          </div>
+          <div id="power-text" class="power-text">已停止</div>
+          <div id="power-steps" class="steps" hidden>
+            <span data-step="0">启动虚拟机</span><md-icon data-icon="chevron_right"></md-icon>
+            <span data-step="1">网络就绪</span><md-icon data-icon="chevron_right"></md-icon>
+            <span data-step="2">运行中</span>
+          </div>
+        </div>
+
+        <div id="row-autostart" class="card row-big" role="switch">
+          <md-ripple></md-ripple>
+          <md-icon data-icon="schedule"></md-icon>
+          <span class="grow">开机自启</span>
+          <md-switch id="sw-autostart" icons></md-switch>
+        </div>
+
+        <div class="card list">
+          <div class="item"><md-icon data-icon="router"></md-icon><span class="grow">运行时长</span><span id="v-uptime" class="val">—</span></div>
+          <div class="item"><md-icon id="i-up" data-icon="cloud_off"></md-icon><span class="grow">上游网络</span><span id="v-up" class="val">—</span></div>
+          <button id="btn-luci" class="item item-btn" type="button">
+            <md-ripple></md-ripple>
+            <md-icon data-icon="open_in_new"></md-icon><span class="grow">打开 LuCI</span><md-icon class="trail" data-icon="chevron_right"></md-icon>
+          </button>
+        </div>
+      </section>
+
+      <!-- 组网 -->
+      <section class="page" id="page-link">
+        <div class="card list">
+          <div class="card-head"><md-icon data-icon="vpn_lock"></md-icon><span class="grow">OpenVPN</span></div>
+          <div class="item"><md-icon data-icon="link"></md-icon><span class="grow">连接状态</span><span id="v-vpn" class="val">未连接</span></div>
+          <div class="item item-top"><md-icon data-icon="alt_route"></md-icon><span class="grow">路由网段</span><span id="v-routes" class="val mono">无</span></div>
+          <div class="actions">
+            <md-filled-tonal-button id="btn-import"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="page page-logs" id="page-logs">
+        <div id="log-kinds" class="seg seg-wide" role="tablist"></div>
+        <pre id="log-box" class="log"></pre>
+        <div class="actions">
+          <md-text-button id="btn-log-clear"><md-icon slot="icon" data-icon="delete_sweep"></md-icon>清空</md-text-button>
+          <span class="grow"></span>
+          <md-outlined-button id="btn-export-one"><md-icon slot="icon" data-icon="download"></md-icon>导出当前</md-outlined-button>
+          <md-filled-tonal-button id="btn-export-all"><md-icon slot="icon" data-icon="download"></md-icon>导出全部</md-filled-tonal-button>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" id="page-settings">
+        <div class="group-title">网络</div>
+        <div class="card list">
+          <div class="item"><md-icon data-icon="swap_horiz"></md-icon><span class="grow">运行模式</span><div id="seg-mode" class="seg"></div></div>
+          <div class="item"><md-icon data-icon="admin_panel_settings"></md-icon><span class="grow">管理访问</span>
+            <md-outlined-select id="sel-access" class="sel"></md-outlined-select></div>
+          <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><md-switch id="sw-ipv6" icons></md-switch></div>
+        </div>
+
+        <div class="group-title">存储共享</div>
+        <div class="card list">
+          <div id="row-share" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="folder_shared"></md-icon><span class="grow">存储共享</span><md-switch id="sw-share" icons></md-switch></div>
+          <div class="item"><md-icon data-icon="lock"></md-icon><span class="grow">权限</span><div id="seg-share" class="seg"></div></div>
+          <button id="btn-share-path" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="folder"></md-icon><span class="grow">目录</span><span id="v-share-path" class="val path">内部存储</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
+        </div>
+
+        <div class="group-title">虚拟机资源</div>
+        <div class="card list">
+          <div class="item"><md-icon data-icon="memory"></md-icon><span class="grow">CPU</span><md-outlined-select id="sel-cpu" class="sel"></md-outlined-select></div>
+          <div class="item"><md-icon data-icon="developer_board"></md-icon><span class="grow">内存</span><md-outlined-select id="sel-mem" class="sel"></md-outlined-select></div>
+        </div>
+
+        <div class="group-title">系统盘</div>
+        <div class="card list">
+          <div class="item"><md-icon data-icon="hard_drive"></md-icon><span class="grow">容量</span><span id="v-disk" class="val">—</span></div>
+          <div class="actions">
+            <md-outlined-button id="btn-expand"><md-icon slot="icon" data-icon="expand_content"></md-icon>扩容</md-outlined-button>
+            <md-outlined-button id="btn-reset" class="danger"><md-icon slot="icon" data-icon="restart_alt"></md-icon>重置</md-outlined-button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 确认 -->
+  <md-dialog id="dlg-confirm" class="dlg">
+    <div slot="headline" id="dlg-confirm-title"></div>
+    <form slot="content" id="dlg-confirm-form" method="dialog"><span id="dlg-confirm-text"></span></form>
+    <div slot="actions">
+      <md-text-button form="dlg-confirm-form" value="cancel">取消</md-text-button>
+      <md-filled-button id="dlg-confirm-ok" form="dlg-confirm-form" value="ok">确认</md-filled-button>
+    </div>
+  </md-dialog>
+
+  <!-- 扩容 -->
+  <md-dialog id="dlg-expand" class="dlg">
+    <div slot="headline">扩容系统盘</div>
+    <form slot="content" id="dlg-expand-form" method="dialog">
+      <md-outlined-select id="sel-expand" class="sel-full" label="扩容到"></md-outlined-select>
+    </form>
+    <div slot="actions">
+      <md-text-button form="dlg-expand-form" value="cancel">取消</md-text-button>
+      <md-filled-button form="dlg-expand-form" value="ok">扩容</md-filled-button>
+    </div>
+  </md-dialog>
+
+  <!-- 文件夹 / 文件浏览 -->
+  <md-dialog id="dlg-files" class="dlg dlg-files">
+    <div slot="headline" class="fb-head">
+      <md-icon-button id="fb-up" aria-label="上一级"><md-icon data-icon="arrow_upward"></md-icon></md-icon-button>
+      <div id="fb-crumbs" class="crumbs"></div>
+    </div>
+    <form slot="content" id="dlg-files-form" method="dialog"><div id="fb-list" class="fb-list"></div></form>
+    <div slot="actions">
+      <md-text-button form="dlg-files-form" value="cancel">取消</md-text-button>
+      <md-filled-button id="fb-pick" form="dlg-files-form" value="ok">选择此文件夹</md-filled-button>
+    </div>
+  </md-dialog>
+
+  <div id="snack" class="snack" role="status"></div>
+</body>
+</html>

@@ -19,6 +19,9 @@ vm_running() {
   is_pid_running "$p" && grep -q crosvm "/proc/$p/cmdline" 2>/dev/null
 }
 
+# 启动失败原因（单行，供 WebUI 显示）；再次启动或就绪时清除
+vm_fail() { log_err vm "$1"; echo "$2" > "${RUN}/last_error"; }
+
 # ---- 熔断 ----
 fuse_arm()   { printf '%s %s\n' "$(date +%s)" "$(config_hash)" > "${FUSE}"; sync; sleep 1; }
 ready_seen() { grep -q '^XR_READY' "${CTL_LOG}" 2>/dev/null || grep -aq 'XR_READY' "${CON_LOG}" 2>/dev/null; }
@@ -31,16 +34,16 @@ ready_channel() {
 fuse_watch() {
   load_config; t=0
   while [ "$t" -lt "${READY_TIMEOUT_SEC}" ]; do
-    vm_running || { rm -f "${FUSE}"; sync; log_err vm "就绪前 crosvm 已退出，详见 vmm.log"; return; }
+    vm_running || { rm -f "${FUSE}"; sync; vm_fail "就绪前 crosvm 已退出，详见 vmm.log" "虚拟机启动中退出"; return; }
     ready_seen && break
     sleep 2; t=$((t+2))
   done
-  if ! ready_seen; then log_err vm "${READY_TIMEOUT_SEC} 秒内未就绪，停止 VM"; XR_IN_WATCH=1 vm_stop; return; fi
-  echo ready > "${RUN}/state"; log_info vm "XR_READY（$(ready_channel)）"
+  if ! ready_seen; then vm_fail "${READY_TIMEOUT_SEC} 秒内未就绪，停止 VM" "${READY_TIMEOUT_SEC} 秒内未就绪"; XR_IN_WATCH=1 vm_stop; return; fi
+  echo ready > "${RUN}/state"; rm -f "${RUN}/last_error"; log_info vm "XR_READY（$(ready_channel)）"
   sh "${MODDIR}/scripts/net.sh" sync
   t=0
   while [ "$t" -lt "${STABLE_SEC}" ]; do
-    vm_running || { rm -f "${FUSE}"; sync; log_err vm "稳定期内 crosvm 退出"; return; }
+    vm_running || { rm -f "${FUSE}"; sync; vm_fail "稳定期内 crosvm 退出" "虚拟机意外退出"; return; }
     sleep 5; t=$((t+5))
   done
   rm -f "${FUSE}"; config_hash > "${LAST_GOOD}"; sync
@@ -51,16 +54,17 @@ fuse_watch() {
 vm_start_exec() {
   load_config
   vm_running && { log_info vm "已在运行"; return 0; }
+  rm -f "${RUN}/last_error"
   [ -f "${TRIPPED}" ] && { log_err vm "熔断未确认（xr ack-trip）"; return 1; }
   if [ ! -x "${CROSVM}" ] || [ ! -f "${IMG}/Image" ] || [ ! -f "${ROOTFS}" ]; then
-    log_err vm "缺少 crosvm 或镜像"; return 1
+    vm_fail "缺少 crosvm 或镜像" "缺少虚拟化组件或系统镜像"; return 1
   fi
   ce_ready || log_info vm "警告：手机未解锁（CE 不可用）"
   mem="${VM_MEM_MB}"; [ "${mem}" -lt 384 ] && mem=512
 
   net_args=""
   if [ "${VM_NET}" = 1 ]; then
-    sh "${MODDIR}/scripts/net.sh" up || { log_err vm "net up 失败"; return 1; }
+    sh "${MODDIR}/scripts/net.sh" up || { vm_fail "net up 失败" "网络初始化失败"; return 1; }
     net_args="--net tap-name=xr0,mac=${XR_VM_MAC}"
   fi
 
@@ -109,7 +113,7 @@ vm_start_exec() {
   echo $! > "${PID_F}"
   sleep 2
   if ! vm_running; then
-    log_err vm "crosvm 立即退出，详见 vmm.log"; rm -f "${FUSE}" "${PID_F}"; sync; wakelock_off
+    vm_fail "crosvm 立即退出，详见 vmm.log" "虚拟机无法启动"; rm -f "${FUSE}" "${PID_F}"; sync; wakelock_off
     [ "${VM_NET}" = 1 ] && sh "${MODDIR}/scripts/net.sh" down
     return 1
   fi
@@ -153,8 +157,9 @@ vm_status() {
   tr="null"; [ -f "${TRIPPED}" ] && tr="\"$(cat "${TRIPPED}")\""
   lg=false; [ "$(cat "${LAST_GOOD}" 2>/dev/null)" = "$(config_hash)" ] && lg=true
   ch="$(ready_channel)"; [ "$ch" = null ] || ch="\"$ch\""
-  printf '{"running":%s,"pid":%s,"state":"%s","uptime_s":%s,"tripped":%s,"last_good_match":%s,"ready_channel":%s}' \
-    "$running" "$pid" "$state" "$up" "$tr" "$lg" "$ch"
+  er="$(head -n1 "${RUN}/last_error" 2>/dev/null | tr -d "\"\\\\")"
+  printf '{"running":%s,"pid":%s,"state":"%s","uptime_s":%s,"tripped":%s,"last_good_match":%s,"ready_channel":%s,"error":"%s"}' \
+    "$running" "$pid" "$state" "$up" "$tr" "$lg" "$ch" "$er"
 }
 
 

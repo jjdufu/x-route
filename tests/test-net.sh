@@ -39,7 +39,7 @@ chk '[ "$(sed -n 1p "$FWD")" = "-o xr0 -m conntrack --ctstate RELATED,ESTABLISHE
 chk '[ "$(sed -n 3p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 8.8.8.0/24 -j ACCEPT" "$FWD"'
 chk '[ "$(tail -2 "$FWD" | tr "\n" "|")" = "-o xr0 -j DROP|-i xr0 -j DROP|" ]'
-chk '$NET status | grep -q "\"mode\":\"ndc\",\"up_if\":\"rmnet_data2\",\"expose\":\"hotspot\",\"expose_if\":\[\"wlan1\"\]"'
+chk '$NET status | grep -q "\"mode\":\"ndc\",\"up_if\":\"rmnet_data2\",\"expose\":\"lan\",\"expose_if\":\[\"wlan1\"\]"'
 # 默认全局，但 VM 未就绪：不得安装接管规则，以免把手机上网搞断
 chk '! grep -q "rule add pref 19100" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
 
@@ -52,7 +52,7 @@ chk '[ "$(cat "$RUN/net.expose_if")" = "wlan0 wlan1 " ]'
 chk 'grep -qx -- "-i wlan0 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD"'
 chk 'grep -qx -- "-i xr0 -o wlan0 -j ACCEPT" "$FWD" && grep -qx -- "-s 172.29.233.0/24 -o wlan0 -j MASQUERADE" "$MOCK/XR_NAT"'
 chk '! grep -qx -- "-i wlan0 -o xr0 -j DROP" "$FWD"'   # all 明确放行了 Wi-Fi 上游局域网
-set_kv XR_EXPOSE hotspot; $NET sync
+set_kv XR_EXPOSE lan; $NET sync
 chk 'grep -qx -- "-i wlan0 -o xr0 -j DROP" "$FWD" && ! grep -q -- "-i wlan0 -o xr0 -d" "$FWD"'   # Wi-Fi 上游同样默认不信任
 set_kv XR_EXPOSE all
 # 纯蜂窝 + 464xlat：IPv4 实际出口是 v4-rmnet_data2，出站/NAT/ipfwd 都要覆盖
@@ -70,10 +70,10 @@ chk '[ "$(cat "$RUN/net.up_out")" = "rmnet_data2 " ] && ! grep -q v4-rmnet "$FWD
 chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
 chk '[ -z "$(grep -v -- "^-s 172.29.233.0/24 -o [a-z0-9_-]* -j MASQUERADE$" "$MOCK/XR_NAT")" ]'
 # 3. 去掉 VPN 网段 -> 路由与规则撤销
-set_kv XR_EXPOSE hotspot; : > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"; $NET sync
+set_kv XR_EXPOSE lan; : > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"; $NET sync
 chk 'grep -q "^ndc network route remove local xr0 10.8.0.0/24 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule del pref 4801 to 10.8.0.0/24" "$MOCK/calls"'
 chk '[ -z "$(cat "$RUN/routes.active")" ] && ! grep -q 10.8.0.0 "$FWD"'
-XR_EXPOSE=off; set_kv XR_EXPOSE off; $NET sync
+XR_EXPOSE=local; set_kv XR_EXPOSE local; $NET sync
 chk '! grep -q -- "-i wlan1" "$FWD" && [ "$(cat "$RUN/net.expose_if")" = " " -o -z "$(tr -d " " < "$RUN/net.expose_if")" ]'
 # 4. down
 rmdir "$T/sysnet/xr0"; : > "$MOCK/calls"; $NET down
@@ -128,7 +128,7 @@ chk '! grep -q "^ip -6 rule add pref 19100" "$MOCK/calls" && ! grep -q -- "REJEC
 $NET down
 
 # 7. IPv6 真全局：客侧上报 IPv6 已开 -> 本机与热点 IPv6 经 ::254，NAT66 出上游；关掉后恢复拒绝
-set_kv XR_MODE global; set_kv XR_EXPOSE hotspot
+set_kv XR_MODE global; set_kv XR_EXPOSE lan
 echo "default via fe80::1 dev rmnet_data2 proto ra metric 1024 pref medium" > "$MOCK/rt6.rmnet_data2"
 echo "2409:8a00:1:2::/64 proto kernel metric 256 expires 7000sec pref medium" > "$MOCK/devrt6.main.rmnet_data2"
 echo "2409:8a00:1:3::/64 proto static metric 1024 pref medium" > "$MOCK/devrt6.local_network.wlan1"

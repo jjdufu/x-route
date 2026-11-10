@@ -7,3 +7,6 @@
 *.img.gz
 *.zip
 .DS_Store
+# WebUI：依赖与构建产物（构建输出到 module/webroot，由 package-module.sh 生成）
+/webui/node_modules/
+/module/webroot/

@@ -39,10 +39,10 @@ tether_ifaces() {    # netd 把热点、USB 共享等下游网卡登记在 local
   ip route show table local_network 2>/dev/null \
     | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | sort -u | grep -vx "${XR_IF}"
 }
-expose_ifaces() {
+expose_ifaces() {   # 管理访问：local 仅本机；lan 加热点设备；all 再加所连 Wi-Fi 局域网
   case "${XR_EXPOSE}" in
-    off) ;;
-    hotspot) tether_ifaces ;;
+    local) ;;
+    lan) tether_ifaces ;;
     all) { tether_ifaces; u="$(upstream_iface)"; [ -n "$u" ] && echo "$u"; } | sort -u ;;
   esac | grep -vE "${CELL_RE}"   # 运营商网络不是局域网：即使 all 也不把蜂窝当作暴露接口（行为与之前一致）
 }
@@ -232,7 +232,7 @@ rules_set() {   # $1=ip|ip6：VM 出站 18800 查本地网络表、18900 走当�
 #   - 出站：-i xr0 -o <上游出口> 放行，并在 XR_NAT 中 MASQUERADE；
 #   - 回包：ESTABLISHED,RELATED 放行（排在所有 DROP 之前）；
 #   - 入站：上游主动发往 xr0 的流量丢弃；只有 XR_EXPOSE 明确列出的下游
-#     （hotspot：热点/USB 共享；all：再加非蜂窝上游所在局域网）可以访问 VM 网段。
+#     （lan：热点/USB 共享；all：再加非蜂窝上游所在局域网）可以访问 VM 网段。
 sync_all() {
   load_config
   up="$(upstream_iface)"; outs="$(upstream_out "$up")"; outs6="$(upstream_out6 "$up")"

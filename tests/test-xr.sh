@@ -12,7 +12,7 @@ printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_avail
 cat > "$T/mod/scripts/net.sh" <<EOS
 #!/bin/sh
 echo "net \$*" >> "$T/net.calls"
-[ "\$1" = status ] && printf '{"mode":"ndc","up_if":"wlan0","expose":"hotspot","expose_if":["wlan1"],"vm_ip":"172.29.233.254","host_ip":"172.29.233.1"}\n'
+[ "\$1" = status ] && printf '{"mode":"ndc","up_if":"wlan0","expose":"lan","expose_if":["wlan1"],"vm_ip":"172.29.233.254","host_ip":"172.29.233.1"}\n'
 [ "\$1" = sync ] && printf '10.8.0.0/24\n' > "$T/data/run/routes.active"
 exit 0
 EOS
@@ -26,7 +26,7 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
-chk '$XR get | grep -qx "XR_EXPOSE=hotspot" && [ "$($XR get | wc -l)" -eq 19 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 19 ]'
 cp "$CONF" "$T/conf.bak"
 out="$($XR set VM_MEM_MB 99999)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "\"ok\":false" && cmp -s "$CONF" "$T/conf.bak"'
 out="$($XR set 'X;rm' 1)"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
@@ -39,7 +39,7 @@ out="$($XR set AUTOSTART 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "手动
 # status 停止态
 s="$($XR status-json)"
 chk 'echo "$s" | J "d[\"vm\"][\"running\"] is False and d[\"vm\"][\"state\"]==\"stopped\" and d[\"share\"][\"mode\"]==\"off\" and d[\"config\"][\"VM_MEM_MB\"]==\"768\" and d[\"net\"][\"mode\"]==\"ndc\"" | grep -qx True'
-chk '$XR status-line | grep -q "^已停止 / - / 172.29.233.254 / 暴露=hotspot / VPN网段=0$"'
+chk '$XR status-line | grep -q "^已停止 / - / 172.29.233.254 / 管理访问=lan / VPN网段=0$"'
 chk '! $XR running'
 # 启动 -> 稳定 -> 自启允许；需重启键提示 restart=true
 $XR start; chk '[ $? -eq 0 ] && $XR running'
@@ -70,13 +70,18 @@ chk '$XR status-json | J "d[\"ipv6\"] is True" | grep -qx True'
 out="$(XR_IPV6_WAIT=1 $XR ipv6 off)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "虚拟机未响应" && grep -q "^off " "$RUN/guest/host/ipv6.cmd"'
 out="$($XR ipv6 maybe)"; chk '[ $? -eq 2 ]'
 : > "$T/net.calls"; $XR sync >/dev/null
-# 分片导入占位 ovpn（无密钥）；运行中写入控制目录，不得写入日志
-ovpn="$(printf 'client\ndev tun\nremote 127.0.0.1 1194\n')"
-b64="$(printf '%s' "$ovpn" | base64 | tr -d '\n')"
-chk '$XR vpn-stage-begin | grep -q "\"ok\":true"'
-chk '$XR vpn-stage-append "$b64" | grep -q "\"ok\":true"'
-chk '$XR vpn-stage-commit | grep -q "\"ok\":true"'
-chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -qx enable "$RUN/guest/host/openvpn.cmd"'
+# 从内部存储导入占位 ovpn（无密钥）；运行中写入控制目录（带时间戳，重复导入也会重载），不得写入日志
+export XR_MEDIA="$T/media"; mkdir -p "$XR_MEDIA/Download/vpn" "$XR_MEDIA/.hidden" "$XR_MEDIA/Music"
+printf 'client\ndev tun\nremote 127.0.0.1 1194\n' > "$XR_MEDIA/Download/vpn/home.ovpn"
+printf 'x' > "$XR_MEDIA/Download/vpn/notes.txt"; printf 'abc\001\002defghij' > "$XR_MEDIA/Download/vpn/bin.conf"
+chk '[ "$($XR ls "$XR_MEDIA" | tr "\n" " ")" = "d/Download d/Music " ]'
+chk '[ "$($XR ls /storage/emulated/0/Download/vpn ovpn | tr "\n" " ")" = "f/bin.conf f/home.ovpn " ] && [ -z "$($XR ls /storage/emulated/0/Download/vpn)" ]'
+chk '! $XR ls /data/adb >/dev/null && ! $XR ls "$XR_MEDIA/../" >/dev/null'
+chk '$XR vpn-import /storage/emulated/0/Download/vpn/home.ovpn | grep -q "\"ok\":true"'
+chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -q "^enable [0-9]*$" "$RUN/guest/host/openvpn.cmd" && [ -f "$XR_DATA/config/openvpn.ovpn" ]'
+chk '$XR vpn-import /storage/emulated/0/Download/vpn/bin.conf | grep -q "\"ok\":false" && ! $XR vpn-import /data/adb/x.ovpn >/dev/null'
+# 清空日志
+printf 'x\n' > "$RUN/console.log"; chk '$XR log-clear console | grep -q "\"ok\":true" && [ ! -s "$RUN/console.log" ]'
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null && [ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'
 chk '$XR log xr 5 | grep -q . && [ "$($XR log xr 3 | wc -l)" -eq 3 ] && $XR log console >/dev/null'

@@ -56,10 +56,7 @@
 
 CLI（WebUI 第 7 步调用）：
 
-- `xr vpn-import`：从 stdin 或已放在 `${RUN}/incoming.ovpn` 的文件安装。因 `ksu.exec` 不便传 stdin，提供分片写入：
-  - `xr vpn-stage-begin`
-  - `xr vpn-stage-append <base64>`（每片长度限制在命令行安全范围内，如 2KB）
-  - `xr vpn-stage-commit`：解码校验为文本配置后写入 `host/openvpn.ovpn`，写入 `host/openvpn.cmd=enable`
+- `xr vpn-import <内部存储中的路径>`：WebUI 用内置文件浏览（`xr ls <目录> ovpn`）选中文件后调用；校验为文本配置（8B–256KB）后写入 `host/openvpn.ovpn`，并写 `host/openvpn.cmd=enable <时间戳>`（重复导入同样触发重载）
 - 客机代理发现 cmd 后：把配置安装到 `/etc/openvpn/`（UCI 启用对应 instance，或官方 `openvpn.sample` 方式），`/etc/init.d/openvpn reload` 或 restart **仅 OpenVPN 进程**，禁止重启网络栈或整机。
 - VM 未运行时：配置暂存在主机 `${XR_DATA}/config/openvpn.ovpn`，待 `vm_start` 后写入控制目录并 enable。不做旧版兼容，只是「先导入后启动」的队列。
 - 不要在日志中打印证书、私钥、`auth-user-pass` 密码。测试用配置必须是无秘密的占位内容。

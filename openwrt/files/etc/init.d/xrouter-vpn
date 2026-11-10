@@ -49,7 +49,7 @@ C
 
 apply_cmd() {
   cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
-  case "$cmd" in
+  case "${cmd%% *}" in   # 命令后可带时间戳，同一命令重复下发也会执行
     enable|reload) install_ovpn ;;
     disable)
       uci -q set openvpn.xrouter.enabled=0

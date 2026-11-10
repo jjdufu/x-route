@@ -1,0 +1,363 @@
+// XRouter WebUI：只通过 kernelsu exec 调用 xr 命令行
+import "@material/web/tabs/tabs.js";
+import "@material/web/tabs/primary-tab.js";
+import "@material/web/switch/switch.js";
+import "@material/web/button/filled-button.js";
+import "@material/web/button/filled-tonal-button.js";
+import "@material/web/button/outlined-button.js";
+import "@material/web/button/text-button.js";
+import "@material/web/iconbutton/icon-button.js";
+import "@material/web/dialog/dialog.js";
+import "@material/web/icon/icon.js";
+import "@material/web/ripple/ripple.js";
+import "@material/web/focus/md-focus-ring.js";
+import "@material/web/select/outlined-select.js";
+import "@material/web/select/select-option.js";
+import { exec, isKsuWebui } from "kernelsu-alt";
+import "./style.css";
+import { ICONS } from "./icons.js";
+import {
+  SET_KEYS, MODE_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
+  xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
+} from "./logic.js";
+import { openBrowser } from "./file-browser.js";
+
+const $ = (id) => document.getElementById(id);
+let status = null;
+let pending = null;      // start | stop
+let ipv6Busy = false;
+let logKind = "module";
+let page = 0;
+let timer = null;
+
+export function icon(el) {
+  el.textContent = ICONS[el.dataset.icon] || "";
+}
+export function setIcon(el, name) {
+  el.dataset.icon = name; icon(el);
+}
+
+export async function xr(sub, ...args) {
+  if (!isKsuWebui()) return { errno: 1, stdout: "", stderr: "需在管理器中打开" };
+  try { return await exec(xrCmd(sub, ...args)); }
+  catch (e) { return { errno: 1, stdout: "", stderr: String(e) }; }
+}
+
+let snackTimer = null;
+export function snack(msg, bad) {
+  const s = $("snack");
+  s.textContent = msg;
+  s.className = "snack show" + (bad ? " bad" : "");
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(() => { s.className = "snack" + (bad ? " bad" : ""); }, 3000);
+}
+
+function dialogResult(dlg) {
+  return new Promise((resolve) => {
+    const done = () => { dlg.removeEventListener("closed", done); resolve(dlg.returnValue === "ok"); };
+    dlg.addEventListener("closed", done);
+    dlg.returnValue = "";
+    dlg.show();
+  });
+}
+
+function confirmDlg(title, text, okLabel, danger) {
+  $("dlg-confirm-title").textContent = title;
+  $("dlg-confirm-text").textContent = text || "";
+  $("dlg-confirm-text").hidden = !text;
+  const ok = $("dlg-confirm-ok");
+  ok.textContent = okLabel || "确认";
+  ok.classList.toggle("danger", !!danger);
+  return dialogResult($("dlg-confirm"));
+}
+
+// ---- 自定义分段选择 ----
+function seg(box, opts, current, onPick, disabled) {
+  if (box.dataset.sig === JSON.stringify([current, disabled || []])) return;
+  box.dataset.sig = JSON.stringify([current, disabled || []]);
+  box.replaceChildren(...opts.map((o) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "seg-btn" + (o.value === current ? " on" : "");
+    b.disabled = (disabled || []).includes(o.value);
+    b.innerHTML = "<md-ripple></md-ripple>";
+    b.append(o.label);
+    b.onclick = () => { if (o.value !== current) onPick(o.value); };
+    return b;
+  }));
+}
+
+function fillSelect(sel, opts, value) {
+  if (!sel.dataset.filled) {
+    sel.replaceChildren(...opts.map((o) => {
+      const it = document.createElement("md-select-option");
+      it.value = o.value;
+      const h = document.createElement("div"); h.slot = "headline"; h.textContent = o.label;
+      it.append(h);
+      return it;
+    }));
+    sel.dataset.filled = "1";
+  }
+  if (sel.value === value || sel.matches(":focus-within")) return;
+  sel.querySelectorAll("md-select-option").forEach((o) => { o.selected = o.value === value; });
+  sel.updateComplete.then(() => { if (sel.value !== value) sel.select(value); });
+}
+
+async function setKey(key, value) {
+  if (!SET_KEYS.includes(key)) return false;
+  const r = await xr("set", key, value);
+  const res = lastJson(r.stdout);
+  if (!res || !res.ok) {
+    snack((res && res.error) || r.stderr || "未保存", true);
+    await refresh();
+    return false;
+  }
+  if (res.restart) snack("重启虚拟机后生效");
+  await refresh();
+  return true;
+}
+
+// ---- 渲染 ----
+function renderPower(d) {
+  const v = vmView(d, pending);
+  const wrap = $("power-wrap");
+  wrap.className = "power-wrap " + v.phase;
+  $("power-text").textContent = v.text;
+  $("power").disabled = v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped);
+  const steps = $("power-steps");
+  steps.hidden = v.phase !== "starting";
+  steps.querySelectorAll("[data-step]").forEach((s) => {
+    const i = Number(s.dataset.step);
+    s.className = i < (v.step || 0) ? "done" : i === v.step ? "cur" : "";
+  });
+  const chip = $("chip");
+  chip.className = "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off");
+  $("chip-text").textContent = v.chip;
+}
+
+function render(d) {
+  status = d;
+  const vm = d.vm || {}; const net = d.net || {}; const vpn = d.vpn || {}; const sh = d.share || {}; const cfg = d.config || {};
+  if (pending === "start" && (vm.running || vm.error)) pending = vm.running ? null : pending;
+  if (pending === "stop" && !vm.running) pending = null;
+  renderPower(d);
+  const tripped = vm.tripped !== null && vm.tripped !== undefined;
+  $("trip").hidden = !tripped;
+
+  const as = $("sw-autostart");
+  as.selected = cfg.AUTOSTART === "1";
+  as.disabled = tripped && cfg.AUTOSTART !== "1";
+  $("row-autostart").classList.toggle("disabled", as.disabled);
+
+  $("v-uptime").textContent = vm.running ? fmtUptime(vm.uptime_s) : "—";
+  const kind = vm.running ? upKind(net.up_if) : "—";
+  $("v-up").textContent = kind;
+  setIcon($("i-up"), kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off");
+
+  $("v-vpn").textContent = VPN_TXT[vpn.status] || "未连接";
+  const routes = vpn.routes_active || [];
+  $("v-routes").textContent = routes.length ? routes.join("\n") : "无";
+
+  seg($("seg-mode"), MODE_OPTS, cfg.XR_MODE || "global", pickMode);
+  fillSelect($("sel-access"), ACCESS_OPTS, cfg.XR_EXPOSE || "lan");
+  const v6 = $("sw-ipv6");
+  if (!ipv6Busy) v6.selected = d.ipv6 === true;
+  v6.disabled = ipv6Busy || d.ipv6 === null || d.ipv6 === undefined;
+  $("row-ipv6").classList.toggle("disabled", v6.disabled);
+
+  $("sw-share").selected = cfg.VM_SHARE === "1";
+  seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (v) => setKey("VM_SHARE_MODE", v), sh.rw_supported ? [] : ["rw"]);
+  $("v-share-path").textContent = displayPath(cfg.VM_SHARE_PATH);
+
+  fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
+  fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "512");
+  $("v-disk").textContent = fmtSize(cfg.VM_DISK_SIZE_MB);
+  $("btn-expand").disabled = !!vm.running;
+  $("btn-reset").disabled = !!vm.running;
+}
+
+async function refresh() {
+  const r = await xr("status-json");
+  let d = null;
+  try { d = JSON.parse(r.stdout); } catch { d = null; }
+  if (!d) {
+    $("chip").className = "chip chip-bad";
+    $("chip-text").textContent = "异常";
+    return;
+  }
+  render(d);
+}
+
+function schedule() {
+  clearTimeout(timer);
+  const v = status ? vmView(status, pending) : { phase: "stopped" };
+  const fast = v.phase === "starting" || v.phase === "stopping";
+  timer = setTimeout(async () => {
+    if (!document.hidden) { await refresh(); if (page === 2) loadLog(true); }
+    schedule();
+  }, fast ? 1500 : 5000);
+}
+
+// ---- 操作 ----
+async function power() {
+  const v = vmView(status || {}, pending);
+  if (v.phase === "running" || (status && status.vm && status.vm.running)) {
+    if (!await confirmDlg("停止虚拟机", "", "停止", true)) return;
+    pending = "stop"; renderPower(status); schedule();
+    const r = await xr("stop");
+    pending = null;
+    if (r.errno !== 0) snack("停止失败", true);
+  } else {
+    pending = "start"; renderPower(status || {}); schedule();
+    const r = await xr("start");
+    await refresh();
+    pending = null;
+    if (r.errno !== 0 && !(status && status.vm && status.vm.running)) {
+      if (!(status && status.vm && status.vm.error)) snack("启动失败", true);
+    }
+  }
+  await refresh(); schedule();
+}
+
+async function pickMode(v) {
+  const label = MODE_OPTS.find((o) => o.value === v).label;
+  if (!await confirmDlg(`切换为${label}`, "", "切换")) return;
+  setKey("XR_MODE", v);
+}
+
+async function toggleIpv6() {
+  const sw = $("sw-ipv6");
+  const want = sw.selected ? "on" : "off";
+  ipv6Busy = true; sw.disabled = true; $("row-ipv6").classList.add("busy");
+  const r = await xr("ipv6", want);
+  const res = lastJson(r.stdout);
+  ipv6Busy = false; $("row-ipv6").classList.remove("busy");
+  if (!res || !res.ok) snack((res && res.error) || "切换失败", true);
+  await refresh();
+}
+
+async function importVpn() {
+  const path = await openBrowser({ mode: "ovpn", xr });
+  if (!path) return;
+  const r = await xr("vpn-import", path);
+  const res = lastJson(r.stdout);
+  if (res && res.ok) snack("已导入"); else snack((res && res.error) || "导入失败", true);
+  await refresh();
+}
+
+async function pickSharePath() {
+  const cur = status && status.config ? status.config.VM_SHARE_PATH : "";
+  const path = await openBrowser({ mode: "dir", start: cur, xr });
+  if (path) setKey("VM_SHARE_PATH", path);
+}
+
+async function expandDisk() {
+  const cur = Number(status && status.config && status.config.VM_DISK_SIZE_MB) || 1024;
+  const sizes = expandSizes(cur);
+  if (!sizes.length) { snack("已达上限", true); return; }
+  const sel = $("sel-expand");
+  delete sel.dataset.filled;
+  fillSelect(sel, sizes.map((n) => ({ value: String(n), label: fmtSize(n) })), String(sizes[0]));
+  sel.value = String(sizes[0]);
+  if (!await dialogResult($("dlg-expand"))) return;
+  const r = await xr("expand", sel.value);
+  snack(r.errno === 0 ? "已扩容" : "扩容失败", r.errno !== 0);
+  await refresh();
+}
+
+async function resetDisk() {
+  if (!await confirmDlg("重置系统盘", "OpenWrt 内的数据将全部清除", "重置", true)) return;
+  const r = await xr("reset-disk");
+  snack(r.errno === 0 ? "已重置" : "重置失败", r.errno !== 0);
+  await refresh();
+}
+
+// ---- 日志 ----
+async function loadLog(keepScroll) {
+  const box = $("log-box");
+  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+  const r = await xr("log", logKind, "300");
+  box.textContent = r.stdout || "";
+  box.classList.toggle("empty", !r.stdout);
+  if (!keepScroll || atEnd) box.scrollTop = box.scrollHeight;
+}
+async function exportLog(kind) {
+  const r = await xr("log-export", kind);
+  const res = lastJson(r.stdout);
+  snack(res && res.ok ? "已保存到 Download" : "导出失败", !(res && res.ok));
+}
+async function clearLog() {
+  const label = LOG_KINDS.find((k) => k.value === logKind).label;
+  if (!await confirmDlg(`清空${label}日志`, "", "清空", true)) return;
+  await xr("log-clear", logKind);
+  loadLog();
+}
+function renderLogKinds() {
+  seg($("log-kinds"), LOG_KINDS, logKind, (v) => { logKind = v; renderLogKinds(); loadLog(); });
+}
+
+// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动 ----
+function goPage(i, smooth = true) {
+  page = i;
+  const pager = $("pager");
+  pager.scrollTo({ left: i * pager.clientWidth, behavior: smooth ? "smooth" : "auto" });
+  const tabs = $("tabs");
+  if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
+  if (i === 2) loadLog();
+}
+
+function bindPager() {
+  const pager = $("pager");
+  const tabs = $("tabs");
+  tabs.addEventListener("change", () => { if (tabs.activeTabIndex !== page) goPage(tabs.activeTabIndex); });
+  let t = null;
+  pager.addEventListener("scroll", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const i = Math.round(pager.scrollLeft / pager.clientWidth);
+      if (i !== page) { page = i; tabs.activeTabIndex = i; if (i === 2) loadLog(); }
+    }, 80);
+  }, { passive: true });
+  window.addEventListener("resize", () => goPage(page, false));
+}
+
+function bindRowSwitch(row, sw, onChange) {
+  row.addEventListener("click", (e) => {
+    if (sw.disabled) return;
+    if (e.target !== sw) { e.preventDefault(); sw.selected = !sw.selected; }
+    onChange();
+  });
+  sw.addEventListener("click", (e) => e.stopPropagation());
+  sw.addEventListener("change", onChange);
+}
+
+function bind() {
+  document.querySelectorAll("md-icon[data-icon]").forEach(icon);
+  bindPager();
+  $("power").addEventListener("click", power);
+  $("btn-ack").addEventListener("click", async () => { await xr("ack-trip"); await refresh(); });
+  bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));
+  bindRowSwitch($("row-share"), $("sw-share"), () => setKey("VM_SHARE", $("sw-share").selected ? "1" : "0"));
+  bindRowSwitch($("row-ipv6"), $("sw-ipv6"), toggleIpv6);
+  $("btn-luci").addEventListener("click", () => xr("luci"));
+  $("btn-import").addEventListener("click", importVpn);
+  $("btn-share-path").addEventListener("click", pickSharePath);
+  $("sel-access").addEventListener("change", (e) => setKey("XR_EXPOSE", e.target.value));
+  $("sel-cpu").addEventListener("change", (e) => setKey("VM_CPUS", e.target.value));
+  $("sel-mem").addEventListener("change", (e) => setKey("VM_MEM_MB", e.target.value));
+  $("btn-expand").addEventListener("click", expandDisk);
+  $("btn-reset").addEventListener("click", resetDisk);
+  $("btn-export-one").addEventListener("click", () => exportLog(logKind));
+  $("btn-export-all").addEventListener("click", () => exportLog("all"));
+  $("btn-log-clear").addEventListener("click", clearLog);
+  renderLogKinds();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
+}
+
+(async () => {
+  bind();
+  await customElements.whenDefined("md-tabs");
+  document.querySelector(".shell").removeAttribute("unresolved");
+  await refresh();
+  schedule();
+})();

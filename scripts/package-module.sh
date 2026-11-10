@@ -19,6 +19,13 @@ VER="$(prop version)"; NAME="$(prop name)"; AUTHOR="$(prop author)"
 [[ "${VER}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "module.prop version 不合法：${VER}"; exit 1; }
 mkdir -p "${DIST}"
 
+# WebUI：webui/（Vite + Material Web）构建到 module/webroot，产物不入库
+command -v npm >/dev/null 2>&1 || { echo "需要 Node.js / npm 构建 WebUI"; exit 1; }
+( cd "${REPO}/webui" && { [ -d node_modules ] || npm ci --no-fund --no-audit; } && npm run build )
+for f in index.html config.json icon.png; do
+  [ -s "${REPO}/module/webroot/${f}" ] || { echo "WebUI 构建产物缺少 ${f}"; exit 1; }
+done
+
 ST="$(mktemp -d)"; trap 'rm -rf "${ST}"' EXIT
 cp -a "${REPO}/module/." "${ST}/"
 find "${ST}" -name .gitkeep -delete
@@ -55,11 +62,12 @@ cat > "${DIST}/RELEASE_NOTES.md" <<EOF
 - **安全默认**：
   - 安装后不自启（\`AUTOSTART="0"\`）；需用同一配置手动启动成功一次后，才允许打开自启
   - \`--no-balloon --swiotlb 64 --mem 512\`，\`ulimit -l unlimited\`，以及启动熔断（启动过程中若整机复位，将关闭自启，需在 WebUI 确认后才能再启动）
-- **WebUI**：主页、互联、日志、设置四页；运行模式默认「全局」，可切换为「旁路」
+- **WebUI**：Vite + Material Web 重做；顶部标题栏固定，概览 / 组网 / 日志 / 设置四个 Tab 可点可滑；圆形电源按钮即状态；运行模式「全局接管 / 旁路网关」，管理访问「本机 / 内网 / 所有」（默认内网）；目录与 OpenVPN 配置通过内置文件夹浏览选择
+- **IPv6**：固件默认关闭（组件保留）；设置中打开后立即生效，全局接管下手机与热点的 IPv6 同样经虚拟机出网，关闭时直接拒绝、应用立即回落 IPv4
 - **网络**：\`172.29.233.0/24\`（手机 \`xr0\` 为 \`.1\`，虚拟机 \`eth0\` 为 \`.254\`）；LuCI \`http://172.29.233.254\`
 - **运行模式**：全局时，手机本机和热点上网先经 OpenWrt 再从当时 WAN 出去；旁路不接管。虚拟机未就绪时不接管。
 - **WAN**：手机当前上游（Wi-Fi 或蜂窝，含 464xlat 的 \`v4-*\`）作为虚拟机的 WAN：放行出站与回包，丢弃主动入站；不改写虚拟机发出的包；仅对 \`172.29.233.0/24\` 做 MASQUERADE
-- **OpenVPN**：可在互联页或 LuCI 导入启用，连上后自动同步服务器 push 的路由（不同步默认路由）；本网段出隧道不做 NAT
+- **OpenVPN**：可在组网页或 LuCI 导入启用（导入不重启虚拟机），连上后自动同步服务器 push 的路由（不同步默认路由）；本网段出隧道不做 NAT
 - **透明代理内核**：netfilter / nftables / TUN / inet_diag 划分与官方 25.12.2 内核一致（\`=m\`）；预装 \`kmod-nft-tproxy\`、\`kmod-nft-socket\`、\`kmod-nft-fullcone\`、\`kmod-inet-diag\`
 - **登录**：用户 \`root\`，**空密码**（上游默认），请在 LuCI → 系统 → 管理权 中设置
 - **仅支持全新安装**：请先在管理器卸载旧版并重启，不做旧配置迁移

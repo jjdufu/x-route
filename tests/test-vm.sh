@@ -40,8 +40,10 @@ chk '! sh -c ". $T/mod/scripts/vm.sh; vm_running" && [ ! -f "$RUN/crosvm.pid" ] 
 # 3. 未就绪超时 -> 自动停止、熔断文件删除
 FAKE_NO_READY=1 $VM start; sleep 10
 chk '[ ! -f "$RUN/crosvm.pid" ] && [ ! -f "$FUSE" ] && grep -q "秒内未就绪" "$LOG"'
+chk '$VM status | grep -q "\"running\":false.*\"error\":\"[0-9]* 秒内未就绪\""'   # WebUI 显示失败原因
 # 4. crosvm 立即退出
 FAKE_EXIT=1 FAKE_NO_READY=1 $VM start; chk '[ $? -ne 0 ] && [ ! -f "$FUSE" ] && grep -q "立即退出" "$LOG"'
+chk '[ "$(cat "$RUN/last_error")" = 虚拟机无法启动 ]'
 # 5. 熔断未确认时拒绝启动
 date > "$TRIPPED"; $VM start; chk '[ $? -ne 0 ] && grep -q "熔断未确认" "$LOG"'; rm -f "$TRIPPED"
 # 6. VM_NET=0 / VM_DISK_RW=0

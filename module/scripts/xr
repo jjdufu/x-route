@@ -1,7 +1,8 @@
 #!/system/bin/sh
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
-# 用法：xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|log [xr|console|ctl|vmm] [N]
+# 用法：xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
+#       vpn-import PATH|ls PATH [dir|ovpn]|log [KIND] [N]|log-export [all|KIND]|log-clear all|KIND
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
@@ -85,7 +86,7 @@ status_line() {
   else r="已停止"; s="-"; fi
   n="$(grep -c . "${RUN}/routes.active" 2>/dev/null)"
   t=""; [ -f "${TRIPPED}" ] && t=" / 熔断未确认"
-  echo "${r} / ${s} / ${XR_NET_PREFIX}.254 / 暴露=${XR_EXPOSE} / VPN网段=${n:-0}${t}"
+  echo "${r} / ${s} / ${XR_NET_PREFIX}.254 / 管理访问=${XR_EXPOSE} / VPN网段=${n:-0}${t}"
 }
 
 # 虚拟机 IPv6 开关：写控制目录，由客侧改 OpenWrt 配置并上报实际状态，再同步手机侧路由
@@ -106,6 +107,51 @@ ipv6_set() {
   else
     printf '{"ok":false,"error":%s}\n' "$(jstr "虚拟机未响应")"; return 1
   fi
+}
+
+# 导入 OpenVPN 配置（文件须在内部存储中）：只启用 / 重载 OpenVPN，不重启虚拟机；不把配置写入日志
+vpn_import() {
+  src="$(canon_share_path "$1")"
+  case "$src" in "${MEDIA}"/*) ;; *) echo '{"ok":false,"error":"路径无效"}'; return 1 ;; esac
+  case "$src" in *..*) echo '{"ok":false,"error":"路径无效"}'; return 1 ;; esac
+  [ -f "$src" ] || { echo '{"ok":false,"error":"文件不存在"}'; return 1; }
+  sz="$(wc -c < "$src" | tr -d ' ')"
+  if ! is_uint "$sz" || [ "$sz" -lt 8 ] || [ "$sz" -gt 262144 ]; then echo '{"ok":false,"error":"文件大小不符"}'; return 1; fi
+  if LC_ALL=C grep -q '[^[:print:][:space:]]' "$src" 2>/dev/null; then echo '{"ok":false,"error":"不是文本配置"}'; return 1; fi
+  mkdir -p "${XR_DATA}/config"
+  cp -f "$src" "${XR_DATA}/config/openvpn.ovpn" && chmod 0600 "${XR_DATA}/config/openvpn.ovpn"
+  if vm_running; then
+    mkdir -p "${RUN}/guest/host"
+    cp -f "$src" "${RUN}/guest/host/openvpn.ovpn"
+    echo "enable $(date +%s)" > "${RUN}/guest/host/openvpn.cmd"
+  fi
+  log_info xr "已导入 OpenVPN 配置"
+  echo '{"ok":true}'
+}
+
+# 列出内部存储中的目录（WebUI 文件夹浏览）。$2=dir 只列目录；ovpn 另列 .ovpn/.conf 文件
+# 输出：每行 d/<名称> 或 f/<名称>；隐藏项不列
+list_dir() {
+  p="$(canon_share_path "${1:-${MEDIA}}")"
+  case "$p" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1 ;; esac
+  case "$p" in *..*) return 1 ;; esac
+  [ -d "$p" ] || return 1
+  for e in "$p"/*; do
+    [ -e "$e" ] || continue
+    n="${e##*/}"
+    if [ -d "$e" ]; then echo "d/$n"
+    elif [ "$2" = ovpn ]; then case "$n" in *.ovpn|*.conf|*.OVPN|*.CONF) echo "f/$n" ;; esac
+    fi
+  done | LC_ALL=C sort
+}
+
+log_clear() {
+  case "$1" in
+    all) for k in module console ctl vmm; do f="$(log_src "$k")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1"; done ;;
+    module|console|ctl|vmm) f="$(log_src "$1")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1" ;;
+    *) echo '{"ok":false,"error":"usage"}'; return 2 ;;
+  esac
+  echo '{"ok":true}'
 }
 
 log_src() {
@@ -210,39 +256,10 @@ case "$cmd" in
   expand)      is_uint "${1:-}" || { echo "usage: xr expand MB"; exit 2; }; disk_expand "$1" ;;
   reset-disk)  disk_reset ;;
   sync)        vm_running && sh "${MODDIR}/scripts/net.sh" sync ;;
-  vpn-stage-begin)
-    ensure_dirs
-    : > "${RUN}/incoming.ovpn.b64"
-    echo '{"ok":true}' ;;
-  vpn-stage-append)
-    [ -n "$1" ] || { echo '{"ok":false,"error":"empty"}'; exit 2; }
-    echo "$1" >> "${RUN}/incoming.ovpn.b64"
-    echo '{"ok":true}' ;;
-  vpn-stage-commit)
-    ensure_dirs
-    mkdir -p "${RUN}/guest/host" "${XR_DATA}/config"
-    if ! tr -d '\n\r ' < "${RUN}/incoming.ovpn.b64" | base64 -d > "${RUN}/incoming.ovpn" 2>/dev/null; then
-      if ! tr -d '\n\r ' < "${RUN}/incoming.ovpn.b64" | base64 --decode > "${RUN}/incoming.ovpn" 2>/dev/null; then
-        echo '{"ok":false,"error":"decode"}'; exit 1
-      fi
-    fi
-    # 拒绝明显的二进制内容；不把配置写入日志
-    if LC_ALL=C grep -q '[^[:print:][:space:]]' "${RUN}/incoming.ovpn" 2>/dev/null; then
-      rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
-      echo '{"ok":false,"error":"invalid"}'; exit 1
-    fi
-    sz="$(wc -c < "${RUN}/incoming.ovpn" | tr -d ' ')"
-    if ! is_uint "$sz" || [ "$sz" -lt 8 ] || [ "$sz" -gt 262144 ]; then
-      rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
-      echo '{"ok":false,"error":"size"}'; exit 1
-    fi
-    cp -f "${RUN}/incoming.ovpn" "${XR_DATA}/config/openvpn.ovpn"
-    if vm_running; then
-      cp -f "${RUN}/incoming.ovpn" "${RUN}/guest/host/openvpn.ovpn"
-      echo enable > "${RUN}/guest/host/openvpn.cmd"
-    fi
-    rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
-    echo '{"ok":true}' ;;
+  vpn-import)  vpn_import "${1:-}" ;;
+  luci)        load_config; am start -a android.intent.action.VIEW -d "http://${XR_NET_PREFIX}.254" >/dev/null 2>&1 ;;
+  ls)          list_dir "${1:-}" "${2:-dir}" ;;
+  log-clear)   log_clear "${1:-}" ;;
   log-export)
     log_export "${1:-all}" ;;
   log)
@@ -255,5 +272,5 @@ case "$cmd" in
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|vpn-stage-begin|vpn-stage-append|vpn-stage-commit|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
 esac

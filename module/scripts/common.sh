@@ -85,7 +85,7 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
     XR_DNS)
       n=0; for d in $2; do valid_ip4 "$d" || return 1; n=$((n+1)); done; [ "$n" -ge 1 ] && [ "$n" -le 3 ] ;;
     XR_EXPOSE)
-      case "$2" in off|hotspot|all) ;; *) return 1;; esac ;;
+      case "$2" in local|lan|all) ;; *) return 1;; esac ;;
     XR_MODE)
       case "$2" in global|bypass) ;; *) return 1;; esac ;;
     VM_CPUS)
