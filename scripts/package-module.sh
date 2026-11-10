@@ -55,7 +55,9 @@ cat > "${DIST}/RELEASE_NOTES.md" <<EOF
 - **Safety Defaults**:
   - No autostart after install (\`AUTOSTART="0"\`); autostart only allowed after one successful manual start with the same config
   - \`--no-balloon --swiotlb 64 --mem 512\` + \`ulimit -l unlimited\` + \`vm_booting.fuse\` anti-bootloop protection (a device reset during VM boot disables autostart until acknowledged in WebUI)
-- **Network**: \`172.29.233.0/24\` (phone \`xr0\` = \`.1\`, VM \`eth0\` = \`.254\`); LuCI \`http://172.29.233.254\`, ttyd \`:7681\`; cellular interfaces are never exposed
+- **Network**: \`172.29.233.0/24\` (phone \`xr0\` = \`.1\`, VM \`eth0\` = \`.254\`); LuCI \`http://172.29.233.254\`, ttyd \`:7681\`
+- **WAN**: the phone's current upstream (Wi-Fi **or cellular**, incl. 464xlat \`v4-*\`) is the VM's WAN with standard router semantics: outbound + replies allowed, unsolicited inbound dropped; VM packets are not mangled (no UDP/QUIC/port/fwmark/DSCP restrictions), MASQUERADE only for \`172.29.233.0/24\`
+- **Clash-ready Kernel**: netfilter/nftables/TUN/inet_diag split identical to the official 25.12.2 kernel (\`=m\`); preinstalled \`kmod-nft-tproxy\`, \`kmod-nft-socket\`, \`kmod-nft-fullcone\`, \`kmod-inet-diag\`; official \`kmod-*\` install and \`modprobe\` cleanly (verified in QEMU)
 - **OpenVPN**: \`openvpn-openssl\` + LuCI app; import the \`.ovpn\` in LuCI, enter remote subnets manually in WebUI (\`VPN_ROUTES\`); \`terminal\` / \`site\` modes
 - **Login**: user \`root\` with an **empty password** (upstream default) — set one in LuCI → System → Administration
 - **Fresh Install Only**: uninstall v1 and reboot before flashing; no v1 config migration

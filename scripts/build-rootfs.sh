@@ -32,11 +32,13 @@ sed -i -e 's/^CONFIG_TARGET_ROOTFS_SQUASHFS=y/# CONFIG_TARGET_ROOTFS_SQUASHFS is
        -e 's/^CONFIG_QCOW2_IMAGES=y/# CONFIG_QCOW2_IMAGES is not set/' \
        -e 's/^CONFIG_VMDK_IMAGES=y/# CONFIG_VMDK_IMAGES is not set/' .config
 
-# 排除 ImageBuilder 默认包与 generic 设备包中的全部 kmod（官方内核网卡/板级驱动；所需功能已内建于自编内核）
+# 只排除 ImageBuilder 默认包与 generic 设备包中的硬件驱动 kmod（网卡/存储/板级，pVM 里只有 virtio，已内建）；
+# 网络功能 kmod（nft/nf/ipt/tun/diag 等）保留，与官方内核一致。
 INFO="$(make info)"
 DEF_KMODS="$( { echo "${INFO}" | sed -n 's/^Default Packages: //p'
                echo "${INFO}" | sed -n '/^generic:/,/^[^ ]/s/^ *Packages: //p'; } \
-             | tr ' ' '\n' | grep '^kmod-' | sort -u | sed 's/^/-/' | tr '\n' ' ')"
+             | tr ' ' '\n' | grep '^kmod-' \
+             | grep -vE '^kmod-(nft|nf-|ipt|ip6t|tun|inet-diag|fs-|crypto|lib-|ppp|wireguard|ovpn)' | sort -u | sed 's/^/-/' | tr '\n' ' ')"
 PKGS="$(grep -vE '^[[:space:]]*(#|$)' "${ROOT}/openwrt/packages.txt" | tr '\n' ' ')"
 echo "[*] excluded default kmods: ${DEF_KMODS}"
 

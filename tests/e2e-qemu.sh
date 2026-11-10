@@ -31,6 +31,9 @@ chk 'echo "$out" | grep -q "default via 172.29.233.1"'
 chk 'echo "$out" | grep -qx FW4_OK && echo "$out" | grep -qx zh_cn && echo "$out" | grep -qx GW_OK'
 chk 'echo "$out" | grep -q /usr/sbin/openvpn && echo "$out" | grep -q /usr/bin/apk'
 chk '[ "$(echo "$out" | grep -E "^[0-9]+$" | sed -n 1p)" -gt 900 ]'
+caps="$($S sh -s < "$ROOT/tests/vm-caps.sh" 2>&1)"
+echo "$caps" | sed 's/^/  caps> /'
+chk 'echo "$caps" | grep -qx CAPS_OK'
 if [ "${E2E_VPNMODE:-terminal}" = site ]; then chk 'echo "$out" | grep -qx vpn_lan'; else chk 'echo "$out" | grep -qx no_vpn_lan'; fi
 i=0; while [ $i -lt 200 ] && [ "$(cat "$RUN/state" 2>/dev/null)" != stable ]; do sleep 2; i=$((i+2)); done
 chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(config_hash)" ]'

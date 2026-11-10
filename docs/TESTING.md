@@ -15,7 +15,7 @@
 ## 1 安装与启动
 
 1. 卸载旧版并重启。确认 `/data/adb/x-route` 已经不存在。
-2. 刷入 `x-route-sukisu-full-v2.0.0.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
+2. 刷入 `x-route-sukisu-full-<版本>.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
 3. 重启手机：VM **没有**自动启动（`AUTOSTART=0`），`xr.log` 有记录 “AUTOSTART=0”。
 4. 在 WebUI 点“启动”：
    - `READY_TIMEOUT_SEC` 内出现 `XR_READY`，记录走的是 hvc 还是 ttyS0；
@@ -49,7 +49,7 @@
 |---|---|
 | 手机访问 `http://172.29.233.254` | 能打开 LuCI |
 | VM 内 `ping -c3 223.5.5.5`、`nslookup example.com` | 走 Wi-Fi 时成功 |
-| 只开蜂窝网络 | VM 不能上网（XR_FWD 中的蜂窝 DROP 生效），手机本身上网正常 |
+| 只开蜂窝网络（插 5G 卡、关 Wi-Fi） | VM 能上网（蜂窝作为 WAN，`net.up_if` 为 rmnet_data*）；从蜂窝侧主动访问 VM 不通 |
 | Wi-Fi 与蜂窝切换 | 10 秒内 `net.up_if` 更新，转发规则跟着切换 |
 | 热点客户端，`XR_EXPOSE=hotspot` | 能访问 `.254`；`XR_EXPOSE=off` 时访问不了，切换不需要重启 VM |
 | `XR_EXPOSE=all`，上级路由器配置静态路由 | 局域网其他设备能访问 `.254`（这一项需用户同意后在路由器上临时配置，测完删除） |
@@ -84,3 +84,14 @@
 3. 第 4 节手机访问 LuCI、VM 上网、停止后规则清空。
 4. 第 2 节 1 小时稳定性，然后再开自启。
 5. 其余各节。
+
+## 附：OpenVPN / Clash 能力核对（VM 内，可离线）
+
+把仓库里的 `tests/vm-caps.sh` 拷进 VM 执行（`ssh root@172.29.233.254 sh -s < tests/vm-caps.sh`），最后一行应为 `CAPS_OK`。
+它核对：预装官方 kmod 可 modprobe（tun、nft_tproxy、nft_socket、nft_fullcone、inet_diag、ovpn 等）；
+socket / tproxy / redirect / masquerade / fullcone 等 nft 规则能加载；fwmark 策略路由、TUN、IPv6 转发可用；
+fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容错误。
+
+插 5G 卡、关闭 Wi-Fi 时另外确认：VM 内 `ping 223.5.5.5`、`curl -I https://downloads.immortalwrt.org` 成功；
+手机 `iptables -S XR_FWD` 中有 `-i xr0 -o rmnet_dataX -j ACCEPT` 与 `-i rmnet_dataX -o xr0 -j DROP`，
+纯 IPv6 运营商（464xlat）时还应出现 `v4-rmnet_dataX` 的同类规则和 MASQUERADE。

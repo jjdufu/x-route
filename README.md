@@ -12,8 +12,9 @@
 ## 1. 是什么
 
 - VM：ImmortalWrt 25.12.2（armsr/armv8 ImageBuilder，包管理器 `apk`），内核 Linux 6.12.103（打上 ImmortalWrt generic/armsr 补丁，使用官方内核配置 + Gunyah pVM 片段），可直接 `apk add` 官方 25.12 的 `kmod-*`。
-- 预装：LuCI（简体中文）、ttyd、OpenVPN（`openvpn-openssl` + `luci-app-openvpn`）、tcpdump、dnsmasq-full。
-- 手机侧：tap 网卡 `xr0` 接入 VM，登记为 netd 本地网络；NAT 与转发规则只针对 VM 网段，蜂窝网络永不对外放行。
+- 预装：LuCI（简体中文）、ttyd、OpenVPN（`openvpn-openssl` + `luci-app-openvpn`）、tcpdump、dnsmasq-full，以及透明代理常用模块 `kmod-nft-tproxy`、`kmod-nft-socket`、`kmod-nft-fullcone`、`kmod-inet-diag`。
+- 内核的网络模块划分（netfilter / nftables / conntrack / tproxy / socket / TUN / inet_diag 等为 `=m`）与官方 25.12.2 内核一致，官方源里的 `kmod-*` 可以直接 `apk add` 并 `modprobe`。Clash 类插件（OpenClash、nikki 等）所需的 TUN、nft tproxy/socket、redirect/NAT/masquerade、fullcone、策略路由（多路由表、fwmark）都具备；fw4 默认关闭 fullcone 与 flow offloading，可在 LuCI 防火墙或插件中开启。
+- 手机侧：tap 网卡 `xr0` 接入 VM，登记为 netd 本地网络；手机当前上游（Wi-Fi 或蜂窝，插 5G 卡时蜂窝就是 WAN）作为 VM 的 WAN：放行出站与回包，丢弃上游主动入站；NAT 只针对 VM 网段。
 
 ## 2. 要求
 
@@ -42,7 +43,9 @@
   - `off`：只有手机本机；
   - `hotspot`（默认）：再加热点 / USB 共享的设备；
   - `all`：再加 Wi-Fi 上游所在局域网，需要在上级路由器添加静态路由 `172.29.233.0/24 via <手机 IP>`。
-- VM 经手机当前默认上游（netd 选择的网络）上网；蜂窝接口进入 `xr0` 的流量一律丢弃。
+- WAN：VM 经手机当前默认上游（netd 选择的网络，Wi-Fi 或蜂窝均可；纯 IPv6 蜂窝的 464xlat `v4-*` 出口也已覆盖）上网。按标准路由器语义处理：放行 VM 出站和回包，丢弃上游主动发往 VM 的入站。
+- 手机侧不改写 VM 发出的包：不限制 UDP/QUIC、不限目标端口、不改 fwmark/DSCP；MASQUERADE 只匹配源 `172.29.233.0/24`。VM 内的 OpenVPN、Clash 插件看到的是普通 NAT 上行。
+- 手机侧只给 VM 提供 IPv4 上行（`xr0` 关闭了 IPv6）；VM 内核本身支持 IPv6。
 - netd 的 `ndc` 不可用时自动退回 table 97 + 策略规则，WebUI 状态里显示“退回模式”。
 
 ## 6. OpenVPN
