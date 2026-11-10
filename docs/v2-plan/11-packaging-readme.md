@@ -56,7 +56,7 @@ echo "[+] ${DIST}/x-route-${TAG}.zip"
 5. **网络**：
    - 地址规划：手机侧 `.1`，VM `.254`；
    - `XR_EXPOSE` 三档的含义，`all` 需要上级路由器加静态路由；
-   - 蜂窝网络默认不放行。
+   - 上游（Wi-Fi 或蜂窝）就是 VM 的 WAN：放行出站和回包，丢弃上游主动入站。
 6. **OpenVPN**：
    - 在 LuCI 导入 .ovpn；
    - `VPN_MODE` terminal 和 site 的区别；

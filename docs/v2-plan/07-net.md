@@ -95,35 +95,39 @@ sync_all() {
     echo "$up" > "${RUN}/net.up_if"; log_info net "上游 ${old_up:-无} -> ${up:-无}"
   fi
   iptables -t nat -F XR_NAT
-  [ -n "$up" ] && iptables -t nat -A XR_NAT -s "${NET}" -o "$up" -j MASQUERADE
+  for o in $outs; do iptables -t nat -A XR_NAT -s "${NET}" -o "$o" -j MASQUERADE; done   # outs=上游及其 464xlat 出口
 
   ex="$(expose_ifaces | tr '\n' ' ')"; echo "$ex" > "${RUN}/net.expose_if"
   . "${MODDIR}/scripts/vpnroutes.sh"; routes_sync      # 见 08；必须在 XR_FWD 重建前执行
   iptables -F XR_FWD
-  iptables -A XR_FWD -i rmnet+ -o "${XR_IF}" -j DROP
-  iptables -A XR_FWD -i ccmni+ -o "${XR_IF}" -j DROP
-  iptables -A XR_FWD -i seth+  -o "${XR_IF}" -j DROP
   iptables -A XR_FWD -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   iptables -A XR_FWD -i "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  [ -n "$up" ] && iptables -A XR_FWD -i "${XR_IF}" -o "$up" -j ACCEPT
+  for o in $outs; do iptables -A XR_FWD -i "${XR_IF}" -o "$o" -j ACCEPT; done
   for i in $ex; do
     iptables -A XR_FWD -i "$i" -o "${XR_IF}" -d "${NET}" -j ACCEPT
     for c in $(cat "${RUN}/routes.active" 2>/dev/null); do
       iptables -A XR_FWD -i "$i" -o "${XR_IF}" -d "$c" -j ACCEPT
     done
   done
+  for o in $outs; do   # 未被 XR_EXPOSE=all 放行的上游：入站显式丢弃
+    case " $ex " in *" $o "*) ;; *) iptables -A XR_FWD -i "$o" -o "${XR_IF}" -j DROP ;; esac
+  done
   iptables -A XR_FWD -o "${XR_IF}" -j DROP
-  iptables -A XR_FWD -i "${XR_IF}" ! -o "${up:-none}" -j DROP
+  iptables -A XR_FWD -i "${XR_IF}" -j DROP
   fwd_first
 }
 ```
 
-规则顺序：
-1. 蜂窝口进来的流量一律丢弃；
-2. 已建立的连接放行；
-3. VM 访问上游放行；
-4. 放行的入口网卡可以访问 VM 网段和 VPN 网段；
+规则按标准路由器语义：手机当前上游（Wi-Fi、蜂窝或其他，不做区分）就是 VM 的 WAN，默认不信任。插 5G 卡、没有 Wi-Fi 时，蜂窝就是 VM 的 WAN。
+
+1. 已建立的连接（回包，ESTABLISHED,RELATED）放行，排在所有 DROP 之前；
+2. VM 访问上游（出站）放行：上游网卡及其 464xlat 出口 `v4-*`（纯 IPv6 蜂窝的 IPv4 实际从这里出去）；
+3. `XR_EXPOSE` 列出的下游可以访问 VM 网段和 VPN 网段（hotspot：热点/USB 共享；all：再加非蜂窝上游所在局域网）；
+4. 上游主动发往 xr0 的入站丢弃；
 5. 其他进出 xr0 的流量一律丢弃。
+
+手机侧只做过滤和源地址伪装：不使用 mangle 表，不改写 VM 发出的包（不限制 UDP/QUIC、不限目标端口、不改 fwmark/DSCP、不做 MSS 修改）；
+MASQUERADE 只匹配源 `172.29.233.0/24` 且出口为上游的包。VM 里的 OpenVPN、Clash（OpenClash / nikki 等）看到的就是一条普通的 NAT 上行。
 
 不在 XR_FWD 里的流量（例如热点设备正常上网）不受影响，规则执行完后自动 RETURN，交给 Android 原有的链处理。
 
@@ -184,7 +188,7 @@ net_down() {
   - `iptables -S FORWARD | sed -n 2p` 是 `-A FORWARD -j XR_FWD`；
   - `iptables -t nat -S XR_NAT` 有 MASQUERADE 规则。
 - 手机执行 `ping 172.29.233.254` 能通；VM 里 `curl -I https://downloads.immortalwrt.org` 能通。
-- 切换 Wi-Fi 和蜂窝 10 秒内，`net.up_if` 更新，VM 仍然能上网。
+- 只开蜂窝（插 5G 卡、关 Wi-Fi）：VM 能上网；切换 Wi-Fi 和蜂窝 10 秒内，`net.up_if` / `net.up_out` 更新，VM 仍然能上网。
 - 打开热点后 10 秒内，`net.expose_if` 包含热点网卡；热点设备能访问 `172.29.233.254`。设为 `XR_EXPOSE=off` 后访问不到。
-- 用 `iptables -S XR_FWD` 检查：蜂窝口的 DROP 规则在前三条。
+- 用 `iptables -S XR_FWD` 检查：前两条是 ESTABLISHED,RELATED 放行，接着是 `-i xr0 -o <上游> -j ACCEPT`；有 `-i <上游> -o xr0 -j DROP`；最后两条是 `-o xr0 -j DROP`、`-i xr0 -j DROP`。
 - `net.sh down` 后：xr0、XR_FWD、XR_NAT、pref 4800 和 18900 规则全部消失，`ip route show table 97` 里没有 xr0。

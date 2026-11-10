@@ -49,7 +49,7 @@
 |---|---|
 | 手机访问 `http://172.29.233.254` | 能打开 LuCI |
 | VM 内 `ping -c3 223.5.5.5`、`nslookup example.com` | 走 Wi-Fi 时成功 |
-| 只开蜂窝网络 | VM 不能上网（XR_FWD 中的蜂窝 DROP 生效），手机本身上网正常 |
+| 只开蜂窝网络（插 5G 卡、关 Wi-Fi） | VM 能上网（蜂窝作为 WAN，`net.up_if` 为 rmnet_data*）；从蜂窝侧主动访问 VM 不通 |
 | Wi-Fi 与蜂窝切换 | 10 秒内 `net.up_if` 更新，转发规则跟着切换 |
 | 热点客户端，`XR_EXPOSE=hotspot` | 能访问 `.254`；`XR_EXPOSE=off` 时访问不了，切换不需要重启 VM |
 | `XR_EXPOSE=all`，上级路由器配置静态路由 | 局域网其他设备能访问 `.254`（这一项需用户同意后在路由器上临时配置，测完删除） |
