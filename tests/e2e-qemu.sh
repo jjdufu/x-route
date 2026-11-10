@@ -14,7 +14,7 @@ printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net
 export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm-qemu"
 trap 'sh "$T/mod/scripts/vm.sh" stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 . "$T/mod/scripts/common.sh"; ensure_dirs; cp "$T/mod/config/config.conf" "$CONF"
-sed -i "s/^STABLE_SEC=.*/STABLE_SEC=\"${E2E_STABLE:-60}\"/; s/^VPN_MODE=.*/VPN_MODE=\"${E2E_VPNMODE:-terminal}\"/" "$CONF"
+sed -i "s/^STABLE_SEC=.*/STABLE_SEC=\"${E2E_STABLE:-60}\"/" "$CONF"
 cp "$ROOT/dist/openwrt/Image" "$IMG/Image"; cp "$ROOT/dist/openwrt/openwrt-rootfs.img.gz" "$IMG/"
 gzip -dc "$IMG/openwrt-rootfs.img.gz" > "$ROOTFS"; truncate -s 1024M "$ROOTFS"
 S="ssh -p ${E2E_SSH_PORT:-2222} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o PreferredAuthentications=none,password -o NumberOfPasswordPrompts=0 root@127.0.0.1"
@@ -34,7 +34,7 @@ chk '[ "$(echo "$out" | grep -E "^[0-9]+$" | sed -n 1p)" -gt 900 ]'
 caps="$($S sh -s < "$ROOT/tests/vm-caps.sh" 2>&1)"
 echo "$caps" | sed 's/^/  caps> /'
 chk 'echo "$caps" | grep -qx CAPS_OK'
-if [ "${E2E_VPNMODE:-terminal}" = site ]; then chk 'echo "$out" | grep -qx vpn_lan'; else chk 'echo "$out" | grep -qx no_vpn_lan'; fi
+chk 'echo "$out" | grep -qx vpn_lan'
 i=0; while [ $i -lt 200 ] && [ "$(cat "$RUN/state" 2>/dev/null)" != stable ]; do sleep 2; i=$((i+2)); done
 chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(config_hash)" ]'
 sh "$T/mod/scripts/vm.sh" stop

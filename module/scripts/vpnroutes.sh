@@ -1,20 +1,37 @@
 #!/system/bin/sh
-# ==============================================================================
-# XRouter: 手工 VPN 网段（VPN_ROUTES）-> 手机路由 + 策略规则（docs/v2-plan/08-openvpn.md）
-# 被 net.sh 引入；依赖 common.sh 的 CIDR 工具与 net.sh 的 tether_ifaces / lnt。
-# VM 不向手机上报任何路由，网段只能在 WebUI 里手工填写。
-# ==============================================================================
+# XRouter: 把 OpenVPN 实际生效的路由（客侧上报）同步到手机，不解析 ovpn，不使用手工网段。
+# 被 net.sh 引入。默认路由 / redirect-gateway 不同步（全局模式已由运行模式处理）。
 
-routes_valid() {  # 输出合法的 CIDR（每行一个）；不合法的记日志并丢弃
+guest_routes_file() { echo "${RUN}/guest/guest/openvpn.routes"; }
+
+# 控制通道回退：从 vm-ctl.log 取最后一次 XR_VPN_ROUTES
+scrape_ctl_routes() {
+  f="${RUN}/vm-ctl.log"
+  [ -f "$f" ] || return 0
+  sed -n 's/.*XR_VPN_ROUTES[[:space:]]*//p' "$f" | tail -1
+}
+
+routes_source() {
+  gf="$(guest_routes_file)"
+  if [ -f "$gf" ]; then
+    cat "$gf" 2>/dev/null
+    return 0
+  fi
+  scrape_ctl_routes | tr ' ' '\n'
+}
+
+routes_valid() {
   up="$(cat "${RUN}/net.up_if" 2>/dev/null)"
   busy="${XR_NET_PREFIX}.0/24 127.0.0.0/8 169.254.0.0/16"
   for i in $up $(tether_ifaces); do
     busy="$busy $(ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')"
   done
   n=0
-  for c in $(echo "${VPN_ROUTES}" | tr ',' ' '); do
+  for c in $(routes_source | tr ', ' '\n'); do
+    case "$c" in
+      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
+    esac
     valid_cidr "$c"   || { log_err vpn "格式错误 $c"; continue; }
-    cidr_private "$c" || { log_err vpn "不是私网地址 $c"; continue; }
     cidr_aligned "$c" || { log_err vpn "主机位不为 0：$c"; continue; }
     ok=1
     for b in $busy; do cidr_overlap "$c" "$b" && { log_err vpn "$c 与 $b 重叠"; ok=0; break; }; done
@@ -44,6 +61,7 @@ routes_sync() {
   for c in $have; do echo "$want" | grep -qx "$c" || route_del "$c"; done
   for c in $want; do echo "$have" | grep -qx "$c" || route_add "$c"; done
   echo "$want" > "${RUN}/routes.active"
+  cksum "$(guest_routes_file)" 2>/dev/null > "${RUN}/vpn.cksum" || echo none > "${RUN}/vpn.cksum"
 }
 routes_reassert() {
   for c in $(cat "${RUN}/routes.active" 2>/dev/null); do

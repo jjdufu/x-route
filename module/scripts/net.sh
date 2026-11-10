@@ -205,9 +205,11 @@ net_watch() {
     up="$(upstream_iface)"; outs="$(upstream_out "$up")"; ex="$(expose_ifaces | tr '\n' ' ')"
     have_gw=0; [ -f "${RUN}/net.gw" ] && have_gw=1
     if want_gateway; then want_gw=1; else want_gw=0; fi
+    ck="$(cksum "${RUN}/guest/guest/openvpn.routes" 2>/dev/null || echo none)"
     if [ "$up" != "$(cat "${RUN}/net.up_if" 2>/dev/null)" ] || [ "$outs" != "$(cat "${RUN}/net.up_out" 2>/dev/null)" ] \
        || [ "$ex" != "$(cat "${RUN}/net.expose_if" 2>/dev/null)" ] \
-       || [ "$want_gw" != "$have_gw" ]; then sync_all; fi
+       || [ "$want_gw" != "$have_gw" ] \
+       || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
     fwd_first; nat_first
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     if [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = fallback ]; then

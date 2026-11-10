@@ -25,8 +25,7 @@ ok valid_kv VM_DISK_SIZE_MB 2048; no valid_kv VM_DISK_SIZE_MB 100
 ok valid_kv VM_SHARE_MODE ro; no valid_kv VM_SHARE_MODE rw
 ( RW_MAP_OPT="uidmap=0 1023 1"; valid_kv VM_SHARE_MODE rw ) || { echo "FAIL: rw with RW_MAP_OPT"; fail=1; }
 no valid_kv VM_SHARE_PATH /data/adb; no valid_kv VM_SHARE_PATH /data/media/0/../../adb
-ok valid_kv VPN_MODE site; no valid_kv VPN_MODE full
-ok valid_kv VPN_ROUTES ""; ok valid_kv VPN_ROUTES "10.20.0.0/16,192.168.50.0/24"; no valid_kv VPN_ROUTES "10.0.0.0/33"; no valid_kv VPN_ROUTES "a;b"
+no valid_kv VPN_MODE site; no valid_kv VPN_ROUTES "10.20.0.0/16"
 ok valid_kv READY_TIMEOUT_SEC 180; no valid_kv READY_TIMEOUT_SEC 10
 no valid_kv UNKNOWN 1
 
@@ -40,7 +39,7 @@ ok cidr_overlap 172.29.233.0/24 172.16.0.0/12; no cidr_overlap 10.0.0.0/8 172.29
 # set_kv：合法值写入，非法值不改文件
 ok set_kv XR_EXPOSE off; grep -qx 'XR_EXPOSE="off"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }
 h1="$(sha256sum "$CONF")"; no set_kv XR_EXPOSE bad; [ "$h1" = "$(sha256sum "$CONF")" ] || { echo "FAIL: set_kv modified on invalid"; fail=1; }
-ok set_kv VPN_ROUTES "10.20.0.0/16"; load_config; [ "$VPN_ROUTES" = "10.20.0.0/16" ] || { echo "FAIL: reload"; fail=1; }
+ok set_kv XR_MODE bypass; load_config; [ "$XR_MODE" = "bypass" ] || { echo "FAIL: reload"; fail=1; }
 h="$(config_hash)"; [ "${#h}" -eq 16 ] || { echo "FAIL: config_hash"; fail=1; }
 set_kv VM_MEM_MB 1024; [ "$h" != "$(config_hash)" ] || { echo "FAIL: hash unchanged"; fail=1; }
 log_info test hello; grep -q "\[INFO\] \[test\] hello" "$LOG" || { echo "FAIL: log"; fail=1; }

@@ -9,7 +9,7 @@ ensure_dirs
 . "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
 . "${MODDIR}/scripts/daemon.sh"
 
-RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH VPN_MODE"
+RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH"
 
 jstr() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r\t')"; }
 jarr() { _o=""; for _e in $1; do _o="${_o:+${_o},}$(jstr "$_e")"; done; printf '[%s]' "$_o"; }
@@ -24,7 +24,7 @@ needs_restart() {
 # 返回非 0 时把原因写到 stdout（单行）
 after_set() {
   case "$1" in
-    XR_EXPOSE|XR_MODE|VPN_ROUTES)
+    XR_EXPOSE|XR_MODE)
       vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
     AUTOSTART)
       load_config
@@ -38,9 +38,14 @@ after_set() {
   return 0
 }
 
-routes_rejected() {
+vpn_rejected() {
   act="$(cat "${RUN}/routes.active" 2>/dev/null)"
-  for c in $(echo "${VPN_ROUTES}" | tr ',' ' '); do
+  gf="${RUN}/guest/guest/openvpn.routes"
+  [ -f "$gf" ] || return 0
+  for c in $(tr ', ' '\n' < "$gf"); do
+    case "$c" in
+      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
+    esac
     echo "$act" | grep -qx "$c" || echo "$c"
   done
 }
@@ -56,8 +61,12 @@ status_json() {
   rw=false; [ -n "${RW_MAP_OPT}" ] && rw=true
   cfg=""
   v=""; for k in ${KEYS}; do eval "v=\"\${${k}}\""; cfg="${cfg:+${cfg},}\"${k}\":$(jstr "$v")"; done
-  printf '{"vm":%s,"net":%s,"vpn":{"mode":%s,"routes_active":%s,"routes_rejected":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
-    "$vmj" "$netj" "$(jstr "${VPN_MODE}")" "$(jarr "$act")" "$(jarr "$(routes_rejected)")" \
+  vst="down"; vaddr=""
+  [ -f "${RUN}/guest/guest/openvpn.status" ] && vst="$(cat "${RUN}/guest/guest/openvpn.status" 2>/dev/null)"
+  [ -n "$vst" ] || vst="down"
+  [ -f "${RUN}/guest/guest/openvpn.addr" ] && vaddr="$(cat "${RUN}/guest/guest/openvpn.addr" 2>/dev/null)"
+  printf '{"vm":%s,"net":%s,"vpn":{"status":%s,"addr":%s,"routes_active":%s,"routes_rejected":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
+    "$vmj" "$netj" "$(jstr "$vst")" "$(jstr "$vaddr")" "$(jarr "$act")" "$(jarr "$(vpn_rejected)")" \
     "$([ "${VM_SHARE}" = 1 ] && echo true || echo false)" "$(jstr "${smode:-off}")" "$(jstr "${VM_SHARE_PATH}")" \
     "$ce" "$rw" "$cfg"
 }
@@ -92,6 +101,39 @@ case "$cmd" in
   expand)      is_uint "${1:-}" || { echo "usage: xr expand MB"; exit 2; }; disk_expand "$1" ;;
   reset-disk)  disk_reset ;;
   sync)        vm_running && sh "${MODDIR}/scripts/net.sh" sync ;;
+  vpn-stage-begin)
+    ensure_dirs
+    : > "${RUN}/incoming.ovpn.b64"
+    echo '{"ok":true}' ;;
+  vpn-stage-append)
+    [ -n "$1" ] || { echo '{"ok":false,"error":"empty"}'; exit 2; }
+    echo "$1" >> "${RUN}/incoming.ovpn.b64"
+    echo '{"ok":true}' ;;
+  vpn-stage-commit)
+    ensure_dirs
+    mkdir -p "${RUN}/guest/host" "${XR_DATA}/config"
+    if ! tr -d '\n\r ' < "${RUN}/incoming.ovpn.b64" | base64 -d > "${RUN}/incoming.ovpn" 2>/dev/null; then
+      if ! tr -d '\n\r ' < "${RUN}/incoming.ovpn.b64" | base64 --decode > "${RUN}/incoming.ovpn" 2>/dev/null; then
+        echo '{"ok":false,"error":"decode"}'; exit 1
+      fi
+    fi
+    # 拒绝明显的二进制内容；不把配置写入日志
+    if LC_ALL=C grep -q '[^[:print:][:space:]]' "${RUN}/incoming.ovpn" 2>/dev/null; then
+      rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
+      echo '{"ok":false,"error":"invalid"}'; exit 1
+    fi
+    sz="$(wc -c < "${RUN}/incoming.ovpn" | tr -d ' ')"
+    if ! is_uint "$sz" || [ "$sz" -lt 8 ] || [ "$sz" -gt 262144 ]; then
+      rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
+      echo '{"ok":false,"error":"size"}'; exit 1
+    fi
+    cp -f "${RUN}/incoming.ovpn" "${XR_DATA}/config/openvpn.ovpn"
+    if vm_running; then
+      cp -f "${RUN}/incoming.ovpn" "${RUN}/guest/host/openvpn.ovpn"
+      echo enable > "${RUN}/guest/host/openvpn.cmd"
+    fi
+    rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
+    echo '{"ok":true}' ;;
   log)
     case "${1:-xr}" in
       console) f="${CON_LOG}" ;; ctl) f="${CTL_LOG}" ;; vmm) f="${VMM_LOG}" ;; xr) f="${LOG}" ;;
@@ -99,5 +141,5 @@ case "$cmd" in
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|log [xr|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|vpn-stage-begin|vpn-stage-append|vpn-stage-commit|log [xr|console|ctl|vmm] [N]"; exit 2 ;;
 esac

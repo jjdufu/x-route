@@ -92,18 +92,10 @@
     <!-- OpenVPN -->
     <section class="card">
       <div class="card-header"><span class="card-title">OpenVPN</span></div>
-      <label class="field">模式（VPN_MODE，改后需重启 VM）
-        <select data-key="VPN_MODE">
-          <option value="terminal">terminal：作为普通客户端（默认）</option>
-          <option value="site">site：作为网点网关，对端可访问 VM 网段</option>
-        </select>
-      </label>
-      <label class="field">远端内网网段（VPN_ROUTES，每行一个 CIDR，仅私网地址）
-        <textarea id="ta-routes" rows="4" placeholder="10.20.0.0/16"></textarea>
-      </label>
-      <div class="row"><button id="btn-routes" class="btn btn-primary">保存网段</button></div>
-      <p class="hint">已生效：<span id="vpn-active">-</span>；被拒绝：<span id="vpn-rejected">-</span></p>
-      <p class="hint">导入：在 LuCI → VPN → OpenVPN 上传 rtvpn 签发的 .ovpn，需单独为本设备签发。</p>
+      <dl class="kv">
+        <dt>状态</dt><dd id="st-vpn-card">-</dd>
+        <dt>已接入网段</dt><dd id="vpn-active">-</dd>
+      </dl>
     </section>
 
     <!-- 共享 -->

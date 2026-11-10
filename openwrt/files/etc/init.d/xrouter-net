@@ -9,7 +9,7 @@ cmdval() { sed -n "s/.*[[:space:]]$1=\([^[:space:]]*\).*/\1/p" /proc/cmdline; }
 boot() { start; }
 
 start() {
-  ip="$(cmdval xr.ip)"; gw="$(cmdval xr.gw)"; dns="$(cmdval xr.dns | tr ',' ' ')"; mode="$(cmdval xr.vpnmode)"
+  ip="$(cmdval xr.ip)"; gw="$(cmdval xr.gw)"; dns="$(cmdval xr.dns | tr ',' ' ')"
   # 每次开机执行；已撑满时为空操作，配合手机侧 xr expand
   resize2fs /dev/vda >/dev/null 2>&1
   [ -n "$ip" ] || return 0
@@ -22,18 +22,18 @@ delete network.lan.dns
 U
   for d in $dns; do uci -q add_list network.lan.dns="$d"; done
 
+  # 固定网点：本网段出隧道不 NAT，lan <-> vpn 双向转发
   uci -q delete firewall.vpn.masq_src
-  if [ "$mode" = "site" ]; then
-    # 网点模式：本网段源地址不伪装，对端可直接访问；允许 vpn -> lan
-    uci -q add_list firewall.vpn.masq_src="!${net}.0/24"
-    uci -q batch <<'U'
+  uci -q add_list firewall.vpn.masq_src="!${net}.0/24"
+  uci -q batch <<'U'
+set firewall.vpn.forward='ACCEPT'
+set firewall.lan_vpn=forwarding
+set firewall.lan_vpn.src='lan'
+set firewall.lan_vpn.dest='vpn'
 set firewall.vpn_lan=forwarding
 set firewall.vpn_lan.src='vpn'
 set firewall.vpn_lan.dest='lan'
 U
-  else
-    uci -q delete firewall.vpn_lan
-  fi
   uci -q commit network
   uci -q commit firewall
 

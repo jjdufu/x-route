@@ -24,9 +24,9 @@ VM="sh $T/mod/scripts/vm.sh"
 $VM start; chk '[ $? -eq 0 ]'
 chk 'grep -qx -- "--no-balloon" "$T/args" && grep -qx -- "--protected-vm-without-firmware" "$T/args"'
 chk 'grep -qx -- "--swiotlb" "$T/args" && grep -qx "64" "$T/args" && grep -qx "512" "$T/args"'
-chk 'grep -q "hardware=virtio-console" "$T/args" && grep -q "xr.ip=172.29.233.254/24 xr.gw=172.29.233.1 xr.dns=223.5.5.5,119.29.29.29 xr.vpnmode=terminal xr.share=off" "$T/args"'
+chk 'grep -q "hardware=virtio-console" "$T/args" && grep -q "xr.ip=172.29.233.254/24 xr.gw=172.29.233.1 xr.dns=223.5.5.5,119.29.29.29 xr.share=off" "$T/args"'
 chk 'grep -q "^tap-name=xr0,mac=52:54:00:1d:e9:fe$" "$T/args" && grep -q "net up" "$T/net.calls"'
-chk '! grep -q -- "--shared-dir" "$T/args"'
+chk 'grep -q -- "--shared-dir" "$T/args" && grep -q "xrctl" "$T/args" && ! grep -q "xrshare" "$T/args"'
 chk '[ -f "$FUSE" ]'
 sleep 10
 chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(config_hash)" ]'

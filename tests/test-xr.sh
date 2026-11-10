@@ -26,11 +26,12 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
-chk '$XR get | grep -qx "XR_EXPOSE=hotspot" && [ "$($XR get | wc -l)" -eq 21 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=hotspot" && [ "$($XR get | wc -l)" -eq 19 ]'
 cp "$CONF" "$T/conf.bak"
 out="$($XR set VM_MEM_MB 99999)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "\"ok\":false" && cmp -s "$CONF" "$T/conf.bak"'
 out="$($XR set 'X;rm' 1)"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
 out="$($XR set VPN_ROUTES "8.8.8.0/24")"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
+# 未知键应被拒绝（已删除手工网段）
 out="$($XR set VM_MEM_MB)"; chk '[ $? -eq 2 ]'
 chk '[ "$($XR set VM_MEM_MB 768)" = "{\"ok\":true,\"restart\":false}" ] && grep -qx "VM_MEM_MB=\"768\"" "$CONF"'
 # AUTOSTART 未手动成功启动过 -> 拒绝并保持 0
@@ -47,11 +48,24 @@ $XR set XR_DNS "223.5.5.5 119.29.29.29" >/dev/null
 sleep 10
 chk '$XR status-line | grep -q "^运行中 / 已稳定 /"'
 chk '[ "$($XR set AUTOSTART 1)" = "{\"ok\":true,\"restart\":false}" ] && grep -qx "AUTOSTART=\"1\"" "$CONF"'
-# VPN_ROUTES：运行中立即 net.sh sync；被拒绝的网段出现在 routes_rejected
+# 客侧上报路由：sync 后读入；被拒绝的网段出现在 routes_rejected
 : > "$T/net.calls"
-chk '[ "$($XR set VPN_ROUTES "10.8.0.0/24,192.168.9.0/24")" = "{\"ok\":true,\"restart\":false}" ] && grep -qx "net sync" "$T/net.calls"'
+mkdir -p "$RUN/guest/guest" "$RUN/guest/host"
+printf '%s\n' "10.8.0.0/24" "192.168.9.0/24" > "$RUN/guest/guest/openvpn.routes"
+echo up > "$RUN/guest/guest/openvpn.status"
+echo "10.8.0.5" > "$RUN/guest/guest/openvpn.addr"
+$XR sync >/dev/null
+chk 'grep -qx "net sync" "$T/net.calls"'
 s="$($XR status-json)"
-chk 'echo "$s" | J "d[\"vpn\"][\"routes_active\"]==[\"10.8.0.0/24\"] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"] and d[\"vm\"][\"running\"] is True and d[\"vm\"][\"last_good_match\"] is True" | grep -qx True'
+chk 'echo "$s" | J "d[\"vpn\"][\"status\"]==\"up\" and d[\"vpn\"][\"addr\"]==\"10.8.0.5\" and d[\"vpn\"][\"routes_active\"]==[\"10.8.0.0/24\"] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"] and d[\"vm\"][\"running\"] is True and d[\"vm\"][\"last_good_match\"] is True" | grep -qx True'
+# 分片导入占位 ovpn（无密钥）；运行中写入控制目录，不得写入日志
+ovpn="$(printf 'client\ndev tun\nremote 127.0.0.1 1194\n')"
+b64="$(printf '%s' "$ovpn" | base64 | tr -d '\n')"
+chk '$XR vpn-stage-begin | grep -q "\"ok\":true"'
+chk '$XR vpn-stage-append "$b64" | grep -q "\"ok\":true"'
+chk '$XR vpn-stage-commit | grep -q "\"ok\":true"'
+chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -qx enable "$RUN/guest/host/openvpn.cmd"'
+chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null && [ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'
 chk '$XR log xr 5 | grep -q . && [ "$($XR log xr 3 | wc -l)" -eq 3 ] && $XR log console >/dev/null'
 out="$($XR log bogus)"; chk '[ $? -eq 2 ]'

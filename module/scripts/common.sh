@@ -16,7 +16,7 @@ ROOTFS="${IMG}/openwrt-rootfs.img"
 FUSE="${XR_DATA}/config/vm_booting.fuse"
 TRIPPED="${XR_DATA}/config/tripped"
 LAST_GOOD="${XR_DATA}/config/last_good"
-KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH VPN_MODE VPN_ROUTES AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC"
+KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC"
 # 影响 VM 稳定性的键：只要这些键变化，last_good 就失效
 HASH_KEYS="XR_NET_PREFIX VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE"
 # rw 共享的属主映射参数（crosvm --shared-dir 选项）。需先在真机上确认 crosvm 支持的写法（见 docs/TESTING.md 第 0 节）；
@@ -70,14 +70,6 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
       case "$2" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1;; esac
       case "$2" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*) return 1;; esac
       [ -d "$2" ] ;;
-    VPN_MODE)
-      case "$2" in terminal|site) ;; *) return 1;; esac ;;
-    VPN_ROUTES)
-      [ -z "$2" ] && return 0
-      echo "$2" | grep -qE '^[0-9./,]+$' || return 1
-      _k=0; for _r in $(echo "$2" | tr ',' ' '); do
-        valid_cidr "$_r" && cidr_private "$_r" && cidr_aligned "$_r" || return 1; _k=$((_k+1)); done
-      [ "$_k" -le 64 ] ;;
     AUTOSTART_DELAY_SEC)
       in_range "$2" 0 600 ;;
     READY_TIMEOUT_SEC|STABLE_SEC)

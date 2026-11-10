@@ -15,9 +15,9 @@ FWD="$MOCK/XR_FWD"
 echo "11000:	from all fwmark 0x0/0xffff iif lo lookup rmnet_data2" > "$MOCK/iprule"
 echo "192.168.43.0/24 dev wlan1 proto static scope link" > "$MOCK/lnroutes"
 echo "30: wlan1    inet 192.168.43.1/24 brd 192.168.43.255 scope global wlan1" > "$MOCK/addr.wlan1"
-# set_kv 会整体拒绝含非法项的列表；运行时过滤是第二道防线，这里直接写文件绕过
-chk '! set_kv VPN_ROUTES "10.8.0.0/24,8.8.8.0/24" && ! set_kv VPN_ROUTES "10.9.0.1/24" && set_kv VPN_ROUTES "10.8.0.0/24,192.168.10.0/24"'
-sed -i 's#^VPN_ROUTES=.*#VPN_ROUTES="10.8.0.0/24,192.168.43.0/25,8.8.8.0/24,10.9.0.1/24,bad,172.29.233.0/24"#' "$CONF"
+# 客侧上报的实际路由（含非法项，由运行时过滤）；默认路由应被忽略
+mkdir -p "$RUN/guest/guest"
+printf '%s\n' "10.8.0.0/24" "192.168.43.0/25" "8.8.8.0/24" "10.9.0.1/24" "bad" "172.29.233.0/24" "0.0.0.0/0" "0.0.0.0/1" "128.0.0.0/1" > "$RUN/guest/guest/openvpn.routes"
 
 # 1. up（ndc 可用，热点暴露，蜂窝上游）
 $NET up; chk '[ $? -eq 0 ]'
@@ -27,16 +27,17 @@ chk 'grep -q "^ip rule add pref 4800 to 172.29.233.0/24 lookup local_network" "$
 chk 'grep -q "^ndc ipfwd enable xrouter" "$MOCK/calls" && grep -q "^ndc ipfwd add xr0 rmnet_data2" "$MOCK/calls"'
 chk '[ -f "$MOCK/fwd_hook" ] && [ -f "$MOCK/nat_hook" ]'
 chk 'grep -qx -- "-s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE" "$MOCK/XR_NAT"'
-chk '[ "$(cat "$RUN/routes.active")" = 10.8.0.0/24 ]'
+chk 'grep -q "10.8.0.0/24" "$RUN/routes.active" && grep -q "8.8.8.0/24" "$RUN/routes.active" && ! grep -q "0.0.0.0" "$RUN/routes.active"'
 chk 'grep -q "^ndc network route add local xr0 10.8.0.0/24 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule add pref 4801 to 10.8.0.0/24 lookup local_network" "$MOCK/calls"'
-chk 'grep -c "格式错误\|不是私网\|主机位\|重叠" "$LOG" | grep -qx 5'
+chk 'grep -q "^ndc network route add local xr0 8.8.8.0/24 172.29.233.254" "$MOCK/calls"'
+chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 4'
 chk 'grep -q "192.168.43.0/25 与 192.168.43.1/24 重叠" "$LOG"'
 # 蜂窝上游 = WAN：出站放行、回包放行、入站丢弃（与 Wi-Fi 上游规则相同）
 chk 'grep -qx -- "-i xr0 -o rmnet_data2 -j ACCEPT" "$FWD" && grep -qx -- "-i rmnet_data2 -o xr0 -j DROP" "$FWD"'
 chk '! grep -q -- "-i rmnet+" "$FWD"'
 chk '[ "$(sed -n 1p "$FWD")" = "-o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ] && [ "$(sed -n 2p "$FWD")" = "-i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ]'
 chk '[ "$(sed -n 3p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
-chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD"'
+chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 8.8.8.0/24 -j ACCEPT" "$FWD"'
 chk '[ "$(tail -2 "$FWD" | tr "\n" "|")" = "-o xr0 -j DROP|-i xr0 -j DROP|" ]'
 chk '$NET status | grep -q "\"mode\":\"ndc\",\"up_if\":\"rmnet_data2\",\"expose\":\"hotspot\",\"expose_if\":\[\"wlan1\"\]"'
 # 默认全局，但 VM 未就绪：不得安装接管规则，以免把手机上网搞断
@@ -69,7 +70,7 @@ chk '[ "$(cat "$RUN/net.up_out")" = "rmnet_data2 " ] && ! grep -q v4-rmnet "$FWD
 chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
 chk '[ -z "$(grep -v -- "^-s 172.29.233.0/24 -o [a-z0-9_-]* -j MASQUERADE$" "$MOCK/XR_NAT")" ]'
 # 3. 去掉 VPN 网段 -> 路由与规则撤销
-set_kv XR_EXPOSE hotspot; set_kv VPN_ROUTES ""; : > "$MOCK/calls"; $NET sync
+set_kv XR_EXPOSE hotspot; : > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"; $NET sync
 chk 'grep -q "^ndc network route remove local xr0 10.8.0.0/24 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule del pref 4801 to 10.8.0.0/24" "$MOCK/calls"'
 chk '[ -z "$(cat "$RUN/routes.active")" ] && ! grep -q 10.8.0.0 "$FWD"'
 XR_EXPOSE=off; set_kv XR_EXPOSE off; $NET sync
@@ -81,7 +82,7 @@ chk 'grep -q "^ip link del xr0" "$MOCK/calls" && grep -q "^ndc ipfwd disable xro
 chk '! ls "$RUN"/net.* >/dev/null 2>&1 && [ ! -f "$RUN/net_watch.pid" ]'
 
 # 5. ndc 不可用 -> table 97 回退，ip_forward 改写并在 down 时恢复
-set_kv VPN_ROUTES "10.8.0.0/24"; : > "$MOCK/calls"
+echo "10.8.0.0/24" > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"
 NDC_FAIL=1 $NET up
 chk '[ "$(cat "$RUN/net.mode")" = fallback ] && [ "$(cat "$T/proc/sys/net/ipv4/ip_forward")" = 1 ]'
 chk 'grep -q "^ip route replace 172.29.233.0/24 dev xr0 table 97" "$MOCK/calls" && grep -q "^ip rule add pref 4800 to 172.29.233.0/24 lookup 97" "$MOCK/calls"'

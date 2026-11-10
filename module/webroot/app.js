@@ -6,7 +6,7 @@
 
 const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 const SET_KEYS = [
-  "XR_EXPOSE", "VPN_MODE", "VPN_ROUTES", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
+  "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
   "AUTOSTART", "AUTOSTART_DELAY_SEC", "VM_CPUS", "VM_MEM_MB", "VM_SWIOTLB_MB",
   "READY_TIMEOUT_SEC", "STABLE_SEC", "VM_NET", "VM_DISK_RW",
 ];
@@ -109,7 +109,7 @@ function render(d) {
   $("st-netmode").textContent = net.mode === "ndc" ? "ndc（netd 本地网络）" : net.mode === "fallback" ? "退回模式（table 97）" : "未启用";
   $("st-up").textContent = net.up_if || "-";
   $("st-expose").textContent = (net.expose_if && net.expose_if.length) ? net.expose_if.join(", ") : "无";
-  $("st-vpn").textContent = `${vpn.mode || "-"}，生效 ${(vpn.routes_active || []).length} 条`;
+  $("st-vpn").textContent = `${vpn.status || "-"}，生效 ${(vpn.routes_active || []).length} 条`;
   $("st-share").textContent = sh.enabled ? `开启（本次 ${sh.mode}${sh.ce_ready ? "" : "，手机未解锁"}）` : "关闭";
 
   // 熔断
@@ -135,11 +135,7 @@ function render(d) {
     if (v === undefined) return;
     if (el.type === "checkbox") el.checked = v === "1"; else el.value = v;
   });
-  if (document.activeElement !== $("ta-routes")) {
-    $("ta-routes").value = (cfg.VPN_ROUTES || "").split(",").filter(Boolean).join("\n");
-  }
-  $("vpn-active").textContent = (vpn.routes_active || []).join(", ") || "无";
-  $("vpn-rejected").textContent = (vpn.routes_rejected || []).join(", ") || "无";
+  if ($("vpn-active")) $("vpn-active").textContent = (vpn.routes_active || []).join(", ") || "无";
   $("hint-all").classList.toggle("hidden", cfg.XR_EXPOSE !== "all");
 
   $("opt-rw").disabled = !sh.rw_supported;
@@ -206,15 +202,6 @@ function bind() {
     box.textContent = r.stdout || "（空）";
     box.classList.remove("hidden");
     box.scrollTop = box.scrollHeight;
-  };
-  $("btn-routes").onclick = () => {
-    const lines = $("ta-routes").value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-    if (lines.length > 64) { toast("最多 64 条", true); return; }
-    for (const c of lines) {
-      const err = cidrOk(c);
-      if (err) { toast(`${c}：${err}`, true); return; }
-    }
-    setKey("VPN_ROUTES", lines.join(","));
   };
   document.querySelectorAll("[data-key]").forEach((el) => {
     el.addEventListener("change", () => {

@@ -70,10 +70,17 @@ vm_start_exec() {
   share_spec=""; share_mode=off; share_wrap=""
   . "${MODDIR}/scripts/share.sh"   # 设置 share_spec、share_mode、share_wrap（09）
   share_prepare
+  mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
+  chmod 0700 "${RUN}/guest"
+  ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
+  if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
+    cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
+    echo enable > "${RUN}/guest/host/openvpn.cmd"
+  fi
 
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
   params="${params} xr.ip=${XR_NET_PREFIX}.254/24 xr.gw=${XR_NET_PREFIX}.1 xr.dns=$(echo "${XR_DNS}" | tr ' ' ',')"
-  params="${params} xr.vpnmode=${VPN_MODE} xr.share=${share_mode}"
+  params="${params} xr.share=${share_mode}"
 
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"
   fuse_arm
@@ -92,6 +99,7 @@ vm_start_exec() {
     --serial "type=file,path=${CON_LOG},hardware=serial,num=1,console=true,earlycon=true" \
     --serial "type=file,path=${CTL_LOG},hardware=virtio-console,num=1" \
     --socket "${SOCK}" \
+    --shared-dir "${ctl_spec}" \
     ${share_spec:+--shared-dir} ${share_spec:+"${share_spec}"} \
     --params "${params}" \
     "${IMG}/Image" </dev/null >> "${VMM_LOG}" 2>&1 &

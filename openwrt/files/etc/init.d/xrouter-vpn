@@ -1,0 +1,94 @@
+#!/bin/sh /etc/rc.common
+# XRouter: 挂载主机控制目录，启用 OpenVPN 配置，并把实际路由写回主机。
+# shellcheck disable=SC2034
+START=21
+STOP=15
+
+CTL=/var/run/xrouter
+
+refresh_routes() {
+  ST="${CTL}/guest"
+  mkdir -p "$ST"
+  if [ ! -d /sys/class/net/tun0 ]; then
+    echo down > "$ST/openvpn.status"
+    : > "$ST/openvpn.routes"
+    : > "$ST/openvpn.addr"
+    return 0
+  fi
+  echo up > "$ST/openvpn.status"
+  ip -4 -o addr show dev tun0 2>/dev/null | awk '{print $4}' | head -1 > "$ST/openvpn.addr"
+  echo tun0 > "$ST/openvpn.if"
+  : > "$ST/openvpn.routes"
+  ip -4 route show dev tun0 2>/dev/null | awk '{print $1}' | while read -r c; do
+    case "$c" in
+      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
+      *) echo "$c" >> "$ST/openvpn.routes" ;;
+    esac
+  done
+}
+
+install_ovpn() {
+  src="${CTL}/host/openvpn.ovpn"
+  [ -s "$src" ] || return 1
+  mkdir -p /etc/openvpn
+  cp -f "$src" /etc/openvpn/xrouter.ovpn
+  cat > /etc/openvpn/xrouter.conf <<'C'
+config /etc/openvpn/xrouter.ovpn
+script-security 2
+up /etc/openvpn/xrouter-up.sh
+down /etc/openvpn/xrouter-down.sh
+route-up /etc/openvpn/xrouter-up.sh
+C
+  uci -q set openvpn.xrouter=openvpn
+  uci -q set openvpn.xrouter.enabled=1
+  uci -q set openvpn.xrouter.config='/etc/openvpn/xrouter.conf'
+  uci -q commit openvpn
+  /etc/init.d/openvpn restart >/dev/null 2>&1
+}
+
+apply_cmd() {
+  cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
+  case "$cmd" in
+    enable|reload) install_ovpn ;;
+    disable)
+      uci -q set openvpn.xrouter.enabled=0
+      uci -q commit openvpn
+      /etc/init.d/openvpn stop >/dev/null 2>&1
+      refresh_routes
+      ;;
+  esac
+}
+
+watch() {
+  last=""
+  while :; do
+    [ -d "$CTL" ] || exit 0
+    cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
+    if [ -n "$cmd" ] && [ "$cmd" != "$last" ]; then
+      last="$cmd"
+      apply_cmd
+    fi
+    refresh_routes
+    sleep 2
+  done
+}
+
+boot() { start; }
+
+start() {
+  mkdir -p "$CTL"
+  if grep -qw virtiofs /proc/filesystems; then
+    mount -t virtiofs xrctl "$CTL" 2>/dev/null || true
+  fi
+  mkdir -p "${CTL}/host" "${CTL}/guest"
+  chmod 0755 /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh 2>/dev/null || true
+  watch &
+  echo $! > /var/run/xrouter-vpn.pid
+}
+
+stop() {
+  p="$(cat /var/run/xrouter-vpn.pid 2>/dev/null)"
+  [ -n "$p" ] && kill "$p" 2>/dev/null
+  umount "$CTL" 2>/dev/null || true
+  return 0
+}
