@@ -1,35 +1,25 @@
-name: Build ImmortalWrt ARM64 (OnePlus 13 Gunyah & QEMU)
+name: Build ImmortalWrt ARM64 (OnePlus 13 Gunyah pVM)
 
+# 只有 main 分支（或手动触发）才会构建并发布 Release；其他分支只跑 package-module.yml 的检查。
+# Tag 规则沿用历史：<module.prop version>-build.<run_number>。
+# 发布为 prerelease：在真机验证通过之前，不标记为正式版。
 on:
   push:
     branches:
       - main
     paths:
-      - 'openwrt-config/**'
+      - 'openwrt/**'
       - 'module/**'
       - 'scripts/**'
       - '.github/workflows/build-openwrt.yml'
   workflow_dispatch:
-    inputs:
-      build_mode:
-        description: 'Build mode: fast (ImageBuilder + Kernel, ~6 min) or full (Source, ~60 min)'
-        required: true
-        default: 'fast'
-        type: choice
-        options:
-          - fast
-          - full
-      immortalwrt_release:
-        description: 'ImmortalWrt release version (for fast mode)'
-        required: true
-        default: '24.10.6'
 
 permissions:
   contents: write
 
 jobs:
   build-openwrt:
-    name: Build Minimal ImmortalWrt & Full SuKiSU Module Zip
+    name: Build Kernel 6.12 + ImmortalWrt 25.12.2 Rootfs & SuKiSU Module Zip
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout x-route repository
@@ -39,24 +29,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk bc \
+            build-essential bc bison flex gawk cpio kmod \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gettext git libncurses5-dev libssl-dev libelf-dev \
-            python3-setuptools python3-pyelftools rsync \
-            swig unzip zip zlib1g-dev file wget curl qemu-utils zstd xz-utils cpio kmod
+            libssl-dev libelf-dev python3 rsync unzip zip file wget curl \
+            zstd xz-utils e2fsprogs qemu-utils shellcheck
 
-      - name: Build ImmortalWrt Kernel (Image) & Minimal Rootfs
-        run: |
-          chmod +x scripts/build-openwrt.sh
-          ./scripts/build-openwrt.sh \
-            --mode "${{ inputs.build_mode || 'fast' }}" \
-            --release "${{ inputs.immortalwrt_release || '24.10.6' }}" \
-            --jobs "$(nproc)"
+      - name: Lint
+        run: sh scripts/lint.sh
+
+      - name: Build Kernel (Image, Linux 6.12.103 + Gunyah pVM config)
+        run: bash scripts/build-kernel.sh
+
+      - name: Build Rootfs (ImmortalWrt 25.12.2 ImageBuilder)
+        run: bash scripts/build-rootfs.sh
 
       - name: Package SuKiSU Module (Lite & Full All-in-One Zip)
-        run: |
-          chmod +x scripts/package-module.sh
-          ./scripts/package-module.sh
+        run: bash scripts/package-module.sh
 
       - name: Upload Firmware & SuKiSU Module Artifacts
         uses: actions/upload-artifact@v4
@@ -85,17 +73,8 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
           name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }} (Build #${{ github.run_number }} by ${{ steps.meta.outputs.author }})"
-          body: |
-            ### ${{ steps.meta.outputs.name }} `${{ steps.meta.outputs.version }}` (Author: `${{ steps.meta.outputs.author }}`)
-            - **One-Click Flashable Module**: `x-route-sukisu-full-${{ steps.meta.outputs.version }}.zip` (includes SuKiSU Hot-Install metadata, WebUI, 4-Layer Keep-Alive & compiled OpenWrt `Image` + `openwrt-rootfs.img.gz`)
-            - **Lite Module**: `x-route-sukisu-lite-${{ steps.meta.outputs.version }}.zip`
-            - **Module Identity Fixed & Verified**: Complete `name`, `author` (`jjdufu`), `skip_mount`, SuKiSU Hot-Install (`MODULE_HOT_INSTALL_REQUEST=true`, takes effect immediately without reboot), and F2FS `sync` + `module.prop` self-healing
-            - **OnePlus 13 (SM8750) Real-Device Gunyah pVM Verified**:
-              - `--no-balloon --swiotlb 64 --mem 512` + `ulimit -l unlimited` + `# CONFIG_VIRTIO_BALLOON is not set` (eliminates Gunyah EL2 Stage-2 SoC reset)
-              - Safe non-autostart default (`ROUTER_ENABLED="0"` on install/upgrade) + 15s post-unlock window + hardware-reset-proof `vm_booting.fuse` anti-bootloop protection
-              - 100% built-in `nftables` (`CONFIG_NF_TABLES=y`, `CONFIG_LIBCRC32C=y`, `CONFIG_NF_CONNTRACK=y`) & stripped mismatched `.ko` autoload warnings
-            - **Default LAN**: `192.168.100.1/24` (`eth1` / MAC `52:54:00:12:34:57`)
-            - **Default WAN**: `172.16.1.2/24` -> Gateway `172.16.1.1` (`eth0` / MAC `52:54:00:12:34:56`)
+          prerelease: true
+          body_path: dist/RELEASE_NOTES.md
           files: |
             dist/x-route-sukisu-*.zip
             dist/openwrt/Image

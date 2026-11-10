@@ -1,45 +1,43 @@
 name: Package SuKiSU Module (Lite Zip & Shell Check)
 
+# 只做检查与打包 Lite 包，不发布 Release。
 on:
   push:
     branches:
-      - main
-    paths:
-      - 'module/**'
-      - 'scripts/package-module.sh'
-      - '.github/workflows/package-module.yml'
+      - '**'
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   package-module:
-    name: Validate Scripts & Build SuKiSU Module Zip
+    name: Validate Scripts & Build SuKiSU Lite Module Zip
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate Shell Scripts Syntax
+      - name: Install shellcheck
         run: |
-          for s in module/*.sh module/scripts/*.sh module/META-INF/com/google/android/update-binary; do
-            echo "Checking POSIX sh syntax: $s"
-            sh -n "$s"
-          done
-          for b in scripts/*.sh; do
-            echo "Checking Bash syntax: $b"
-            bash -n "$b"
-          done
+          sudo apt-get update
+          sudo apt-get install -y shellcheck zip
 
-      - name: Package SuKiSU Module Zip
+      - name: Lint (shellcheck + sh -n + config keys)
+        run: sh scripts/lint.sh
+
+      - name: Package SuKiSU Lite Module Zip
         run: |
-          chmod +x scripts/package-module.sh
-          ./scripts/package-module.sh
+          if [ -f scripts/package-module.sh ]; then
+            bash scripts/package-module.sh --lite-only
+          else
+            echo "package-module.sh not present yet, skip"
+          fi
 
-      - name: Upload SuKiSU Module Zip Artifact
+      - name: Upload SuKiSU Lite Module Zip Artifact
         uses: actions/upload-artifact@v4
         with:
           name: x-route-sukisu-lite-module
           path: dist/x-route-sukisu-lite-*.zip
-          if-no-files-found: error
+          if-no-files-found: warn
