@@ -55,7 +55,12 @@ echo "[+] ${FULL}"
 KREL="$(sed -n 's/^# Linux\/arm64 \([0-9.]*\) Kernel Configuration$/\1/p' "${OW}/kernel.config" | head -1)"
 cat > "${DIST}/RELEASE_NOTES.md" <<EOF
 ### ${NAME} \`${VER}\`（作者：\`${AUTHOR}\`）
-- **预发布，尚未真机测试**：这是破坏性更新（产品更名为 XRouter），目前只通过了本机单元测试（mksh / busybox sh / dash）和 QEMU \`virt\` 启动冒烟测试，真机验证仍待进行（见 \`docs/TESTING.md\`）。
+- **预发布，尚未真机测试**：只通过了本机单元测试（mksh / busybox sh / dash）和 QEMU \`virt\` 端到端测试，真机验证仍待进行（见 \`docs/TESTING.md\`）。
+- **本次更新**：
+  - 修复全局接管下虚拟机出站回环、热点回包走错上游导致手机与热点断网
+  - IPv6 真全局：固件默认关闭 IPv6（组件保留）；设置中打开后立即生效，手机与热点的 IPv6 同样经虚拟机出网；关闭时直接拒绝，应用立即回落 IPv4
+  - WebUI 用 Vite + Material Web 重做：固定标题栏、可滑动 Tab、电源按钮即状态、内置文件夹浏览
+  - 「谁可以访问」改为「管理访问」：本机 / 内网 / 所有（默认内网）；配置取值变更，**请卸载旧版后全新安装**
 - **完整模块**：\`${FULL##*/}\`（含 WebUI、\`xr\` 命令行，以及预置 \`Image\` 与 \`openwrt-rootfs.img.gz\`）
 - **精简模块**：\`${LITE##*/}\`（仅脚本和 WebUI，使用 \`/data/adb/xrouter/images\` 中已有镜像）
 - **固件**：ImmortalWrt 25.12.2（\`armsr/armv8\` ImageBuilder，\`apk\`），Linux \`${KREL:-6.12.103}\` + Gunyah pVM；官方 25.12 的 \`kmod-*\` 可用 \`apk\` 安装。主机名 \`XRouter\`，概览型号为 \`AMD Ryzen Threadripper PRO 9995WX\`。预装包管理简体中文语言包。
