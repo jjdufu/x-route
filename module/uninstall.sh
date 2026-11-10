@@ -1,24 +1,7 @@
 #!/system/bin/sh
-# ==============================================================================
-# x-route: SuKiSU Module Uninstallation Script (uninstall.sh)
-# Restores system settings & cleans up runtime state upon module removal
-# ==============================================================================
-
+# x-route v2: 卸载：停止 VM、撤销网络、删除全部数据（包括系统盘）
 MODDIR="${0%/*}"
-if [ -x "${MODDIR}/scripts/net_orchestrator.sh" ]; then
-    "${MODDIR}/scripts/net_orchestrator.sh" stop 2>/dev/null || true
-fi
-if [ -x "${MODDIR}/scripts/vm_manager.sh" ]; then
-    "${MODDIR}/scripts/vm_manager.sh" stop 2>/dev/null || true
-fi
-if [ -x "${MODDIR}/scripts/keepalive_daemon.sh" ]; then
-    "${MODDIR}/scripts/keepalive_daemon.sh" stop 2>/dev/null || true
-fi
-
-# Restore Private DNS if saved
-if [ -f /data/adb/x-route/run/orig_private_dns ]; then
-    orig_dns="$(cat /data/adb/x-route/run/orig_private_dns 2>/dev/null)"
-    [ -n "${orig_dns}" ] && settings put global private_dns_mode "${orig_dns}" 2>/dev/null || true
-fi
-
-rm -rf /data/adb/x-route/run
+sh "${MODDIR}/scripts/xr" stop >/dev/null 2>&1
+sh "${MODDIR}/scripts/net.sh" down >/dev/null 2>&1
+{ echo x-route > /sys/power/wake_unlock; } 2>/dev/null
+rm -rf "${XR_DATA:-/data/adb/x-route}"

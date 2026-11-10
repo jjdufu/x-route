@@ -1,137 +1,125 @@
 #!/system/bin/sh
+# shellcheck disable=SC2034  # 本文件定义的变量供引入它的脚本使用
 # ==============================================================================
-# x-route: Common Functions, Constants, and Configuration Helpers
+# x-route v2: 公共定义与工具函数（被其他脚本 . 引入）
+# 兼容 Android mksh（32 位算术）与 busybox ash。
 # ==============================================================================
-
-export PATH="/data/adb/ap/bin:/data/adb/ksu/bin:/data/adb/magisk:/data/adb/x-route/bin:/apex/com.android.virt/bin:/system/bin:/system/xbin:/vendor/bin:/data/data/com.termux/files/usr/bin:$PATH"
-
 MODDIR="${MODDIR:-/data/adb/modules/x_route}"
-PERSIST_DIR="/data/adb/x-route"
-CONF_DIR="${PERSIST_DIR}/config"
-CONF_FILE="${CONF_DIR}/config.conf"
-BOOT_FUSE_FILE="${CONF_DIR}/vm_booting.fuse"
-BOOT_TRIPPED_FILE="${CONF_DIR}/bootloop_tripped.flag"
-IMG_DIR="${PERSIST_DIR}/images"
-RUN_DIR="${PERSIST_DIR}/run"
-LOG_DIR="${PERSIST_DIR}/logs"
-BIN_DIR="${PERSIST_DIR}/bin"
+XR_DATA="${XR_DATA:-/data/adb/x-route}"
+BB="${BB:-/data/adb/ksu/bin/busybox}"
+CONF="${XR_DATA}/config/config.conf"
+RUN="${XR_DATA}/run"
+LOG="${XR_DATA}/log/xr.log"
+IMG="${XR_DATA}/images"
+ROOTFS="${IMG}/openwrt-rootfs.img"
+FUSE="${XR_DATA}/config/vm_booting.fuse"
+TRIPPED="${XR_DATA}/config/tripped"
+LAST_GOOD="${XR_DATA}/config/last_good"
+KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH VPN_MODE VPN_ROUTES AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC"
+# 影响 VM 稳定性的键：只要这些键变化，last_good 就失效
+HASH_KEYS="XR_NET_PREFIX VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE"
+# rw 共享的属主映射参数（crosvm --shared-dir 选项）。需先在真机上确认 crosvm 支持的写法（见 docs/TESTING.md 第 0 节）；
+# 为空表示不支持 rw，此时 VM_SHARE_MODE=rw 被拒绝。
+RW_MAP_OPT="${RW_MAP_OPT:-}"
 
-WAN_TAP="tap-wan"
-LAN_TAP="tap-lan"
-LAN_BR="br-lan"
-WAN_MAC="52:54:00:12:34:56"
-LAN_MAC="52:54:00:12:34:57"
+ensure_dirs()  { mkdir -p "${XR_DATA}/config" "${RUN}" "${XR_DATA}/log" "${IMG}"; }
+load_config()  { [ -f "${CONF}" ] && . "${CONF}"; }
 
-ROUTE_TABLE_REDIRECT="100"
-FWMARK_EXEMPT="0x100/0x100"
-WAKELOCK_NAME="x_route_wakelock"
+log_msg() { # $1=级别 $2=模块 $3...=消息
+  lv="$1"; m="$2"; shift 2
+  mkdir -p "${XR_DATA}/log"
+  if [ -f "${LOG}" ] && [ "$(stat -c %s "${LOG}" 2>/dev/null || echo 0)" -gt 524288 ]; then mv -f "${LOG}" "${LOG}.1"; fi
+  echo "$(date '+%F %T') [${lv}] [${m}] $*" >> "${LOG}"
+}
+log_info() { log_msg INFO "$@"; }
+log_err()  { log_msg ERROR "$@"; }
 
-ensure_module_prop() {
-    local prop="${MODDIR}/module.prop"
-    if [ -d "${MODDIR}" ]; then
-        if [ ! -s "${prop}" ] || ! grep -q "^name=" "${prop}" 2>/dev/null || ! grep -q "^author=" "${prop}" 2>/dev/null; then
-            cat <<'EOF' > "${prop}"
-id=x_route
-name=x-route 随身软路由与内核保活 (OnePlus 13)
-version=v1.0.1
-versionCode=101
-author=jjdufu
-description=一加 13 (骁龙8至尊版 / Android 15-16) Gunyah/QEMU 硬件虚拟化 OpenWrt 随身软路由 (5G WAN + 192.168.100.1 热点接管 + 本机回流 + NAS 挂载) 与四重内核级应用保活引擎。
-EOF
-            chmod 0644 "${prop}" 2>/dev/null || true
-            sync
-        fi
-    fi
+is_uint()  { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le 6 ]; }
+in_range() { is_uint "$1" && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+valid_ip4() {
+  echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
+  o="$1"; for _ in 1 2 3 4; do v="${o%%.*}"; [ "$v" -le 255 ] || return 1; o="${o#*.}"; done
 }
 
-is_module_disabled() {
-    [ -f "${MODDIR}/disable" ] || [ -f "${MODDIR}/remove" ]
+valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
+  case "$1" in
+    XR_NET_PREFIX)
+      echo "$2" | grep -qE '^(10\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9]{1,3}$' && valid_ip4 "$2.0" ;;
+    XR_VM_MAC)
+      echo "$2" | grep -qE '^52:54:00(:[0-9a-f]{2}){3}$' ;;
+    XR_DNS)
+      n=0; for d in $2; do valid_ip4 "$d" || return 1; n=$((n+1)); done; [ "$n" -ge 1 ] && [ "$n" -le 3 ] ;;
+    XR_EXPOSE)
+      case "$2" in off|hotspot|all) ;; *) return 1;; esac ;;
+    VM_CPUS)
+      in_range "$2" 1 4 ;;
+    VM_MEM_MB)
+      in_range "$2" 384 2048 ;;
+    VM_SWIOTLB_MB)
+      case "$2" in 32|64|128) ;; *) return 1;; esac ;;
+    VM_NET|VM_DISK_RW|VM_WAKELOCK|VM_SHARE|AUTOSTART)
+      case "$2" in 0|1) ;; *) return 1;; esac ;;
+    VM_DISK_SIZE_MB)
+      in_range "$2" 512 16384 ;;
+    VM_SHARE_MODE)
+      case "$2" in ro) ;; rw) [ -n "${RW_MAP_OPT}" ] ;; *) return 1;; esac ;;
+    VM_SHARE_PATH)
+      case "$2" in /data/media/0|/data/media/0/*) ;; *) return 1;; esac
+      case "$2" in *..*|*\"*|*\'*|*' '*) return 1;; esac
+      [ -d "$2" ] ;;
+    VPN_MODE)
+      case "$2" in terminal|site) ;; *) return 1;; esac ;;
+    VPN_ROUTES)
+      [ -z "$2" ] && return 0
+      echo "$2" | grep -qE '^[0-9./,]+$' || return 1
+      n=0; for c in $(echo "$2" | tr ',' ' '); do valid_cidr "$c" || return 1; n=$((n+1)); done
+      [ "$n" -le 64 ] ;;
+    AUTOSTART_DELAY_SEC)
+      in_range "$2" 0 600 ;;
+    READY_TIMEOUT_SEC|STABLE_SEC)
+      in_range "$2" 60 900 ;;
+    *) return 1 ;;
+  esac
 }
 
-ensure_dirs() {
-    mkdir -p "${CONF_DIR}" "${IMG_DIR}" "${RUN_DIR}" "${LOG_DIR}" "${BIN_DIR}"
-    if [ ! -f "${CONF_FILE}" ] && [ -f "${MODDIR}/config/config.conf" ]; then
-        cp -f "${MODDIR}/config/config.conf" "${CONF_FILE}"
-    fi
+set_kv() { # $1=键 $2=值：先校验，写临时文件，mv 替换，再 sync
+  valid_kv "$1" "$2" || return 1
+  tmp="${CONF}.tmp.$$"
+  awk -v k="$1" -v v="$2" 'BEGIN{d=0} index($0, k"=")==1 {print k"=\""v"\""; d=1; next} {print} END{if(!d) print k"=\""v"\""}' "${CONF}" > "${tmp}" \
+    && mv -f "${tmp}" "${CONF}" && sync
 }
 
-load_config() {
-    ensure_dirs
-    if [ -f "${CONF_FILE}" ]; then
-        # shellcheck disable=SC1090
-        . "${CONF_FILE}"
-    elif [ -f "${MODDIR}/config/config.conf" ]; then
-        # shellcheck disable=SC1090
-        . "${MODDIR}/config/config.conf"
-    fi
+config_hash() {
+  load_config
+  for k in ${HASH_KEYS}; do eval "printf '%s=%s;' ${k} \"\${${k}}\""; done | sha256sum | cut -c1-16
 }
 
-save_config_kv() {
-    local key="$1"
-    local val="$2"
-    ensure_dirs
-    if grep -q "^${key}=" "${CONF_FILE}" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=\"${val}\"|" "${CONF_FILE}"
-    else
-        echo "${key}=\"${val}\"" >> "${CONF_FILE}"
-    fi
-    sync
+is_module_disabled() { [ -f "${MODDIR}/disable" ] || [ -f "${MODDIR}/remove" ]; }
+is_pid_running()     { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+wait_boot_completed(){ until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done; }
+ce_ready()           { [ "$(getprop sys.user.0.ce_available)" = true ]; }
+wakelock_on()        { { echo x-route > /sys/power/wake_lock; } 2>/dev/null; }
+wakelock_off()       { { echo x-route > /sys/power/wake_unlock; } 2>/dev/null; }
+
+# ---- CIDR 工具（08 使用）。mksh 只有 32 位有符号算术：只用按位与和相等比较，不做有符号的移位比较 ----
+ip2int() { o="$1"; a="${o%%.*}"; o="${o#*.}"; b="${o%%.*}"; o="${o#*.}"; c="${o%%.*}"; d="${o#*.}"
+  echo $(( (a<<24) | (b<<16) | (c<<8) | d )); }
+prefix_mask() { [ "$1" -eq 0 ] && { echo 0; return; }; echo $(( (0xFFFFFFFF << (32-$1)) & 0xFFFFFFFF )); }
+valid_cidr() {
+  echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/([89]|[12][0-9]|3[0-2])$' && valid_ip4 "${1%/*}"
 }
-
-log_msg() {
-    local level="$1"
-    local comp="$2"
-    shift 2
-    local ts
-    ts="$(date '+%Y-%m-%d %H:%M:%S')"
-    ensure_dirs
-    echo "[${ts}] [${level}] [${comp}] $*" >> "${LOG_DIR}/x-route.log"
-    # Rotate log if > 1MB
-    if [ -f "${LOG_DIR}/x-route.log" ]; then
-        local sz
-        sz="$(wc -c < "${LOG_DIR}/x-route.log" 2>/dev/null || echo 0)"
-        if [ "${sz}" -gt 1048576 ]; then
-            tail -n 500 "${LOG_DIR}/x-route.log" > "${LOG_DIR}/x-route.log.tmp" && mv -f "${LOG_DIR}/x-route.log.tmp" "${LOG_DIR}/x-route.log"
-        fi
-    fi
+cidr_private() { # 10/8 172.16/12 192.168/16 100.64/10（按网络地址判断，前缀不得比所在私网段更宽）
+  o="${1%/*}"; p="${1#*/}"; a="${o%%.*}"; o="${o#*.}"; b="${o%%.*}"
+  if [ "$a" -eq 10 ]; then [ "$p" -ge 8 ]
+  elif [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; then [ "$p" -ge 12 ]
+  elif [ "$a" -eq 192 ] && [ "$b" -eq 168 ]; then [ "$p" -ge 16 ]
+  elif [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ]; then [ "$p" -ge 10 ]
+  else return 1; fi
 }
-
-log_info() { log_msg "INFO" "$@"; }
-log_warn() { log_msg "WARN" "$@"; }
-log_err()  { log_msg "ERROR" "$@"; }
-
-is_pid_running() {
-    local pid_file="$1"
-    if [ -f "${pid_file}" ]; then
-        local pid
-        pid="$(cat "${pid_file}" 2>/dev/null)"
-        if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-            return 0
-        fi
-    fi
-    return 1
-}
-
-wait_until_boot_completed() {
-    while [ "$(getprop sys.boot_completed)" != "1" ]; do
-        sleep 2
-    done
-    # Wait up to 30s for FBE user 0 credential-encrypted storage if unlocked
-    local retry=0
-    while [ "$(getprop sys.user.0.ce_available)" != "true" ] && [ ! -d "/data/media/0" ] && [ "${retry}" -lt 15 ]; do
-        sleep 2
-        retry=$((retry + 1))
-    done
-}
-
-acquire_wakelock() {
-    if [ -w /sys/power/wake_lock ]; then
-        echo "${WAKELOCK_NAME}" > /sys/power/wake_lock 2>/dev/null || true
-    fi
-}
-
-release_wakelock() {
-    if [ -w /sys/power/wake_unlock ]; then
-        echo "${WAKELOCK_NAME}" > /sys/power/wake_unlock 2>/dev/null || true
-    fi
+cidr_aligned() { n="$(ip2int "${1%/*}")"; m="$(prefix_mask "${1#*/}")"; [ $(( n & m )) -eq $(( n & 0xFFFFFFFF )) ]; }
+cidr_overlap() { # $1 $2 两个 CIDR 是否重叠
+  a="$(ip2int "${1%/*}")"; pa="${1#*/}"; b="$(ip2int "${2%/*}")"; pb="${2#*/}"
+  if [ "$pa" -lt "$pb" ]; then p="$pa"; else p="$pb"; fi
+  m="$(prefix_mask "$p")"
+  [ $(( a & m )) -eq $(( b & m )) ]
 }

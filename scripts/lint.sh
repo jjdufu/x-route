@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 list_sh() {
-  for d in module scripts openwrt/files; do
+  for d in module scripts openwrt/files tests; do
     [ -d "$d" ] || continue
     find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -name xr \)
   done | sort
@@ -23,13 +23,21 @@ for f in ${files}; do
   if head -n1 "$f" | grep -q bash; then bash_files="${bash_files} $f"; else sh_files="${sh_files} $f"; fi
 done
 # shellcheck disable=SC2086
-[ -z "${sh_files}" ] || shellcheck -s sh -e SC3043,SC1091 ${sh_files}
+[ -z "${sh_files}" ] || shellcheck -s sh -e SC3043,SC1091,SC1090 ${sh_files}
 # shellcheck disable=SC2086
 [ -z "${bash_files}" ] || shellcheck -s bash -e SC1091 ${bash_files}
 
 echo "== sh -n"
 for f in ${files}; do
   if head -n1 "$f" | grep -q bash; then bash -n "$f"; else sh -n "$f"; fi
+done
+
+for t in tests/test-*.sh; do
+  [ -f "$t" ] || continue
+  for s in sh mksh "busybox sh"; do
+    command -v "${s%% *}" >/dev/null 2>&1 || continue
+    echo "== ${t} (${s})"; ${s} "$t"
+  done
 done
 
 if [ -f scripts/check-config-keys.sh ]; then

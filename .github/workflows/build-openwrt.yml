@@ -32,7 +32,7 @@ jobs:
             build-essential bc bison flex gawk cpio kmod \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             libssl-dev libelf-dev python3 rsync unzip zip file wget curl \
-            zstd xz-utils e2fsprogs qemu-utils shellcheck
+            zstd xz-utils e2fsprogs qemu-utils shellcheck mksh busybox
 
       - name: Lint
         run: sh scripts/lint.sh
