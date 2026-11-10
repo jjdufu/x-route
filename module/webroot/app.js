@@ -1,24 +1,39 @@
-// ==============================================================================
-// XRouter WebUI（docs/v2-plan/10-cli-webui.md）
-// 只通过 ksu.exec 调用 scripts/xr，不直接读写配置文件。
-// ==============================================================================
+// XRouter WebUI：只通过 ksu.exec 调用 xr。
 "use strict";
 
 const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
-  "AUTOSTART", "AUTOSTART_DELAY_SEC", "VM_CPUS", "VM_MEM_MB", "VM_SWIOTLB_MB",
-  "READY_TIMEOUT_SEC", "STABLE_SEC", "VM_NET", "VM_DISK_RW",
+  "AUTOSTART", "VM_CPUS", "VM_MEM_MB",
 ];
 const ARG_RE = /^[A-Za-z0-9_\-]+$/;
+const EXPOSE_OPTS = [
+  { value: "off", label: "仅本机" },
+  { value: "hotspot", label: "热点设备" },
+  { value: "all", label: "当前局域网" },
+];
+const SHARE_OPTS = [
+  { value: "ro", label: "只读" },
+  { value: "rw", label: "可读写" },
+];
+const LOG_NAMES = { module: "模块", console: "控制台", ctl: "控制通道", vmm: "虚拟机管理器" };
+const VPN_TXT = { down: "未连接", connecting: "连接中", up: "已连接" };
+const UP_KIND = (name) => {
+  if (!name) return "无";
+  if (/^(rmnet|ccmni|seth|v4-rmnet|v4-ccmni)/i.test(name)) return "蜂窝";
+  if (/^wlan/i.test(name)) return "Wi-Fi";
+  return name;
+};
+
 let status = null;
 let seq = 0;
 let timer = null;
+let logKind = "module";
+let page = "home";
 
 const $ = (id) => document.getElementById(id);
 const hasKsu = () => typeof window.ksu !== "undefined" && typeof window.ksu.exec === "function";
 
-// 单引号包裹，值里的 ' 转义为 '\''
 function shq(v) {
   return "'" + String(v).replace(/'/g, "'\\''") + "'";
 }
@@ -26,7 +41,7 @@ function shq(v) {
 function exec(cmd) {
   return new Promise((resolve) => {
     if (!hasKsu()) {
-      resolve({ errno: 1, stdout: "", stderr: "不在 KernelSU 管理器中" });
+      resolve({ errno: 1, stdout: "", stderr: "需在管理器中打开" });
       return;
     }
     const cb = `__xr_cb_${Date.now()}_${++seq}`;
@@ -34,16 +49,14 @@ function exec(cmd) {
       delete window[cb];
       resolve({ errno: typeof errno === "number" ? errno : 0, stdout: stdout || "", stderr: stderr || "" });
     };
-    try {
-      window.ksu.exec(cmd, "{}", cb);
-    } catch (e) {
+    try { window.ksu.exec(cmd, "{}", cb); }
+    catch (e) {
       delete window[cb];
       resolve({ errno: 1, stdout: "", stderr: String(e) });
     }
   });
 }
 
-// xr 子命令：子命令与非值参数都要过白名单
 function xr(sub, ...args) {
   if (!ARG_RE.test(sub)) return Promise.reject(new Error("bad command"));
   return exec(`${XR} ${sub} ${args.map(shq).join(" ")}`.trim());
@@ -57,38 +70,34 @@ function toast(msg, bad) {
   toast.h = setTimeout(() => t.classList.add("hidden"), 4000);
 }
 
+function confirmDlg(message) {
+  return new Promise((resolve) => {
+    $("modal-text").textContent = message;
+    $("modal").classList.remove("hidden");
+    const done = (ok) => {
+      $("modal").classList.add("hidden");
+      $("modal-ok").onclick = null;
+      $("modal-cancel").onclick = null;
+      resolve(ok);
+    };
+    $("modal-ok").onclick = () => done(true);
+    $("modal-cancel").onclick = () => done(false);
+  });
+}
+
 async function setKey(key, value) {
   if (!SET_KEYS.includes(key)) return false;
   const r = await xr("set", key, value);
   let res = null;
   try { res = JSON.parse(r.stdout.trim().split("\n").pop()); } catch (e) { res = null; }
   if (!res || !res.ok) {
-    toast(`保存失败：${(res && res.error) || r.stderr || "未知错误"}`, true);
+    toast((res && res.error) || r.stderr || "未保存", true);
     await refresh();
     return false;
   }
-  toast(res.restart ? "已保存，需重启 VM 生效" : "已保存");
+  toast(res.restart ? "已保存，需重新启动" : "已保存");
   await refresh();
   return true;
-}
-
-// ---- CIDR 前端校验（与 common.sh 同规则：格式、私网、主机位为 0）----
-function ip2int(s) {
-  const p = s.split(".").map(Number);
-  if (p.length !== 4 || p.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return null;
-  return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3];
-}
-function cidrOk(c) {
-  const m = /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/.exec(c);
-  if (!m) return "格式错误";
-  const ip = ip2int(m[1]); const pfx = Number(m[2]);
-  if (ip === null || pfx < 8 || pfx > 32) return "格式错误";
-  const mask = pfx === 0 ? 0 : (0xffffffff << (32 - pfx)) >>> 0;
-  if (((ip & mask) >>> 0) !== ip) return "主机位不为 0";
-  const a = ip >>> 24; const b = (ip >>> 16) & 255;
-  const priv = (a === 10 && pfx >= 8) || (a === 172 && b >= 16 && b <= 31 && pfx >= 12) ||
-    (a === 192 && b === 168 && pfx >= 16) || (a === 100 && b >= 64 && b <= 127 && pfx >= 10);
-  return priv ? "" : "不是私网地址";
 }
 
 function fmtUptime(s) {
@@ -97,57 +106,92 @@ function fmtUptime(s) {
   return h ? `${h} 小时 ${m} 分` : `${m} 分 ${s % 60} 秒`;
 }
 
-const STATE_TXT = { stopped: "已停止", booting: "启动中", ready: "已就绪", stable: "已稳定" };
+function vmLabel(vm) {
+  if (!vm.running) return "已停止";
+  if (vm.state === "ready" || vm.state === "stable") return "运行中";
+  return "启动中";
+}
+
+function bindSelect(id, opts, current, onChange, disabledValue) {
+  const box = $(id);
+  box.innerHTML = "";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "cselect-btn";
+  const cur = opts.find((o) => o.value === current) || opts[0];
+  btn.textContent = cur ? cur.label : "";
+  const menu = document.createElement("div");
+  menu.className = "cselect-menu hidden";
+  opts.forEach((o) => {
+    const it = document.createElement("div");
+    it.className = "cselect-opt" + (o.value === current ? " on" : "");
+    it.textContent = o.label;
+    if (o.value === disabledValue) it.setAttribute("aria-disabled", "true");
+    it.onclick = () => {
+      if (o.value === disabledValue) return;
+      menu.classList.add("hidden");
+      if (o.value !== current) onChange(o.value);
+    };
+    menu.appendChild(it);
+  });
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".cselect-menu").forEach((m) => { if (m !== menu) m.classList.add("hidden"); });
+    menu.classList.toggle("hidden");
+  };
+  box.appendChild(btn);
+  box.appendChild(menu);
+}
+
+function showPage(name) {
+  page = name;
+  ["home", "link", "logs", "settings"].forEach((n) => {
+    $("page-" + n).classList.toggle("hidden", n !== name);
+  });
+  document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("on", b.dataset.page === name));
+  if (name === "logs") loadLog();
+}
 
 function render(d) {
   const vm = d.vm || {}; const net = d.net || {}; const vpn = d.vpn || {}; const sh = d.share || {}; const cfg = d.config || {};
+  const label = vmLabel(vm);
   const pill = $("vm-pill");
-  pill.textContent = STATE_TXT[vm.state] || vm.state || "-";
-  pill.className = "pill " + (vm.running ? (vm.state === "stable" ? "pill-ok" : "pill-warn") : "pill-off");
-  $("st-vm").textContent = vm.running ? `运行中（pid ${vm.pid}，就绪通道 ${vm.ready_channel || "-"}）` : "已停止";
+  pill.textContent = label;
+  pill.className = "pill " + (label === "运行中" ? "pill-ok" : label === "启动中" ? "pill-warn" : "pill-off");
+  $("st-vm").textContent = label;
   $("st-uptime").textContent = vm.running ? fmtUptime(vm.uptime_s) : "-";
-  $("st-netmode").textContent = net.mode === "ndc" ? "ndc（netd 本地网络）" : net.mode === "fallback" ? "退回模式（table 97）" : "未启用";
-  $("st-up").textContent = net.up_if || "-";
-  $("st-expose").textContent = (net.expose_if && net.expose_if.length) ? net.expose_if.join(", ") : "无";
-  $("st-vpn").textContent = `${vpn.status || "-"}，生效 ${(vpn.routes_active || []).length} 条`;
-  $("st-share").textContent = sh.enabled ? `开启（本次 ${sh.mode}${sh.ce_ready ? "" : "，手机未解锁"}）` : "关闭";
+  $("st-up").textContent = UP_KIND(net.up_if);
 
-  // 熔断
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
   $("trip-bar").classList.toggle("hidden", !tripped);
-  if (tripped) $("trip-time").textContent = vm.tripped;
   $("btn-start").disabled = tripped || vm.running;
   $("btn-stop").disabled = !vm.running;
   $("btn-expand").disabled = vm.running;
   $("btn-reset").disabled = vm.running;
 
-  // 访问链接
   const pre = cfg.XR_NET_PREFIX || "172.29.233";
-  $("lnk-luci").href = $("lnk-luci").textContent = `http://${pre}.254`;
-  $("lnk-ttyd").href = $("lnk-ttyd").textContent = `http://${pre}.254:7681`;
-  $("txt-ssh").textContent = `ssh root@${pre}.254`;
-  $("txt-route").textContent = `${pre}.0/24 via <手机 IP>`;
+  $("lnk-luci").href = `http://${pre}.254`;
+  $("lnk-luci").textContent = `LuCI  http://${pre}.254`;
 
-  // 表单（正在编辑的控件不覆盖）
-  document.querySelectorAll("[data-key]").forEach((el) => {
+  $("st-vpn").textContent = VPN_TXT[vpn.status] || vpn.status || "未连接";
+  const routes = vpn.routes_active || [];
+  $("vpn-active").textContent = routes.length ? routes.join("\n") : "无";
+
+  document.querySelectorAll("input[data-key]").forEach((el) => {
     if (el === document.activeElement) return;
     const v = cfg[el.dataset.key];
     if (v === undefined) return;
     if (el.type === "checkbox") el.checked = v === "1"; else el.value = v;
   });
-  if ($("vpn-active")) $("vpn-active").textContent = (vpn.routes_active || []).join(", ") || "无";
-  $("hint-all").classList.toggle("hidden", cfg.XR_EXPOSE !== "all");
 
-  $("opt-rw").disabled = !sh.rw_supported;
-  $("hint-norw").classList.toggle("hidden", !!sh.rw_supported);
+  bindSelect("sel-expose", EXPOSE_OPTS, cfg.XR_EXPOSE || "hotspot", (v) => setKey("XR_EXPOSE", v));
+  bindSelect("sel-share-mode", SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (v) => setKey("VM_SHARE_MODE", v), sh.rw_supported ? "" : "rw");
 
-  const as = $("cb-autostart"); const ah = $("hint-autostart");
-  let why = "";
-  if (tripped) why = "存在未确认的熔断，不能开启自启。";
-  else if (!vm.last_good_match) why = "需先用当前配置手动启动成功一次（运行到“已稳定”），才能开启自启。";
-  as.disabled = !!why && cfg.AUTOSTART !== "1";
-  ah.textContent = why;
-  ah.classList.toggle("hidden", !why);
+  $("btn-mode-global").classList.toggle("on", cfg.XR_MODE !== "bypass");
+  $("btn-mode-bypass").classList.toggle("on", cfg.XR_MODE === "bypass");
+
+  const as = $("cb-autostart");
+  as.disabled = tripped && cfg.AUTOSTART !== "1";
 }
 
 async function refresh() {
@@ -158,7 +202,7 @@ async function refresh() {
     $("env-badge").textContent = "已连接";
     $("env-badge").className = "badge badge-ok";
   } catch (e) {
-    $("env-badge").textContent = hasKsu() ? "读取状态失败" : "需在 KernelSU 管理器中打开";
+    $("env-badge").textContent = hasKsu() ? "读取失败" : "需在管理器中打开";
     $("env-badge").className = "badge badge-bad";
   }
 }
@@ -173,41 +217,107 @@ function stopPolling() {
 }
 
 async function action(btn, sub, args, okMsg) {
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   const r = await xr(sub, ...args);
   if (r.errno === 0) toast(okMsg);
-  else toast(`失败：${(r.stdout + r.stderr).trim().split("\n").pop() || r.errno}`, true);
+  else toast((r.stdout + r.stderr).trim().split("\n").pop() || "失败", true);
+  await refresh();
+}
+
+async function loadLog() {
+  $("log-title").textContent = LOG_NAMES[logKind] || logKind;
+  document.querySelectorAll("#log-tabs .tab").forEach((b) => b.classList.toggle("on", b.dataset.log === logKind));
+  const r = await xr("log", logKind, "200");
+  $("log-box").textContent = r.stdout || "（空）";
+  $("log-box").scrollTop = $("log-box").scrollHeight;
+}
+
+function toB64(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
+async function importOvpn(text) {
+  const b64 = toB64(text).replace(/\s+/g, "");
+  const r0 = await xr("vpn-stage-begin");
+  if (r0.errno !== 0) { toast("导入失败", true); return; }
+  const size = 1800;
+  for (let i = 0; i < b64.length; i += size) {
+    const r = await xr("vpn-stage-append", b64.slice(i, i + size));
+    if (r.errno !== 0) { toast("导入失败", true); return; }
+  }
+  const r = await xr("vpn-stage-commit");
+  let res = null;
+  try { res = JSON.parse((r.stdout || "").trim().split("\n").pop()); } catch (e) { res = null; }
+  if (!res || !res.ok) toast((res && res.error) || "导入失败", true);
+  else toast("已启用");
   await refresh();
 }
 
 function bind() {
-  $("btn-start").onclick = (e) => action(e.target, "start", [], "已启动，等待就绪");
-  $("btn-stop").onclick = (e) => action(e.target, "stop", [], "已停止");
-  $("btn-ack").onclick = (e) => action(e.target, "ack-trip", [], "熔断已确认");
-  $("btn-expand").onclick = (e) => {
+  document.querySelectorAll(".nav").forEach((b) => {
+    b.onclick = () => showPage(b.dataset.page);
+  });
+  $("btn-start").onclick = (e) => action(e.target, "start", [], "已启动");
+  $("btn-stop").onclick = async (e) => {
+    if (!await confirmDlg("停止虚拟机？")) return;
+    action(e.target, "stop", [], "已停止");
+  };
+  $("btn-ack").onclick = (e) => action(e.target, "ack-trip", [], "已确认");
+  $("btn-expand").onclick = async (e) => {
     const mb = $("in-expand").value.trim();
-    if (!/^\d+$/.test(mb) || Number(mb) < 512 || Number(mb) > 16384) { toast("请输入 512–16384 之间的 MB 数", true); return; }
-    action(e.target, "expand", [mb], `系统盘已扩容到 ${mb} MB，下次开机生效`);
+    if (!/^\d+$/.test(mb) || Number(mb) < 512 || Number(mb) > 16384) { toast("请输入 512–16384", true); return; }
+    if (!await confirmDlg(`将系统盘扩展到 ${mb} MB？`)) return;
+    action(e.target, "expand", [mb], "已扩展");
   };
-  $("btn-reset").onclick = (e) => {
-    if (!confirm("重置系统盘会清空 VM 内的全部数据和设置，确定继续？")) return;
-    if (!confirm("再次确认：VM 内数据将全部丢失。")) return;
-    action(e.target, "reset-disk", [], "系统盘已重置");
+  $("btn-reset").onclick = async (e) => {
+    if (!await confirmDlg("重置系统盘？虚拟机内的数据将全部丢失。")) return;
+    action(e.target, "reset-disk", [], "已重置");
   };
-  $("btn-log").onclick = async () => {
-    const which = $("sel-log").value;
-    if (!["xr", "console", "ctl", "vmm"].includes(which)) return;
-    const r = await xr("log", which, "200");
-    const box = $("log-box");
-    box.textContent = r.stdout || "（空）";
-    box.classList.remove("hidden");
-    box.scrollTop = box.scrollHeight;
+  $("btn-mode-global").onclick = async () => {
+    if ((status && status.config && status.config.XR_MODE) === "global") return;
+    if (!await confirmDlg("切换为全局？手机和热点将经 OpenWrt 出网。")) return;
+    setKey("XR_MODE", "global");
   };
-  document.querySelectorAll("[data-key]").forEach((el) => {
+  $("btn-mode-bypass").onclick = async () => {
+    if ((status && status.config && status.config.XR_MODE) === "bypass") return;
+    if (!await confirmDlg("切换为旁路？手机和热点将自行出网。")) return;
+    setKey("XR_MODE", "bypass");
+  };
+  $("btn-ovpn").onclick = () => $("in-ovpn").click();
+  $("in-ovpn").onchange = () => {
+    const f = $("in-ovpn").files && $("in-ovpn").files[0];
+    $("in-ovpn").value = "";
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => importOvpn(String(reader.result || ""));
+    reader.readAsText(f);
+  };
+  document.querySelectorAll("#log-tabs .tab").forEach((b) => {
+    b.onclick = () => { logKind = b.dataset.log; loadLog(); };
+  });
+  $("btn-export-one").onclick = async () => {
+    const r = await xr("log-export", logKind);
+    let res = null;
+    try { res = JSON.parse((r.stdout || "").trim().split("\n").pop()); } catch (e) { res = null; }
+    toast(res && res.ok ? "已保存到 Download" : "导出失败", !(res && res.ok));
+  };
+  $("btn-export-all").onclick = async () => {
+    const r = await xr("log-export", "all");
+    let res = null;
+    try { res = JSON.parse((r.stdout || "").trim().split("\n").pop()); } catch (e) { res = null; }
+    toast(res && res.ok ? "已保存到 Download" : "导出失败", !(res && res.ok));
+  };
+  document.querySelectorAll("input[data-key]").forEach((el) => {
     el.addEventListener("change", () => {
       const v = el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value.trim();
       setKey(el.dataset.key, v);
     });
+  });
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".cselect-menu").forEach((m) => m.classList.add("hidden"));
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopPolling(); else { refresh(); startPolling(); }

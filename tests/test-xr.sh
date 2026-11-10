@@ -69,6 +69,34 @@ chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null && [ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'
 chk '$XR log xr 5 | grep -q . && [ "$($XR log xr 3 | wc -l)" -eq 3 ] && $XR log console >/dev/null'
 out="$($XR log bogus)"; chk '[ $? -eq 2 ]'
+# 日志导出：压缩包与单类文件名、内容
+mkdir -p "$T/dl"
+export XR_DOWNLOAD="$T/dl"
+printf 'module-body\n' > "$LOG"
+printf 'console-body\n' > "$RUN/console.log"
+printf 'ctl-body\n' > "$RUN/vm-ctl.log"
+printf 'vmm-body\n' > "$XR_DATA/log/vmm.log"
+out="$($XR log-export all)"
+chk 'echo "$out" | grep -q "\"ok\":true"'
+zipf="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
+chk 'echo "$zipf" | grep -qE "xrouter-logs-[0-9]{8}-[0-9]{6}\.zip$" && [ -f "$zipf" ]'
+python3 - "$zipf" <<'PYZ' || fail=1
+import sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+names = set(z.namelist())
+need = {"module.log", "console.log", "vm-ctl.log", "vmm.log"}
+if names != need:
+    print("FAIL: zip 内文件", names); sys.exit(1)
+if z.read("module.log") != b"module-body\n":
+    print("FAIL: module.log 内容"); sys.exit(1)
+if z.read("console.log") != b"console-body\n":
+    print("FAIL: console.log 内容"); sys.exit(1)
+PYZ
+out="$($XR log-export module)"
+chk 'echo "$out" | grep -q "\"ok\":true"'
+one="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
+chk 'echo "$one" | grep -qE "module-[0-9]{8}-[0-9]{6}\.log$" && grep -qx module-body "$one"'
+out="$($XR log-export bogus)"; chk '[ $? -eq 2 ] && echo "$out" | grep -q "\"ok\":false"'
 $XR stop; chk '! $XR running'
 # 熔断：存在 tripped 时自启和启动都被拒绝，ack-trip 后恢复
 $XR set AUTOSTART 0 >/dev/null; date > "$TRIPPED"

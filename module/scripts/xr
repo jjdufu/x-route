@@ -84,6 +84,90 @@ status_line() {
   echo "${r} / ${s} / ${XR_NET_PREFIX}.254 / 暴露=${XR_EXPOSE} / VPN网段=${n:-0}${t}"
 }
 
+log_src() {
+  case "$1" in
+    module|xr) echo "${LOG}" ;;
+    console) echo "${CON_LOG:-${RUN}/console.log}" ;;
+    ctl) echo "${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
+    vmm) echo "${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
+    *) return 1 ;;
+  esac
+}
+
+log_basename() {
+  case "$1" in
+    module|xr) echo module.log ;;
+    console) echo console.log ;;
+    ctl) echo vm-ctl.log ;;
+    vmm) echo vmm.log ;;
+  esac
+}
+
+download_dir() {
+  if [ -n "${XR_DOWNLOAD:-}" ]; then
+    echo "${XR_DOWNLOAD}"
+    return 0
+  fi
+  if [ -d /data/media/0/Download ]; then
+    echo /data/media/0/Download
+  elif [ -d /sdcard/Download ]; then
+    echo /sdcard/Download
+  else
+    mkdir -p /data/media/0/Download 2>/dev/null && echo /data/media/0/Download
+  fi
+}
+
+copy_log_or_empty() {
+  if [ -f "$1" ]; then
+    cp -f "$1" "$2"
+  else
+    : > "$2"
+  fi
+}
+
+make_zip() {
+  z="$1"; shift
+  if command -v zip >/dev/null 2>&1; then
+    zip -q -9 "$z" "$@"
+  elif [ -n "${BB}" ] && "${BB}" zip -q -9 "$z" "$@" 2>/dev/null; then
+    :
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys,zipfile; z=sys.argv[1]; zh=zipfile.ZipFile(z,"w",compression=zipfile.ZIP_DEFLATED); [zh.write(n,n) for n in sys.argv[2:]]; zh.close()' "$z" "$@"
+  else
+    return 1
+  fi
+}
+
+log_export() {
+  what="${1:-all}"
+  dest="$(download_dir)"
+  if [ -z "$dest" ] || ! mkdir -p "$dest"; then
+    echo '{"ok":false,"error":"no download dir"}'
+    return 1
+  fi
+  ts="$(date '+%Y%m%d-%H%M%S')"
+  tmpd="$(mktemp -d 2>/dev/null || { mkdir -p "${RUN}/export.$$"; echo "${RUN}/export.$$"; })"
+  case "$what" in
+    all)
+      copy_log_or_empty "$(log_src module)" "$tmpd/module.log"
+      copy_log_or_empty "$(log_src console)" "$tmpd/console.log"
+      copy_log_or_empty "$(log_src ctl)" "$tmpd/vm-ctl.log"
+      copy_log_or_empty "$(log_src vmm)" "$tmpd/vmm.log"
+      out="${dest}/xrouter-logs-${ts}.zip"
+      ( cd "$tmpd" && make_zip "$out" module.log console.log vm-ctl.log vmm.log ) || { rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; }
+      ;;
+    module|console|ctl|vmm)
+      bn="$(log_basename "$what")"
+      out="${dest}/$(echo "$bn" | sed 's/\.log$//')-${ts}.log"
+      copy_log_or_empty "$(log_src "$what")" "$out"
+      ;;
+    *) echo '{"ok":false,"error":"usage"}'; rm -rf "$tmpd"; return 2 ;;
+  esac
+  rm -rf "$tmpd"
+  printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
+}
+
+
 cmd="$1"; [ $# -gt 0 ] && shift
 case "$cmd" in
   start)       vm_start ;;
@@ -134,12 +218,17 @@ case "$cmd" in
     fi
     rm -f "${RUN}/incoming.ovpn" "${RUN}/incoming.ovpn.b64"
     echo '{"ok":true}' ;;
+  log-export)
+    log_export "${1:-all}" ;;
   log)
     case "${1:-xr}" in
-      console) f="${CON_LOG}" ;; ctl) f="${CTL_LOG}" ;; vmm) f="${VMM_LOG}" ;; xr) f="${LOG}" ;;
-      *) echo "usage: xr log [xr|console|ctl|vmm] [N]"; exit 2 ;;
+      console) f="${CON_LOG:-${RUN}/console.log}" ;;
+      ctl) f="${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
+      vmm) f="${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
+      xr|module) f="${LOG}" ;;
+      *) echo "usage: xr log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|vpn-stage-begin|vpn-stage-append|vpn-stage-commit|log [xr|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ack-trip|expand MB|reset-disk|sync|vpn-stage-begin|vpn-stage-append|vpn-stage-commit|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
 esac

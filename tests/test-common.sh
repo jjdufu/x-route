@@ -44,5 +44,27 @@ h="$(config_hash)"; [ "${#h}" -eq 16 ] || { echo "FAIL: config_hash"; fail=1; }
 set_kv VM_MEM_MB 1024; [ "$h" != "$(config_hash)" ] || { echo "FAIL: hash unchanged"; fail=1; }
 log_info test hello; grep -q "\[INFO\] \[test\] hello" "$LOG" || { echo "FAIL: log"; fail=1; }
 
+
+# /sdcard、/storage/emulated/0 视为 MEDIA
+mkdir -p "$T/media/DCIM"
+MEDIA="$T/media"
+[ "$(canon_share_path /sdcard)" = "$T/media" ] || { echo "FAIL: /sdcard -> MEDIA"; fail=1; }
+[ "$(canon_share_path /sdcard/DCIM)" = "$T/media/DCIM" ] || { echo "FAIL: /sdcard/DCIM"; fail=1; }
+[ "$(canon_share_path /storage/emulated/0)" = "$T/media" ] || { echo "FAIL: /storage/emulated/0"; fail=1; }
+[ "$(canon_share_path /storage/emulated/0/DCIM)" = "$T/media/DCIM" ] || { echo "FAIL: emulated DCIM"; fail=1; }
+[ "$(canon_share_path "$T/media/DCIM")" = "$T/media/DCIM" ] || { echo "FAIL: already media path"; fail=1; }
+ok set_kv VM_SHARE_PATH /sdcard
+grep -qx "VM_SHARE_PATH=\"$T/media\"" "$CONF" || { echo "FAIL: set_kv /sdcard 未写成 MEDIA"; fail=1; }
+ok set_kv VM_SHARE_PATH /sdcard/DCIM
+grep -qx "VM_SHARE_PATH=\"$T/media/DCIM\"" "$CONF" || { echo "FAIL: set_kv /sdcard/DCIM"; fail=1; }
+
+# 日志轮转：超过 512KB 后改名为 .1，新文件重新写
+dd if=/dev/zero bs=1024 count=600 2>/dev/null | tr '\0' 'x' > "$LOG"
+log_info rotate hello
+[ -f "${LOG}.1" ] || { echo "FAIL: 未生成 ${LOG}.1"; fail=1; }
+sz="$(stat -c %s "$LOG" 2>/dev/null || echo 0)"
+[ "$sz" -lt 524288 ] || { echo "FAIL: 轮转后 $LOG 仍过大 ($sz)"; fail=1; }
+grep -q "hello" "$LOG" || { echo "FAIL: 新日志未写入"; fail=1; }
+
 [ "$fail" = 0 ] && echo "test-common OK ($(readlink -f /proc/$$/exe 2>/dev/null || echo sh))"
 exit "$fail"

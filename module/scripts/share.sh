@@ -13,7 +13,7 @@ share_prepare() {
   share_spec=""; share_wrap=""; share_mode=off
   [ "${VM_SHARE}" = 1 ] || return 0
   ce_ready || { log_err share "手机未解锁（CE 不可用），本次不共享"; return 0; }
-  P="${VM_SHARE_PATH}"
+  P="$(canon_share_path "${VM_SHARE_PATH}")"
   valid_kv VM_SHARE_PATH "$P" || { log_err share "路径不允许或不存在：$P（只能是 ${MEDIA} 或其子目录）"; return 0; }
   base="${P}:xrshare:type=fs:cache=auto:timeout=1"
   if [ "${VM_SHARE_MODE}" = rw ]; then

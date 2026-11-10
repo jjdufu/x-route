@@ -42,4 +42,9 @@ chk '[ "$share_mode" = off ] && grep -q "rw 不可用" "$LOG" && ! valid_kv VM_S
 RW_MAP_OPT="uidmap=0 1023 1:gidmap=0 1023 1"; share_prepare
 chk '[ "$share_mode" = rw ] && [ "$share_spec" = "$T/media/Download:xrshare:type=fs:cache=auto:timeout=1:uidmap=0 1023 1:gidmap=0 1023 1" ] && [ -z "$share_wrap" ]'
 chk 'valid_kv VM_SHARE_MODE rw'
+# /sdcard 按同一处存储挂到 MEDIA
+VM_SHARE=1; VM_SHARE_MODE=ro; VM_SHARE_PATH=/sdcard; share_prepare
+chk '[ "$share_mode" = ro ] && [ "$share_spec" = "$T/media:xrshare:type=fs:cache=auto:timeout=1" ]'
+VM_SHARE_PATH=/storage/emulated/0/Download; share_prepare
+chk '[ "$share_mode" = ro ] && [ "$share_spec" = "$T/media/Download:xrshare:type=fs:cache=auto:timeout=1" ]'
 if [ "$fail" = 0 ]; then echo "test-share OK"; else echo "test-share FAILED"; exit 1; fi

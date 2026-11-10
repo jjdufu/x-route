@@ -8,6 +8,38 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 XR_DATA="${XR_DATA:-/data/adb/xrouter}"
 BB="${BB:-/data/adb/ksu/bin/busybox}"
 MEDIA="${XR_MEDIA:-/data/media/0}"   # 共享目录允许的根（底层路径，不用 FUSE 的 /storage/emulated/0）
+
+# /sdcard、/storage/emulated/0 与 MEDIA（默认 /data/media/0）视为同一处存储
+canon_share_path() {
+  _p="$1"
+  case "$_p" in
+    /sdcard) _p="${MEDIA}" ;;
+    /sdcard/*) _p="${MEDIA}/${_p#/sdcard/}" ;;
+    /storage/emulated/0) _p="${MEDIA}" ;;
+    /storage/emulated/0/*) _p="${MEDIA}/${_p#/storage/emulated/0/}" ;;
+  esac
+  echo "$_p"
+}
+
+rotate_file() {
+  _f="$1"; [ -f "$_f" ] || return 0
+  _sz="$(stat -c %s "$_f" 2>/dev/null || echo 0)"
+  [ "$_sz" -gt 524288 ] || return 0
+  if [ "$2" = mv ]; then
+    mv -f "$_f" "${_f}.1"
+  else
+    cp -f "$_f" "${_f}.1" 2>/dev/null
+    : > "$_f"
+  fi
+}
+
+rotate_all_logs() {
+  rotate_file "${LOG}" mv
+  rotate_file "${XR_DATA}/log/vmm.log"
+  rotate_file "${RUN}/console.log"
+  rotate_file "${RUN}/vm-ctl.log"
+}
+
 CONF="${XR_DATA}/config/config.conf"
 RUN="${XR_DATA}/run"
 LOG="${XR_DATA}/log/module.log"
@@ -29,7 +61,7 @@ load_config()  { [ -f "${CONF}" ] && . "${CONF}"; }
 log_msg() { # $1=级别 $2=模块 $3...=消息
   lv="$1"; m="$2"; shift 2
   mkdir -p "${XR_DATA}/log"
-  if [ -f "${LOG}" ] && [ "$(stat -c %s "${LOG}" 2>/dev/null || echo 0)" -gt 524288 ]; then mv -f "${LOG}" "${LOG}.1"; fi
+  rotate_file "${LOG}" mv
   echo "$(date '+%F %T') [${lv}] [${m}] $*" >> "${LOG}"
 }
 log_info() { log_msg INFO "$@"; }
@@ -67,9 +99,10 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
     VM_SHARE_MODE)
       case "$2" in ro) ;; rw) [ -n "${RW_MAP_OPT}" ] ;; *) return 1;; esac ;;
     VM_SHARE_PATH)
-      case "$2" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1;; esac
-      case "$2" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*) return 1;; esac
-      [ -d "$2" ] ;;
+      _sp="$(canon_share_path "$2")"
+      case "$_sp" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1;; esac
+      case "$_sp" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*) return 1;; esac
+      [ -d "$_sp" ] ;;
     AUTOSTART_DELAY_SEC)
       in_range "$2" 0 600 ;;
     READY_TIMEOUT_SEC|STABLE_SEC)
@@ -79,9 +112,11 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
 }
 
 set_kv() { # $1=键 $2=值：先校验，写临时文件，mv 替换，再 sync
-  valid_kv "$1" "$2" || return 1
+  _sv="$2"
+  [ "$1" = VM_SHARE_PATH ] && _sv="$(canon_share_path "$2")"
+  valid_kv "$1" "$_sv" || return 1
   tmp="${CONF}.tmp.$$"
-  awk -v k="$1" -v v="$2" 'BEGIN{d=0} index($0, k"=")==1 {print k"=\""v"\""; d=1; next} {print} END{if(!d) print k"=\""v"\""}' "${CONF}" > "${tmp}" \
+  awk -v k="$1" -v v="$_sv" 'BEGIN{d=0} index($0, k"=")==1 {print k"=\""v"\""; d=1; next} {print} END{if(!d) print k"=\""v"\""}' "${CONF}" > "${tmp}" \
     && mv -f "${tmp}" "${CONF}" && sync
 }
 

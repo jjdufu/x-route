@@ -111,7 +111,7 @@ daemon_loop() {
   echo ready > "${RUN}/daemon.ready"
   log_info daemon "已启动 pid=$$"
   while :; do
-    notify_update
+    notify_update; rotate_all_logs
     sleep 5
   done
 }
