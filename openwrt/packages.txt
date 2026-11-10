@@ -1,0 +1,48 @@
+# x-route: ImmortalWrt 25.12.2 ImageBuilder 软件包清单
+# 一行一个包名，# 开头为注释，- 前缀表示排除。
+# ImageBuilder 默认包中的 kmod-* 由 build-rootfs.sh 自动排除（官方内核模块，自编内核已内建所需功能）。
+# 基础（dnsmasq-full / firewall4 / nftables / dropbear / ca-bundle 已在默认包中）
+dnsmasq-full
+firewall4
+nftables
+dropbear
+ca-bundle
+# LuCI
+luci
+luci-i18n-base-zh-cn
+luci-i18n-firewall-zh-cn
+ttyd
+luci-app-ttyd
+luci-i18n-ttyd-zh-cn
+# 调试
+tcpdump
+ip-full
+ip-bridge
+ss
+ethtool
+mtr-nojson
+curl
+bind-dig
+iperf3
+conntrack
+resize2fs
+# OpenVPN 客户端（显式列出依赖，ImageBuilder 也会自动解析）
+openvpn-openssl
+kmod-tun
+kmod-ovpn-backports
+libcap-ng
+liblzo2
+liblz4-1
+libnl-genl200
+libopenssl3
+openssl-util
+luci-app-openvpn
+luci-i18n-openvpn-zh-cn
+luci-compat
+# 排除
+-luci-app-attendedsysupgrade
+-owut
+-htop
+-ppp
+-ppp-mod-pppoe
+-automount

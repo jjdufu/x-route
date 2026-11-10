@@ -5,7 +5,7 @@
 #   配置基线：ImmortalWrt 25.12.2 官方 armsr/armv8 内核的最终 .config（取自同版本 SDK）
 #   再叠加 openwrt/kernel-gunyah-pvm.config 片段
 # 产物：dist/openwrt/Image（arm64 未压缩内核）、dist/openwrt/kernel.config、
-#       dist/openwrt/modules.builtin（供 build-rootfs.sh 去掉内建模块的自动加载项）
+#       dist/openwrt/modules.builtin(.modinfo)（供 build-rootfs.sh 写入 rootfs，kmodloader 据此跳过内建模块）
 # ==============================================================================
 set -euo pipefail
 
@@ -88,5 +88,5 @@ make -s -j"${JOBS}" Image modules.builtin
 grep -qx '6.12.103' include/config/kernel.release || { echo "unexpected kernel.release: $(cat include/config/kernel.release)"; exit 1; }
 cp arch/arm64/boot/Image "${DIST}/Image"
 cp .config "${DIST}/kernel.config"
-cp modules.builtin "${DIST}/modules.builtin"
+cp modules.builtin modules.builtin.modinfo "${DIST}/"
 echo "[+] ${DIST}/Image ($(du -h "${DIST}/Image" | cut -f1))"
