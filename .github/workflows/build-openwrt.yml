@@ -1,6 +1,7 @@
 name: Build ImmortalWrt ARM64 (OnePlus 13 Gunyah pVM)
 
-# 只有 main 分支（或手动触发）才会构建并发布 Release；其他分支只跑 package-module.yml 的检查。
+# push 到 main 时构建并发布 Release；在其他分支手动触发只构建、上传 artifact，不发布。
+# 其他分支的日常检查由 package-module.yml 完成。
 # Tag 规则沿用历史：<module.prop version>-build.<run_number>。
 # 发布为 prerelease：在真机验证通过之前，不标记为正式版。
 on:
@@ -69,6 +70,7 @@ jobs:
           echo "author=${AUTHOR}" >> "$GITHUB_OUTPUT"
 
       - name: Publish Release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
