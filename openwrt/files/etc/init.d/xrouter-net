@@ -1,5 +1,6 @@
 #!/bin/sh /etc/rc.common
-# XRouter: 每次开机按内核 cmdline（xr.ip / xr.gw / xr.dns / xr.vpnmode）写入网络与防火墙配置。
+# XRouter: 每次开机按内核 cmdline（xr.ip / xr.gw / xr.dns / xr.ip6 / xr.gw6）写入网络与防火墙配置。
+# IPv6 地址总是写入；是否启用由 network.xr_eth0.ipv6 决定（见 uci-defaults/20-xrouter-ipv6）。
 # START=11：在 uci-defaults（boot，10）之后、firewall（19）与 network（20）之前，无需 reload。
 # shellcheck disable=SC2034
 START=11
@@ -10,6 +11,7 @@ boot() { start; }
 
 start() {
   ip="$(cmdval xr.ip)"; gw="$(cmdval xr.gw)"; dns="$(cmdval xr.dns | tr ',' ' ')"
+  ip6="$(cmdval xr.ip6)"; gw6="$(cmdval xr.gw6)"
   # 每次开机执行；已撑满时为空操作，配合手机侧 xr expand
   resize2fs /dev/vda >/dev/null 2>&1
   [ -n "$ip" ] || return 0
@@ -21,6 +23,12 @@ set network.lan.gateway='${gw}'
 delete network.lan.dns
 U
   for d in $dns; do uci -q add_list network.lan.dns="$d"; done
+  uci -q delete network.lan.ip6addr
+  uci -q delete network.lan.ip6gw
+  if [ -n "$ip6" ] && [ -n "$gw6" ]; then
+    uci -q add_list network.lan.ip6addr="$ip6"
+    uci -q set network.lan.ip6gw="$gw6"
+  fi
 
   # 固定网点：本网段出隧道不 NAT，lan <-> vpn 双向转发
   uci -q delete firewall.vpn.masq_src
@@ -38,12 +46,14 @@ U
   uci -q commit firewall
 
   # 单臂 NAT：发往默认网关、目的不是本网段的流量伪装成 .254，回程才能再进虚拟机。
-  # 只匹配 eth0，不影响 tun+ 上「本网段出隧道不 NAT」的网点约定。
+  # 只匹配 eth0，不影响 tun+ 上「本网段出隧道不 NAT」的网点约定。IPv6 同构（伪装成 ::254）。
+  net6=""; [ -n "$ip6" ] && net6="${ip6%%::*}::/64"
   mkdir -p /etc/nftables.d
-  cat > /etc/nftables.d/xrouter-onelink.nft <<N
-chain xrouter_onelink {
-  type nat hook postrouting priority 110;
-  oifname "eth0" ip daddr != ${net}.0/24 masquerade
-}
-N
+  {
+    echo "chain xrouter_onelink {"
+    echo "  type nat hook postrouting priority 110;"
+    echo "  oifname \"eth0\" ip daddr != ${net}.0/24 masquerade"
+    [ -n "$net6" ] && echo "  oifname \"eth0\" ip6 daddr != ${net6} masquerade"
+    echo "}"
+  } > /etc/nftables.d/xrouter-onelink.nft
 }

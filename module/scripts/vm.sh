@@ -72,6 +72,8 @@ vm_start_exec() {
   share_prepare
   mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
   chmod 0700 "${RUN}/guest"
+  # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
+  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
   if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
     cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
@@ -80,6 +82,7 @@ vm_start_exec() {
 
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
   params="${params} xr.ip=${XR_NET_PREFIX}.254/24 xr.gw=${XR_NET_PREFIX}.1 xr.dns=$(echo "${XR_DNS}" | tr ' ' ',')"
+  params="${params} xr.ip6=${XR_NET6}::254/64 xr.gw6=${XR_NET6}::1"
   params="${params} xr.share=${share_mode}"
 
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"

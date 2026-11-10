@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 list_sh() {
   for d in module scripts openwrt/files tests; do
     [ -d "$d" ] || continue
-    find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -name xr \)
+    find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -path '*/libexec/*' -o -name xr \)
   done | sort
 }
 

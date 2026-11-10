@@ -55,7 +55,17 @@ WAN 仍是手机上游，默认不信任：放行出站和回包，丢弃主动�
 
 表 233 必须带上游 / 热点的直连路由，避免把「访问当前 Wi-Fi 局域网内其它设备」全部塞进 VM 造成环路或中断。默认路由才指向 VM。
 
-IPv6：手机侧仍然只为 VM 提供 IPv4 上行；**不要劫持本机 IPv6 默认路由**，避免半套 IPv6 进 VM 后黑洞。
+### IPv6（与 IPv4 同构）
+
+| 项 | 内容 |
+|---|---|
+| 地址 | `xr0` 为 `fd7a:7872:e9::1/64`，虚拟机 `eth0` 为 `::254`（ULA，固定，经 cmdline `xr.ip6` / `xr.gw6` 下发） |
+| `ip -6 rule` 4800 / 18800 / 18900 / 19100 | 与 IPv4 相同语义；表 233 复制上游与热点的直连 / 前缀路由 |
+| 虚拟机 IPv6 已开（客侧上报 `guest/ipv6=1`） | 表 233 `default via ::254 src ::1`；手机侧 `XR_NAT6` 对 `fd7a:7872:e9::/64` 做 MASQUERADE（NAT66）；虚拟机内单臂 NAT 伪装成 `::254` |
+| 虚拟机 IPv6 已关 | 表 233 `unreachable default`；热点到上游的 IPv6 转发 `REJECT icmp6-adm-prohibited`。应用立即回落 IPv4，不会绕过虚拟机 |
+| 内核无 `ip6tables -t nat` | 视为虚拟机 IPv6 不可用，按「已关」处理并记日志 |
+
+开关状态只读虚拟机：固件首次开机把 `network.xr_eth0.ipv6` 设为 0（组件全部保留），`xrouter-vpn` 控制循环执行 `host/ipv6.cmd` 并把 `eth0` 的实际 `disable_ipv6` 写回 `guest/ipv6`。`xr ipv6 on|off` 写命令、等客侧确认后 `net.sh sync`，不重启虚拟机。旁路模式不改本机 IPv6，只放行虚拟机自身 IPv6 出网。
 
 ### 何时启用 / 撤销全局接管
 

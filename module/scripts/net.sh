@@ -4,7 +4,8 @@
 # 用法：net.sh up|down|watch|sync|status
 #   up    创建 xr0、登记 netd 本地网络、打开转发、建 XR_FWD/XR_NAT，并在后台启动 watch
 #   down  逆序撤销全部改动（每一步都容错）
-#   sync  按当前上游 / XR_EXPOSE / VPN_ROUTES 重建规则（幂等）
+#   sync  按当前上游 / XR_EXPOSE / VPN 路由 / 虚拟机 IPv6 状态重建规则（幂等）
+# IPv6 与 IPv4 同构：xr0 上 ${XR_NET6}::1/64（手机）与 ::254（虚拟机），同样的 pref 与表号（ip -6）。
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
@@ -20,6 +21,9 @@ SYSBIN="${XR_SYSBIN:-/system/bin}"
 ip()  { "${SYSBIN}/ip" "$@"; }
 ndc() { "${SYSBIN}/ndc" "$@"; }
 IPT="${SYSBIN}/iptables -w"
+IP6T="${SYSBIN}/ip6tables -w"
+ip6() { "${SYSBIN}/ip" -6 "$@"; }
+NET6="${XR_NET6}::/64"
 PROC="${XR_PROC:-/proc}"        # 测试时可指向临时目录
 SYSNET="${XR_SYSNET:-/sys/class/net}"
 
@@ -51,26 +55,41 @@ fwd_first() {   # 保证 XR_FWD 是 FORWARD 链的第一条
 nat_first() {
   ${IPT} -t nat -C POSTROUTING -j XR_NAT 2>/dev/null || ${IPT} -t nat -I POSTROUTING 1 -j XR_NAT
 }
+fwd6_first() {
+  [ "$(${IP6T} -S FORWARD 2>/dev/null | sed -n 2p)" = "-A FORWARD -j XR_FWD6" ] && return 0
+  while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
+  ${IP6T} -I FORWARD 1 -j XR_FWD6
+}
+nat6_first() {
+  [ -f "${RUN}/net.nat6" ] || return 0
+  ${IP6T} -t nat -C POSTROUTING -j XR_NAT6 2>/dev/null || ${IP6T} -t nat -I POSTROUTING 1 -j XR_NAT6
+}
 
 net_up() {
   ensure_dirs
   ip link show "${XR_IF}" >/dev/null 2>&1 || ip tuntap add "${XR_IF}" mode tap || { log_err net "创建 ${XR_IF} 失败"; return 1; }
   ip addr flush dev "${XR_IF}"
   ip addr add "${XR_NET_PREFIX}.1/24" dev "${XR_IF}"
-  sysw "${PROC}/sys/net/ipv6/conf/${XR_IF}/disable_ipv6" 1
+  sysw "${PROC}/sys/net/ipv6/conf/${XR_IF}/disable_ipv6" 0
+  sysw "${PROC}/sys/net/ipv6/conf/${XR_IF}/accept_ra" 0
   sysw "${PROC}/sys/net/ipv4/conf/${XR_IF}/rp_filter" 0
   ip link set "${XR_IF}" up
+  ip6 addr add "${XR_NET6}::1/64" dev "${XR_IF}" nodad
 
   # 1. 登记为 netd 本地网络；不可用时直接用 table 97
   if ndc_ok network interface add local "${XR_IF}" && ndc_ok network route add local "${XR_IF}" "${NET}"; then
     echo ndc > "${RUN}/net.mode"
+    ndc network route add local "${XR_IF}" "${NET6}" >/dev/null 2>&1
   else
     echo fallback > "${RUN}/net.mode"
     ip route replace "${NET}" dev "${XR_IF}" table 97
+    ip6 route replace "${NET6}" dev "${XR_IF}" table 97
     log_info net "ndc 不可用，改用 table 97，并由对账循环补回"
   fi
   ip rule del pref 4800 to "${NET}" 2>/dev/null
   ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
+  ip6 rule del pref 4800 to "${NET6}" 2>/dev/null
+  ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
 
   # 2. 转发
   if ! ndc_ok ipfwd enable xrouter; then
@@ -81,6 +100,13 @@ net_up() {
   # 3. 链
   ${IPT} -N XR_FWD 2>/dev/null; ${IPT} -t nat -N XR_NAT 2>/dev/null
   fwd_first; nat_first
+  ${IP6T} -N XR_FWD6 2>/dev/null; fwd6_first
+  # 手机侧 NAT66：内核无 ip6tables nat 时，虚拟机 IPv6 视为不可用（全局模式下仅拦截）
+  if ${IP6T} -t nat -N XR_NAT6 2>/dev/null || ${IP6T} -t nat -S XR_NAT6 >/dev/null 2>&1; then
+    : > "${RUN}/net.nat6"; nat6_first
+  else
+    rm -f "${RUN}/net.nat6"; log_err net "ip6tables nat 不可用，IPv6 无法经虚拟机出网"
+  fi
   rm -f "${RUN}/net.up_if"
   sync_all
   nohup sh "${MODDIR}/scripts/net.sh" watch >/dev/null 2>&1 &
@@ -95,6 +121,13 @@ upstream_out() {
   { echo "$1"
     ip -4 route show table "$1" 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'
   } | sort -u | tr '\n' ' '
+}
+# 上游的 IPv6 实际出口（464xlat 的 v4-* 只承载 IPv4，排除）
+upstream_out6() {
+  [ -n "$1" ] || return 0
+  { echo "$1"
+    ip6 route show table "$1" 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'
+  } | grep -v '^v4-' | sort -u | tr '\n' ' '
 }
 
 
@@ -120,6 +153,16 @@ want_gateway() {
   [ "${XR_MODE:-global}" = global ] && vm_is_ready
 }
 
+# 虚拟机 IPv6 的实际状态由客侧（OpenWrt）写入控制目录，手机侧不另存
+vm_v6() { [ "$(cat "${RUN}/guest/guest/ipv6" 2>/dev/null)" = 1 ]; }
+
+# 全局接管状态：off 不接管；v6 IPv4/IPv6 都进虚拟机；block IPv4 进虚拟机、IPv6 直接拒绝（应用立刻回落 IPv4）
+gw_want() {
+  if ! want_gateway; then echo off
+  elif vm_v6 && [ -f "${RUN}/net.nat6" ]; then echo v6
+  else echo block; fi
+}
+
 copy_dev_routes() {
   dev="$1"
   [ -n "$dev" ] && [ "$dev" != "${XR_IF}" ] || return 0
@@ -133,19 +176,55 @@ copy_dev_routes() {
   done
 }
 
+copy_dev_routes6() {   # 主表与 local_network 中该网卡的直连 / 前缀路由（不含默认路由）
+  dev="$1"
+  [ -n "$dev" ] && [ "$dev" != "${XR_IF}" ] || return 0
+  for tb in main local_network; do
+    ip6 route show table "$tb" dev "$dev" 2>/dev/null | while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      # shellcheck disable=SC2086
+      set -- $line
+      case "$1" in default|unreachable|multicast|ff00::/8) continue ;; esac
+      line="$(echo "$line" | sed 's/ expires [^ ]*//')"
+      # shellcheck disable=SC2086
+      ip6 route replace $line dev "$dev" table "${GW_TABLE}" 2>/dev/null
+    done
+  done
+}
+
 gw_install() {
+  g="$1"
   ip route flush table "${GW_TABLE}" 2>/dev/null
   for d in $outs $(tether_ifaces); do copy_dev_routes "$d"; done
   ip route replace default via "${XR_NET_PREFIX}.254" dev "${XR_IF}" src "${XR_NET_PREFIX}.1" table "${GW_TABLE}"
   while ip rule del pref "${GW_PREF}" 2>/dev/null; do :; done
   ip rule add pref "${GW_PREF}" lookup "${GW_TABLE}"
-  echo 1 > "${RUN}/net.gw"
+  ip6 route flush table "${GW_TABLE}" 2>/dev/null
+  for d in $outs6 $(tether_ifaces); do copy_dev_routes6 "$d"; done
+  if [ "$g" = v6 ]; then
+    ip6 route replace default via "${XR_NET6}::254" dev "${XR_IF}" src "${XR_NET6}::1" table "${GW_TABLE}"
+  else
+    ip6 route replace unreachable default table "${GW_TABLE}"
+  fi
+  while ip6 rule del pref "${GW_PREF}" 2>/dev/null; do :; done
+  ip6 rule add pref "${GW_PREF}" lookup "${GW_TABLE}"
+  echo "$g" > "${RUN}/net.gw"
 }
 
 gw_remove() {
   while ip rule del pref "${GW_PREF}" 2>/dev/null; do :; done
   ip route flush table "${GW_TABLE}" 2>/dev/null
+  while ip6 rule del pref "${GW_PREF}" 2>/dev/null; do :; done
+  ip6 route flush table "${GW_TABLE}" 2>/dev/null
   rm -f "${RUN}/net.gw"
+}
+
+rules_set() {   # $1=ip|ip6：VM 出站 18800 查本地网络表、18900 走当前上游
+  while $1 rule del pref 18800 2>/dev/null; do :; done
+  while $1 rule del pref 18900 2>/dev/null; do :; done
+  [ -n "$up" ] || return 0
+  $1 rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
+  $1 rule add pref 18900 iif "${XR_IF}" lookup "$up"
 }
 
 # ---- 根据当前状态重建上游、NAT 和 XR_FWD（幂等）----
@@ -156,19 +235,16 @@ gw_remove() {
 #     （hotspot：热点/USB 共享；all：再加非蜂窝上游所在局域网）可以访问 VM 网段。
 sync_all() {
   load_config
-  up="$(upstream_iface)"; outs="$(upstream_out "$up")"
+  up="$(upstream_iface)"; outs="$(upstream_out "$up")"; outs6="$(upstream_out6 "$up")"
   old_up="$(cat "${RUN}/net.up_if" 2>/dev/null)"; old_outs="$(cat "${RUN}/net.up_out" 2>/dev/null)"
   if [ "$up" != "$old_up" ] || [ "$outs" != "$old_outs" ] || [ ! -f "${RUN}/net.up_if" ]; then
     for o in $old_outs; do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
-    while ip rule del pref 18800 2>/dev/null; do :; done
-    while ip rule del pref 18900 2>/dev/null; do :; done
     if [ -n "$up" ]; then
       for o in $outs; do ndc ipfwd add "${XR_IF}" "$o" >/dev/null 2>&1; done
-      # ndc ipfwd 的 pref 21000 排在 19000/19100 之后，VM 出站会被导回 VM，必须由 18900 兜住；
-      # 18800 先查本地网络表，VM 回热点等直连网段不走上游
-      ip rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
-      ip rule add pref 18900 iif "${XR_IF}" lookup "$up"
     fi
+    # ndc ipfwd 的 pref 21000 排在 19000/19100 之后，VM 出站会被导回 VM，必须由 18900 兜住；
+    # 18800 先查本地网络表，VM 回热点等直连网段不走上游。IPv6 同构。
+    rules_set ip; rules_set ip6
     echo "$up" > "${RUN}/net.up_if"; echo "$outs" > "${RUN}/net.up_out"
     log_info net "上游 ${old_up:-无} -> ${up:-无}（出口 ${outs:-无}）"
   fi
@@ -200,26 +276,64 @@ sync_all() {
   ${IPT} -A XR_FWD -o "${XR_IF}" -j DROP
   ${IPT} -A XR_FWD -i "${XR_IF}" -j DROP
   fwd_first
-  if want_gateway; then gw_install; else gw_remove; fi
+  g="$(gw_want)"
+  sync_v6 "$g"
+  if [ "$g" = off ]; then gw_remove; else gw_install "$g"; fi
+}
+
+# IPv6 转发与 NAT66：与 IPv4 同构；VM_v6 关闭时热点 IPv6 也不绕过虚拟机（全局下被拒绝）
+sync_v6() {
+  if [ -f "${RUN}/net.nat6" ]; then
+    ${IP6T} -t nat -F XR_NAT6
+    for o in $outs6; do ${IP6T} -t nat -A XR_NAT6 -s "${NET6}" -o "$o" -j MASQUERADE; done
+  fi
+  echo "$outs6" > "${RUN}/net.up_out6"; { vm_v6 && echo 1; } > "${RUN}/net.v6"
+  ${IP6T} -F XR_FWD6
+  ${IP6T} -A XR_FWD6 -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  ${IP6T} -A XR_FWD6 -i "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  if vm_v6; then   # 虚拟机自身 IPv6 出网（旁路模式同样可用）
+    for o in $outs6; do ${IP6T} -A XR_FWD6 -i "${XR_IF}" -o "$o" -j ACCEPT; done
+  fi
+  for i in $ex; do ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -d "${NET6}" -j ACCEPT; done
+  for o in $outs6; do
+    case " $ex " in *" $o "*) ;; *) ${IP6T} -A XR_FWD6 -i "$o" -o "${XR_IF}" -j DROP ;; esac
+  done
+  if [ "$1" != off ]; then
+    for i in $(tether_ifaces); do
+      if [ "$1" = v6 ]; then
+        ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -j ACCEPT
+        ${IP6T} -A XR_FWD6 -i "${XR_IF}" -o "$i" -j ACCEPT
+      fi
+      for o in $outs6; do ${IP6T} -A XR_FWD6 -i "$i" -o "$o" -j REJECT --reject-with icmp6-adm-prohibited; done
+    done
+  fi
+  ${IP6T} -A XR_FWD6 -o "${XR_IF}" -j DROP
+  ${IP6T} -A XR_FWD6 -i "${XR_IF}" -j DROP
+  fwd6_first
 }
 
 net_watch() {
   while [ -d "${SYSNET}/${XR_IF}" ]; do
     sleep 10; load_config
     up="$(upstream_iface)"; outs="$(upstream_out "$up")"; ex="$(expose_ifaces | tr '\n' ' ')"
-    have_gw=0; [ -f "${RUN}/net.gw" ] && have_gw=1
-    if want_gateway; then want_gw=1; else want_gw=0; fi
+    have_gw="$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
+    want_gw="$(gw_want)"
     ck="$(cksum "${RUN}/guest/guest/openvpn.routes" 2>/dev/null || echo none)"
     if [ "$up" != "$(cat "${RUN}/net.up_if" 2>/dev/null)" ] || [ "$outs" != "$(cat "${RUN}/net.up_out" 2>/dev/null)" ] \
        || [ "$ex" != "$(cat "${RUN}/net.expose_if" 2>/dev/null)" ] \
-       || [ "$want_gw" != "$have_gw" ] \
+       || [ "$want_gw" != "$have_gw" ] || [ "$(upstream_out6 "$up")" != "$(cat "${RUN}/net.up_out6" 2>/dev/null)" ] \
+       || [ "$(vm_v6 && echo 1)" != "$(cat "${RUN}/net.v6" 2>/dev/null)" ] \
        || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
-    fwd_first; nat_first
+    fwd_first; nat_first; fwd6_first; nat6_first
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
-    [ -z "$up" ] || ip rule 2>/dev/null | grep -q "^18800:.*iif ${XR_IF}" || ip rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
-    [ -z "$up" ] || ip rule 2>/dev/null | grep -q "^18900:.*iif ${XR_IF} lookup ${up}" || ip rule add pref 18900 iif "${XR_IF}" lookup "$up"
+    ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
+    for f in ip ip6; do
+      [ -z "$up" ] || $f rule 2>/dev/null | grep -q "^18800:.*iif ${XR_IF}" || $f rule add pref 18800 iif "${XR_IF}" lookup "$(lnt)"
+      [ -z "$up" ] || $f rule 2>/dev/null | grep -q "^18900:.*iif ${XR_IF} lookup ${up}" || $f rule add pref 18900 iif "${XR_IF}" lookup "$up"
+    done
     if [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = fallback ]; then
       ip route show table 97 2>/dev/null | grep -q "^${NET} dev ${XR_IF}" || ip route replace "${NET}" dev "${XR_IF}" table 97
+      ip6 route show table 97 2>/dev/null | grep -q "^${NET6} dev ${XR_IF}" || ip6 route replace "${NET6}" dev "${XR_IF}" table 97
       routes_reassert
     fi
   done
@@ -234,14 +348,20 @@ net_down() {
   while ${IPT} -t nat -D POSTROUTING -j XR_NAT 2>/dev/null; do :; done
   ${IPT} -t nat -F XR_NAT 2>/dev/null; ${IPT} -t nat -X XR_NAT 2>/dev/null
   for o in $(cat "${RUN}/net.up_out" 2>/dev/null); do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
-  while ip rule del pref 18800 2>/dev/null; do :; done
-  while ip rule del pref 18900 2>/dev/null; do :; done
-  while ip rule del pref 4800 2>/dev/null; do :; done
+  while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
+  ${IP6T} -F XR_FWD6 2>/dev/null; ${IP6T} -X XR_FWD6 2>/dev/null
+  while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
+  ${IP6T} -t nat -F XR_NAT6 2>/dev/null; ${IP6T} -t nat -X XR_NAT6 2>/dev/null
+  for f in ip ip6; do
+    for p in 18800 18900 4800; do while $f rule del pref "$p" 2>/dev/null; do :; done; done
+  done
   ndc ipfwd disable xrouter >/dev/null 2>&1
   [ -f "${RUN}/ip_forward.orig" ] && sysw "${PROC}/sys/net/ipv4/ip_forward" "$(cat "${RUN}/ip_forward.orig")"
   ndc network route remove local "${XR_IF}" "${NET}" >/dev/null 2>&1
+  ndc network route remove local "${XR_IF}" "${NET6}" >/dev/null 2>&1
   ndc network interface remove local "${XR_IF}" >/dev/null 2>&1
   ip route flush table 97 dev "${XR_IF}" 2>/dev/null
+  ip6 route flush table 97 dev "${XR_IF}" 2>/dev/null
   ip link del "${XR_IF}" 2>/dev/null
   rm -f "${RUN}"/net.* "${RUN}/routes.active" "${RUN}/ip_forward.orig" "${RUN}/net_watch.pid"
 }
@@ -249,9 +369,9 @@ net_down() {
 net_status() { # JSON 片段
   ex="$(cat "${RUN}/net.expose_if" 2>/dev/null)"; exj=""
   for i in $ex; do exj="${exj:+${exj},}\"$i\""; done
-  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1"}' \
+  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1","gw":"%s"}' \
     "$(cat "${RUN}/net.mode" 2>/dev/null || echo down)" "$(cat "${RUN}/net.up_if" 2>/dev/null)" \
-    "${XR_EXPOSE}" "$exj" "${XR_NET_PREFIX}" "${XR_NET_PREFIX}"
+    "${XR_EXPOSE}" "$exj" "${XR_NET_PREFIX}" "${XR_NET_PREFIX}" "$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
 }
 
 if [ "${0##*/}" = net.sh ]; then

@@ -76,6 +76,13 @@ chk '[ "$un_rc" -eq 0 ]'
 chk '[ ! -d "$XR_DATA" ]'
 chk '! kill -0 "$livepid" 2>/dev/null'
 chk '[ -f "$T/dl/xrouter-logs-20261110-180900.zip" ]'
+# 网络兜底清理覆盖 IPv4 与 IPv6（假 ip / iptables / ip6tables 记录调用）
+MOCK="$T/mock"; mkdir -p "$MOCK"; export MOCK
+XR_SYSBIN="$ROOT/tests/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
+for c in "ip6tables -X XR_FWD6" "ip6tables -t nat -X XR_NAT6" "iptables -X XR_FWD" "ip -6 route flush table 233" "ip route flush table 233" "ip route flush table 97 dev xr0"; do
+  chk 'grep -qx "$c" "$MOCK/calls"'
+done
+for p in 4800 4801 18800 18900 19100; do chk 'grep -qx "ip -6 rule del pref $p" "$MOCK/calls" && grep -qx "ip rule del pref $p" "$MOCK/calls"'; done
 # 再次卸载：目录已空、工具缺失也不应非 0
 MODDIR="$T/live" sh "$T/live/uninstall.sh"
 chk '[ $? -eq 0 ]'

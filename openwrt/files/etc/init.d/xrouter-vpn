@@ -1,5 +1,6 @@
 #!/bin/sh /etc/rc.common
-# XRouter: 挂载主机控制目录，启用 OpenVPN 配置，并把实际路由写回主机。
+# XRouter: 挂载主机控制目录（控制通道）：启用 OpenVPN 配置并把实际路由写回主机；
+#          执行 IPv6 开关（host/ipv6.cmd）并上报实际状态（guest/ipv6）。
 # shellcheck disable=SC2034
 START=21
 STOP=15
@@ -60,7 +61,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""
+  last=""; last6=""
   while :; do
     [ -d "$CTL" ] || exit 0
     cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
@@ -68,6 +69,12 @@ watch() {
       last="$cmd"
       apply_cmd
     fi
+    c6="$(cat "${CTL}/host/ipv6.cmd" 2>/dev/null)"
+    if [ -n "$c6" ] && [ "$c6" != "$last6" ]; then
+      last6="$c6"
+      /usr/libexec/xrouter-ipv6 "${c6%% *}"
+    fi
+    /usr/libexec/xrouter-ipv6 state > "${CTL}/guest/ipv6.tmp" && mv -f "${CTL}/guest/ipv6.tmp" "${CTL}/guest/ipv6"
     refresh_routes
     sleep 2
   done

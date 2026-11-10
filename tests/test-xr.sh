@@ -58,6 +58,18 @@ $XR sync >/dev/null
 chk 'grep -qx "net sync" "$T/net.calls"'
 s="$($XR status-json)"
 chk 'echo "$s" | J "d[\"vpn\"][\"status\"]==\"up\" and d[\"vpn\"][\"addr\"]==\"10.8.0.5\" and d[\"vpn\"][\"routes_active\"]==[\"10.8.0.0/24\"] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"] and d[\"vm\"][\"running\"] is True and d[\"vm\"][\"last_good_match\"] is True" | grep -qx True'
+# IPv6：客侧未上报时为 null 且不能切换；上报后读实际状态；切换写控制命令、等客侧确认、再同步手机侧
+chk 'echo "$s" | J "d[\"ipv6\"] is None" | grep -qx True'
+out="$(XR_IPV6_WAIT=1 $XR ipv6 on)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "虚拟机未就绪"'
+echo 0 > "$RUN/guest/guest/ipv6"
+chk '$XR status-json | J "d[\"ipv6\"] is False" | grep -qx True'
+( sleep 2; echo 1 > "$RUN/guest/guest/ipv6" ) &
+: > "$T/net.calls"; out="$($XR ipv6 on)"
+chk '[ "$out" = "{\"ok\":true}" ] && grep -q "^on [0-9]*$" "$RUN/guest/host/ipv6.cmd" && grep -qx "net sync" "$T/net.calls"'
+chk '$XR status-json | J "d[\"ipv6\"] is True" | grep -qx True'
+out="$(XR_IPV6_WAIT=1 $XR ipv6 off)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "虚拟机未响应" && grep -q "^off " "$RUN/guest/host/ipv6.cmd"'
+out="$($XR ipv6 maybe)"; chk '[ $? -eq 2 ]'
+: > "$T/net.calls"; $XR sync >/dev/null
 # 分片导入占位 ovpn（无密钥）；运行中写入控制目录，不得写入日志
 ovpn="$(printf 'client\ndev tun\nremote 127.0.0.1 1194\n')"
 b64="$(printf '%s' "$ovpn" | base64 | tr -d '\n')"

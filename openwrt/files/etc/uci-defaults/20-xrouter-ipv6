@@ -1,0 +1,17 @@
+#!/bin/sh
+# XRouter: 首次开机默认关闭 IPv6（只关不删：组件全部保留，可在 LuCI 或模块设置中重新打开）。
+# 开关落在 eth0 的 device 段（network.xr_eth0.ipv6），netifd 据此写 disable_ipv6；
+# LuCI → 网络 → 接口 → 设备 → eth0 →「启用 IPv6」与模块 WebUI 改的是同一处。
+uci -q batch <<'U'
+set network.xr_eth0=device
+set network.xr_eth0.name='eth0'
+set network.xr_eth0.ipv6='0'
+delete network.globals.ula_prefix
+delete network.lan.ip6assign
+set dhcp.lan.ra='disabled'
+set dhcp.lan.dhcpv6='disabled'
+set dhcp.lan.ndp='disabled'
+commit network
+commit dhcp
+U
+exit 0

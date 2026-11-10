@@ -40,6 +40,8 @@ rotate_all_logs() {
   rotate_file "${RUN}/vm-ctl.log"
 }
 
+# xr0 的 IPv6 ULA 网段（固定，不随 XR_NET_PREFIX 变化）：手机 ::1，虚拟机 ::254
+XR_NET6="fd7a:7872:e9"
 CONF="${XR_DATA}/config/config.conf"
 RUN="${XR_DATA}/run"
 LOG="${XR_DATA}/log/module.log"

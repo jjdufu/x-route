@@ -8,6 +8,7 @@ CROSVM="${CROSVM:-/apex/com.android.virt/bin/crosvm}"
 ip()  { "${SYSBIN}/ip" "$@"; }
 ndc() { "${SYSBIN}/ndc" "$@"; }
 IPT="${SYSBIN}/iptables -w"
+IP6T="${SYSBIN}/ip6tables -w"
 
 # 1. 经正式路径停止虚拟机与网络（失败继续）
 [ -f "${MODDIR}/scripts/xr" ] && sh "${MODDIR}/scripts/xr" stop >/dev/null 2>&1
@@ -57,14 +58,23 @@ ${IPT} -X XR_FWD 2>/dev/null
 while ${IPT} -t nat -D POSTROUTING -j XR_NAT 2>/dev/null; do :; done
 ${IPT} -t nat -F XR_NAT 2>/dev/null
 ${IPT} -t nat -X XR_NAT 2>/dev/null
+while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
+${IP6T} -F XR_FWD6 2>/dev/null
+${IP6T} -X XR_FWD6 2>/dev/null
+while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
+${IP6T} -t nat -F XR_NAT6 2>/dev/null
+${IP6T} -t nat -X XR_NAT6 2>/dev/null
 ndc ipfwd disable xrouter >/dev/null 2>&1
 ndc ipfwd disable xroute >/dev/null 2>&1
 # pref：访问 VM 网段、VPN 网段、VM 出网、全局接管（见 docs/xrouter-plan/04）
 for pref in 4800 4801 18800 18900 19100; do
   while ip rule del pref "${pref}" 2>/dev/null; do :; done
+  while ip -6 rule del pref "${pref}" 2>/dev/null; do :; done
 done
-ip route flush table 97 2>/dev/null
+ip route flush table 97 dev xr0 2>/dev/null
 ip route flush table 233 2>/dev/null
+ip -6 route flush table 97 dev xr0 2>/dev/null
+ip -6 route flush table 233 2>/dev/null
 ip link del xr0 2>/dev/null
 
 # 4. 通知与唤醒锁

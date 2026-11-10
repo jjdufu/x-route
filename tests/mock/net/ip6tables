@@ -1,0 +1,23 @@
+#!/bin/sh
+# 假 ip6tables：与假 iptables 相同，维护 XR_FWD6/XR_NAT6；NAT6_FAIL=1 模拟内核无 ip6 nat
+[ "$1" = -w ] && shift
+echo "ip6tables $*" >> "$MOCK/calls"
+t=filter; [ "$1" = -t ] && { t=$2; shift 2; }
+case "$t:$*" in
+  "filter:-S FORWARD") echo "-P FORWARD ACCEPT"; [ -f "$MOCK/fwd6_hook" ] && echo "-A FORWARD -j XR_FWD6"; exit 0 ;;
+  "filter:-D FORWARD -j XR_FWD6") [ -f "$MOCK/fwd6_hook" ] && rm -f "$MOCK/fwd6_hook" && exit 0; exit 1 ;;
+  "filter:-I FORWARD 1 -j XR_FWD6") : > "$MOCK/fwd6_hook" ;;
+  nat:*) [ -n "${NAT6_FAIL:-}" ] && exit 1 ;;
+esac
+case "$t:$*" in
+  "nat:-C POSTROUTING -j XR_NAT6") [ -f "$MOCK/nat6_hook" ]; exit ;;
+  "nat:-I POSTROUTING 1 -j XR_NAT6") : > "$MOCK/nat6_hook" ;;
+  "nat:-D POSTROUTING -j XR_NAT6") [ -f "$MOCK/nat6_hook" ] && rm -f "$MOCK/nat6_hook" && exit 0; exit 1 ;;
+  "filter:-F XR_FWD6") : > "$MOCK/XR_FWD6" ;;
+  "nat:-F XR_NAT6") : > "$MOCK/XR_NAT6" ;;
+  "filter:-X XR_FWD6") rm -f "$MOCK/XR_FWD6" ;;
+  "nat:-X XR_NAT6") rm -f "$MOCK/XR_NAT6" ;;
+  "filter:-A XR_FWD6 "*) shift 2; echo "$*" >> "$MOCK/XR_FWD6" ;;
+  "nat:-A XR_NAT6 "*) shift 2; echo "$*" >> "$MOCK/XR_NAT6" ;;
+esac
+exit 0
