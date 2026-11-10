@@ -1,86 +1,112 @@
 # x-route
 
-> **OnePlus 13 (Snapdragon 8 Elite / Android 15·16 / SuKiSU) 虚拟化 OpenWrt 随身软路由与内核级保活系统**
+> 在骁龙手机的 Gunyah 受保护虚拟机（AVF pVM）里运行 **ImmortalWrt 25.12**，给手机本机和热点设备提供 OpenWrt 网关与 OpenVPN 客户端。SukiSU / KernelSU 模块，自带 WebUI。
 
 [![Platform](https://img.shields.io/badge/Platform-OnePlus%2013%20(SM8750)-red)](https://github.com/jjdufu/x-route)
-[![Android](https://img.shields.io/badge/Android-15%20%2F%2016%20(GKI%206.6)-green)](https://github.com/jjdufu/x-route)
-[![Root](https://img.shields.io/badge/Root-SuKiSU%20%2F%20KernelSU-blue)](https://github.com/jjdufu/x-route)
-[![Status](https://img.shields.io/badge/Status-Project%20Initiated%20(立项阶段)-orange)](./docs/PROPOSAL.md)
+[![Root](https://img.shields.io/badge/Root-SukiSU%20%2F%20KernelSU-blue)](https://github.com/jjdufu/x-route)
+[![Firmware](https://img.shields.io/badge/ImmortalWrt-25.12.2-green)](https://github.com/jjdufu/x-route)
+[![Status](https://img.shields.io/badge/Status-v2%20Pre--release%20(未经真机验证)-orange)](./docs/TESTING.md)
 
----
+> **v2 是一次完整重写，目前只通过了单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
 
-## 📖 项目简介
+## 1. 是什么
 
-**x-route** 旨在无需任何外置硬件的前提下，将已通过 **SuKiSU** 获取内核级 Root 权限的 **OnePlus 13（骁龙 8 至尊版 SM8750，Android 15/16）** 改造为一台**全功能、固定网关、低功耗的随身 OpenWrt 软路由与便携式私有云（NAS）节点**。
+- VM：ImmortalWrt 25.12.2（armsr/armv8 ImageBuilder，包管理器 `apk`），内核 Linux 6.12.103（打上 ImmortalWrt generic/armsr 补丁，使用官方内核配置 + Gunyah pVM 片段），可直接 `apk add` 官方 25.12 的 `kmod-*`。
+- 预装：LuCI（简体中文）、ttyd、OpenVPN（`openvpn-openssl` + `luci-app-openvpn`）、tcpdump、dnsmasq-full。
+- 手机侧：tap 网卡 `xr0` 接入 VM，登记为 netd 本地网络；NAT 与转发规则只针对 VM 网段，蜂窝网络永不对外放行。
 
-通过高通底层硬件虚拟化（**Gunyah Hypervisor `/dev/gunyah` + `crosvm`**，兼容 QEMU 备选后端）运行极致精简的独立 **ImmortalWrt (ARM64)** 系统：
-- **WAN 口**：动态绑定手机 5G/4G 蜂窝数据网络（`rmnet_dataX`），支持基带重连漂移自愈与 TTL 防检测；
-- **LAN 口**：无感接管系统 Wi-Fi 热点（固定 `192.168.100.0/24` 网段与 `192.168.100.1` 网关），并支持手机本机应用流量回流至 OpenWrt 统一分流/去广告/策略路由；
-- **异地组网**：内置 OpenVPN 客户端支持，轻松穿透运营商 CGNAT 与家庭/机房内网实现双向互访（`iroute`）；
-- **存储互通与后台保活**：支持通过 `virtio-fs` / `virtio-9p` 将手机物理存储（`/data/media/0/NAS`）直通挂载至 OpenWrt，同时提供 **SuKiSU 模块 WebUI** 与 **四重内核级应用保活引擎**（针对 `com.leohao.android.alistlite` 等服务防杀、防冻结、防 Doze 断网）。
+## 2. 要求
 
----
+- 支持 AVF pVM 的骁龙机型，存在 `/apex/com.android.virt/bin/crosvm`（开发机型：OnePlus 13）。
+- SukiSU / KernelSU。
+- `/data` 剩余空间至少 1.5GB。
 
-## 📂 文档导航（立项与架构文档）
+## 3. 安装
 
-| 文档 | 说明 |
-| :--- | :--- |
-| 📋 **[项目立项书 (PROPOSAL.md)](./docs/PROPOSAL.md)** | 项目背景、核心目标、交付物清单、里程碑规划（M1~M5）、验收标准与风险矩阵 |
-| 🔬 **[可行性分析与技术勘误报告 (FEASIBILITY_ANALYSIS.md)](./docs/FEASIBILITY_ANALYSIS.md)** | 针对前期方案讨论（会话 `6fe161ac`）的深度工程可行性评估与 **5 大致命技术陷阱勘误** |
-| 🏗️ **[系统架构与技术规范 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)** | 网络拓扑、策略路由表设计、热点动态接管机制、OpenWrt 精简编译配置与 SuKiSU 模块规范 |
-| 📘 **[部署、调试与日常使用手册 (USER_MANUAL.md)](./docs/USER_MANUAL.md)** | 刷入流程、SuKiSU WebUI 使用、本机 NAS 直通挂载、OpenVPN 双向组网及 Termux 调试指南 |
-| 💬 **[前期讨论原始记录](./docs/references/OnePlus13_OpenWrt_Discussion_6fe161ac.md)** | 会话 `6fe161ac-9313-4e63-85c2-0d313b1e5033` 原始技术讨论存档 |
+- **只支持全新安装**：装过 v1 的，先在管理器里卸载旧版并重启，再刷入 v2。v1 的配置不会迁移。
+- 发布文件：
+  - `x-route-sukisu-full-<版本>.zip`：模块 + 内核 `Image` + 系统盘 `openwrt-rootfs.img.gz`，首次安装用它；
+  - `x-route-sukisu-lite-<版本>.zip`：只含脚本和 WebUI，要求 `/data/adb/x-route/images/` 下已有镜像；
+  - `Image`、`openwrt-rootfs.img.gz`、`openwrt.qcow2`、`sha256sums.txt`：单独的固件文件与校验和。
+- 安装后**默认不自启**，在 WebUI 点“启动”。
 
----
+## 4. 首次使用
 
-## ⚡ 核心可行性结论与关键技术修正摘要
+- 浏览器打开 `http://172.29.233.254`（LuCI），终端 `http://172.29.233.254:7681`（ttyd），或 `ssh root@172.29.233.254`。
+- 用户 `root`，**空密码（上游默认）**。热点设备默认也能访问 VM，请尽快在 LuCI → 系统 → 管理权 中设置密码。
 
-在立项调研中，我们对前期讨论方案进行了严格的真机环境与内核级交叉验证，结论为：**整体需求 100% 可实现，但原讨论方案存在 5 处关键技术事实偏差，已在立项架构中完成修正**：
+## 5. 网络
 
-1. **虚拟化底座修正（`/dev/gunyah` vs `/dev/kvm`）**：
-   - **问题**：高通骁龙 8 至尊版（SM8750）量产机由高通自研 **Gunyah Hypervisor** 独占 EL2，宿主机内核运行于 EL1，系统仅暴露 `/dev/gunyah` 而**不存在 `/dev/kvm`**；且 Gunyah 强制启用 Protected VM (pVM) 内存借出机制，普通 VirtIO 驱动未开启受限 DMA 池会直接触发手机 **900E 黑屏死机**。
-   - **修正**：主引擎采用 **`crosvm` (`--hypervisor gunyah --protected-vm-without-firmware`)**，并在自编译 OpenWrt 内核中强制开启 `CONFIG_DMA_RESTRICTED_POOL=y` 与 `CONFIG_SWIOTLB=y`；同时保留 QEMU MTTCG 作为跨机型兼容后备。
-2. **热点 DHCP 接管修正（`NetworkStack` vs `dnsmasq`）**：
-   - **问题**：Android 10+ 已彻底移除 `dnsmasq`，Android 15/16 的热点 DHCP 由 `com.google.android.tethering` 进程内的 Java `DhcpServer` 托管，并挂载了 `tc` eBPF 卸载程序。原方案 `killall -9 dnsmasq` 无效。
-   - **修正**：通过 `iw dev` 动态识别 AP 接口（`ap0`/`wlan1`/`wlan2`），卸载接口 `tc clsact` eBPF 规则，利用 `ebtables`/`iptables raw` 阻断宿主本地 UDP 67/68 响应，并将 AP 接口二层桥接至 `br-lan`，由 OpenWrt 全权接管 DHCP/DNS。
-3. **本机流量回流防环路修正（Android `netd` `fwmark` 兼容）**：
-   - **问题**：Android `netd` 对所有 Socket 均打有复杂 `fwmark`，原方案 `ip rule add not fwmark 0x100` 会劫持系统连通性探测与局域网直连路由，引发路由死循环。
-   - **修正**：采用高优先级 `suppress_prefixlength 0` 保护直连网段，使用 `fwmark 0x100/0x100` 掩码 + GID/UID 豁免虚拟机自身与基带控制面流量，并通过 `OUTPUT` 链重定向本机 DNS（53 端口）并关闭系统 Private DNS（DoT）。
-4. **物理存储直通修正（`/data/media/0` vs `/sdcard` FUSE）**：
-   - **问题**：`/sdcard` 位于 Android FUSE 层，存在挂载命名空间隔离与高 I/O 开销。
-   - **修正**：在 FBE 解密完成后直通底层物理路径 `/data/media/0/NAS`，优先采用 `virtio-fs`（兼容 `virtio-9p`）挂载至 OpenWrt `/mnt/nas`。
-5. **ColorOS 15/16 四重保活强化**：
-   - **问题**：ColorOS 的 Hans/OPlus Freezer 与 Cgroup v2 `cgroup.freeze=1` 无法仅靠 `SIGCONT` 解冻。
-   - **修正**：结合 Doze/网络白名单、`oom_score_adj = -1000`、Cgroup v2 `cgroup.freeze = 0` + 根组迁移、禁用 Phantom Process Killer 及 `am start-foreground-service` 静默守护。
+- 地址规划：`172.29.233.0/24`，手机 `xr0` 为 `.1`，VM `eth0` 为 `.254`（网关 `.1`）。前缀可通过 `XR_NET_PREFIX` 修改。
+- `XR_EXPOSE`（谁能访问 VM 网段）：
+  - `off`：只有手机本机；
+  - `hotspot`（默认）：再加热点 / USB 共享的设备；
+  - `all`：再加 Wi-Fi 上游所在局域网，需要在上级路由器添加静态路由 `172.29.233.0/24 via <手机 IP>`。
+- VM 经手机当前默认上游（netd 选择的网络）上网；蜂窝接口进入 `xr0` 的流量一律丢弃。
+- netd 的 `ndc` 不可用时自动退回 table 97 + 策略规则，WebUI 状态里显示“退回模式”。
 
----
+## 6. OpenVPN
 
-## 🗂️ 仓库目录规划
+- 在 rtvpn 里为本设备**单独签发**客户端证书，在 LuCI → VPN → OpenVPN 上传 `.ovpn`（p12 版本另传 `.p12` 到 `/etc/openvpn/`）并启用。
+- `VPN_MODE`（改后需重启 VM）：
+  - `terminal`（默认）：普通客户端，所有来源伪装成 VM 的隧道地址；
+  - `site`：网点网关，对端宣告 `172.29.233.0/24` 后可以反向访问手机侧。
+- `VPN_ROUTES`：在 WebUI 手工填写对端内网网段（每行一个 CIDR），手机才会把这些网段路由进 VM。VM 不向手机上报任何路由。
+  - 规则：必须是私网地址（10/8、172.16/12、192.168/16、100.64/10），主机位为 0，不能与 VM 网段、当前上游或热点网段重叠，最多 64 条；
+  - 不合法的网段会显示在“被拒绝”里，不会下发。
 
-```text
-x-route/
-├── README.md                          # 项目主页与概览
-├── docs/
-│   ├── PROPOSAL.md                    # 项目立项书（背景、目标、里程碑、风险控制）
-│   ├── FEASIBILITY_ANALYSIS.md        # 深度可行性分析与原方案勘误报告
-│   ├── ARCHITECTURE.md                # 系统架构、网络拓扑与模块设计规范
-│   ├── USER_MANUAL.md                 # 部署、调试、NAS挂载与OpenVPN组网全流程手册
-│   └── references/
-│       └── OnePlus13_OpenWrt_Discussion_6fe161ac.md
-├── openwrt-config/                    # ImmortalWrt ARM64 极简定制配置与补丁（M1 阶段交付）
-├── module/                            # SuKiSU 模块源码（service.sh, action.sh, 网络与保活引擎，M2/M3 交付）
-│   ├── scripts/                       # 虚拟化管理、网络动态编排与四重内核保活守护脚本
-│   └── webroot/                       # SuKiSU 模块内置 WebUI 管理前端（M3 阶段交付）
-└── scripts/                           # 固件自动构建与模块打包脚本
+## 7. 目录共享
+
+- 默认关闭。开启后手机目录经 virtiofs 挂载到 VM 的 `/mnt/sdcard`。
+- 路径只能是 `/data/media/0` 或其子目录（底层路径，不走 FUSE）；手机未解锁时本次启动不共享。
+- `ro`（默认）：在 crosvm 自己的挂载命名空间里做只读绑定，手机侧内核强制只读，Android 侧看不到这次挂载。
+- `rw`：只有当前 crosvm 支持属主映射时才可用（否则 WebUI 置灰）。VM 写入的文件不经过 MediaStore，相册、文件管理器需要手动扫描或重启后才能看到；不要写入 `Android/data`、`Android/obb`。
+
+## 8. 安全措施
+
+- 启动熔断：启动 VM 时写入 `vm_booting.fuse`，若在就绪/稳定前整机复位，开机后自动关闭自启并在 WebUI 显示熔断条，确认后才能再启动。
+- 自启门槛：必须先用当前配置手动启动并运行到“已稳定”，才能打开开机自启；影响稳定性的配置一改，门槛重新生效。
+- 保守的 VM 参数：`--no-balloon`、swiotlb 64MB、内存 512MB、`ulimit -l unlimited`。
+- 就绪超时（默认 180 秒）内没有收到 VM 的 `XR_READY`，自动停止 VM。
+
+## 9. 命令行
+
+```sh
+XR="sh /data/adb/modules/x_route/scripts/xr"
+$XR start | stop | running          # 启动 / 停止 / 是否运行（返回码）
+$XR status-json | status-line       # 状态
+$XR get                             # 列出全部配置
+$XR set KEY VALUE                   # 修改配置（会校验，返回 {"ok":...,"restart":...}）
+$XR ack-trip                        # 确认熔断
+$XR expand MB | reset-disk          # 扩容 / 重置系统盘（需先停止 VM）
+$XR sync                            # 立即重建手机侧网络规则
+$XR log [xr|console|ctl|vmm] [N]    # 查看日志
 ```
 
----
+## 10. 构建
 
-## 🗺️ 研发路线图 (Roadmap)
+依赖与 CI（`.github/workflows/build-openwrt.yml`）相同：Debian/Ubuntu 上的 `build-essential bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu zstd e2fsprogs qemu-utils zip` 等。
 
-- [x] **M0：技术调研、可行性论证与项目立项**（已完成）
-- [x] **M1：ImmortalWrt ARM64 极简固件定制与 Gunyah pVM 内核适配**（已完成）
-- [x] **M2：SuKiSU 核心网络编排引擎（5G WAN 动态 NAT + 热点无感桥接 + 本机回流）**（已完成）
-- [x] **M3：SuKiSU WebUI 控制面板 + 四重内核级保活引擎 + NAS 目录直通**（已完成）
-- [ ] **M4：OpenVPN 异地组网联调 + 旁路供电/温控/唤醒锁真机长稳压测**（待真机刷入实测）
-- [x] **M5：一键构建流水线（GitHub Actions）与完整实操手册发布**（已完成）
+```sh
+bash scripts/build-kernel.sh      # 内核 Image -> dist/openwrt/
+bash scripts/build-rootfs.sh      # ImageBuilder 系统盘 -> dist/openwrt/openwrt-rootfs.img.gz、openwrt.qcow2
+bash scripts/package-module.sh    # 模块 zip、sha256sums.txt、RELEASE_NOTES.md
+sh scripts/lint.sh                # shellcheck + 单元测试（mksh / busybox sh / dash）
+sh tests/e2e-qemu.sh              # 可选：用 QEMU 启动真实镜像做端到端冒烟
+```
+
+推送到 `main` 后由 CI 构建并发布 Release（标签 `<版本>-build.<序号>`）。
+
+## 11. 日志与卸载
+
+- 日志：`/data/adb/x-route/log/xr.log`、`vmm.log`；VM 串口：`/data/adb/x-route/run/console.log`、`vm-ctl.log`。
+- 卸载：在管理器里卸载模块并重启，会删除 `/data/adb/x-route`（**包括 VM 系统盘**），并清除手机侧的网络规则。
+
+## 12. 已知限制
+
+- v2 尚未在真机上验证，见 [docs/TESTING.md](./docs/TESTING.md)。
+- v1 出现过的整机复位根因仍未确认；保留了上面全部安全措施，复位时按测试清单逐项二分。
+- 依赖 netd 的默认网络规则格式（`fwmark 0x0/0xffff iif lo lookup <iface>`），Android 大版本升级后需要重新检查。
+- virtiofs 共享在 pVM 上未经测试，可能较慢或不可用；rw 依赖 crosvm 的属主映射支持。
+- `VPN_ROUTES` 只能手工维护。
+- 只支持官方源中的 apk 包，不支持只有 ipk 的第三方包。

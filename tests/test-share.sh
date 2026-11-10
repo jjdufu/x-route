@@ -27,7 +27,7 @@ chk '[ "$share_mode" = ro ] && [ "$share_spec" = "$T/media/Download:xrshare:type
 chk '[ "$share_wrap" = "$BBX unshare -m sh $RUN/share-ro.sh" ] && [ -x "$RUN/share-ro.sh" ]'
 chk 'grep -qx "$BBX mount -o remount,bind,ro,nosuid,nodev,noexec \"$T/media/Download\" || exit 1" "$RUN/share-ro.sh"'
 # 真实执行包装脚本（用户命名空间代替 root）：命名空间内只读，命名空间外仍可写
-if "$BBX" unshare -rm true 2>/dev/null; then
+if "$BBX" unshare -rm sh -c "$BBX mount --bind $T/media $T/media && $BBX mount -o remount,bind,ro $T/media" 2>/dev/null; then
   "$BBX" unshare -rm sh "$RUN/share-ro.sh" sh -c "touch '$T/media/Download/x'" 2>"$T/err"
   chk '[ ! -e "$T/media/Download/x" ] && grep -q "Read-only" "$T/err"'
   "$BBX" unshare -rm sh "$RUN/share-ro.sh" cat /proc/self/mountinfo > "$T/mi"
