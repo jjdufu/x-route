@@ -46,8 +46,28 @@ chk '[ -f "$XR_DATA/config/tripped" ] && [ ! -f "$XR_DATA/config/vm_booting.fuse
 # AUTOSTART=1 但 last_good 不匹配 -> 跳过
 rm -f "$XR_DATA/config/tripped"; sed -i 's/^AUTOSTART=.*/AUTOSTART="1"/' "$XR_DATA/config/config.conf"
 MODDIR="$T/live" sh "$T/live/service.sh"; chk 'grep -q "last_good 与当前配置不一致" "$XR_DATA/log/module.log"'
-# 卸载删除数据目录
-MODDIR="$T/live" sh "$T/live/uninstall.sh"; chk '[ ! -d "$XR_DATA" ]'
+# 卸载：停止残留进程、删除数据目录；不碰用户导出的日志包；容错已消失的规则
+install_pkg full
+cp -a "$T/mod" "$T/live"
+mkdir -p "$XR_DATA/log" "$XR_DATA/run" "$XR_DATA/images" "$T/dl"
+echo logline > "$XR_DATA/log/module.log"
+echo img > "$XR_DATA/images/Image"
+# 活着的占位进程（模拟守护进程），以及已死 pid
+sleep 60 &
+livepid=$!
+echo "$livepid" > "$XR_DATA/run/daemon.pid"
+echo 999999 > "$XR_DATA/run/crosvm.pid"
+echo keep > "$T/dl/xrouter-logs-20261110-180900.zip"
+# 制造失败路径：xr / net.sh 不可执行时仍须删数据
+chmod a-x "$T/live/scripts/xr" "$T/live/scripts/net.sh" 2>/dev/null || true
+MODDIR="$T/live" sh "$T/live/uninstall.sh"; un_rc=$?
+chk '[ "$un_rc" -eq 0 ]'
+chk '[ ! -d "$XR_DATA" ]'
+chk '! kill -0 "$livepid" 2>/dev/null'
+chk '[ -f "$T/dl/xrouter-logs-20261110-180900.zip" ]'
+# 再次卸载：目录已空、工具缺失也不应非 0
+MODDIR="$T/live" sh "$T/live/uninstall.sh"
+chk '[ $? -eq 0 ]'
 
 [ "$fail" = 0 ] && echo "test-install OK"
 [ "$fail" = 0 ] || cat "$T/install.log"
