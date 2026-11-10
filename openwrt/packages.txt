@@ -1,4 +1,4 @@
-# x-route: ImmortalWrt 25.12.2 ImageBuilder 软件包清单
+# XRouter: ImmortalWrt 25.12.2 ImageBuilder 软件包清单
 # 一行一个包名，# 开头为注释，- 前缀表示排除。
 # ImageBuilder 默认包中的硬件驱动 kmod 由 build-rootfs.sh 自动排除；网络功能 kmod 保留（内核与官方 =m 划分一致）。
 # 基础（dnsmasq-full / firewall4 / nftables / dropbear / ca-bundle 已在默认包中）

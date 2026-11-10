@@ -1,18 +1,18 @@
 #!/bin/sh
-# x-route: 首次开机执行一次。
+# XRouter: 首次开机执行一次。
 # root 密码、ttyd、dropbear 全部保持上游默认（root 空密码），不做任何修改。
 
 # 1. 系统（标记 imm_init.lang，避免 ImmortalWrt 的 99-default-settings 把语言改回 auto）
 uci -q get system.@imm_init[0] >/dev/null || uci -q add system imm_init >/dev/null
 uci -q batch <<'U'
-set system.@system[0].hostname='x-route'
+set system.@system[0].hostname='XRouter'
 set system.@imm_init[0].lang='1'
 set luci.main.lang='zh_cn'
 commit system
 commit luci
 U
 
-# 2. 网络：单网卡 eth0，静态地址；地址每次开机由 x-route-net 按 cmdline 写入
+# 2. 网络：单网卡 eth0，静态地址；地址每次开机由 xrouter-net 按 cmdline 写入
 uci -q batch <<'U'
 delete network.wan
 delete network.wan6
@@ -33,7 +33,7 @@ delete dhcp.wan
 commit dhcp
 U
 
-# 3. 防火墙：只保留 lan 和 vpn 两个分区（具名 section，x-route-net 直接引用）
+# 3. 防火墙：只保留 lan 和 vpn 两个分区（具名 section，xrouter-net 直接引用）
 #    关闭 flow offloading / fullcone：自编内核未内建 nf_flow_table，flowtable 规则会导致整套规则加载失败
 while uci -q delete firewall.@zone[0]; do :; done
 while uci -q delete firewall.@forwarding[0]; do :; done

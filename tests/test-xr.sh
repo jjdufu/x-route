@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: xr 命令行测试（假 crosvm / 假 net.sh / 假 getprop）
+# XRouter: xr 命令行测试（假 crosvm / 假 net.sh / 假 getprop）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"

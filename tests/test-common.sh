@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: common.sh 单元测试（在 mksh / busybox ash / dash 下运行，模拟 Android 32 位算术）
+# XRouter: common.sh 单元测试（在 mksh / busybox ash / dash 下运行，模拟 Android 32 位算术）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

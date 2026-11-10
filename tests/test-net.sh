@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: net.sh / vpnroutes.sh 模拟测试（假 ip / ndc / iptables，不触碰本机网络）
+# XRouter: net.sh / vpnroutes.sh 模拟测试（假 ip / ndc / iptables，不触碰本机网络）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; MOCK="$T/mock"; mkdir -p "$MOCK" "$T/proc/sys/net/ipv4/conf/xr0" "$T/proc/sys/net/ipv6/conf/xr0"
@@ -24,7 +24,7 @@ $NET up; chk '[ $? -eq 0 ]'
 chk '[ "$(cat "$RUN/net.mode")" = ndc ] && [ "$(cat "$RUN/net.up_if")" = rmnet_data2 ]'
 chk 'grep -q "^ip addr add 172.29.233.1/24 dev xr0" "$MOCK/calls" && grep -q "^ndc network interface add local xr0" "$MOCK/calls"'
 chk 'grep -q "^ip rule add pref 4800 to 172.29.233.0/24 lookup local_network" "$MOCK/calls"'
-chk 'grep -q "^ndc ipfwd enable xroute" "$MOCK/calls" && grep -q "^ndc ipfwd add xr0 rmnet_data2" "$MOCK/calls"'
+chk 'grep -q "^ndc ipfwd enable xrouter" "$MOCK/calls" && grep -q "^ndc ipfwd add xr0 rmnet_data2" "$MOCK/calls"'
 chk '[ -f "$MOCK/fwd_hook" ] && [ -f "$MOCK/nat_hook" ]'
 chk 'grep -qx -- "-s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE" "$MOCK/XR_NAT"'
 chk '[ "$(cat "$RUN/routes.active")" = 10.8.0.0/24 ]'
@@ -75,7 +75,7 @@ chk '! grep -q -- "-i wlan1" "$FWD" && [ "$(cat "$RUN/net.expose_if")" = " " -o 
 # 4. down
 rmdir "$T/sysnet/xr0"; : > "$MOCK/calls"; $NET down
 chk '[ ! -f "$MOCK/fwd_hook" ] && [ ! -f "$MOCK/nat_hook" ] && [ ! -f "$MOCK/XR_FWD" ] && [ ! -f "$MOCK/XR_NAT" ]'
-chk 'grep -q "^ip link del xr0" "$MOCK/calls" && grep -q "^ndc ipfwd disable xroute" "$MOCK/calls" && grep -q "^ndc network interface remove local xr0" "$MOCK/calls"'
+chk 'grep -q "^ip link del xr0" "$MOCK/calls" && grep -q "^ndc ipfwd disable xrouter" "$MOCK/calls" && grep -q "^ndc network interface remove local xr0" "$MOCK/calls"'
 chk '! ls "$RUN"/net.* >/dev/null 2>&1 && [ ! -f "$RUN/net_watch.pid" ]'
 
 # 5. ndc 不可用 -> table 97 回退，ip_forward 改写并在 down 时恢复

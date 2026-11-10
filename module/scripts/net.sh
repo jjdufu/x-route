@@ -1,12 +1,12 @@
 #!/system/bin/sh
 # ==============================================================================
-# x-route v2: 手机侧网络（docs/v2-plan/07-net.md）
+# XRouter: 手机侧网络（docs/v2-plan/07-net.md）
 # 用法：net.sh up|down|watch|sync|status
 #   up    创建 xr0、登记 netd 本地网络、打开转发、建 XR_FWD/XR_NAT，并在后台启动 watch
 #   down  逆序撤销全部改动（每一步都容错）
 #   sync  按当前上游 / XR_EXPOSE / VPN_ROUTES 重建规则（幂等）
 # ==============================================================================
-MODDIR="${MODDIR:-/data/adb/modules/x_route}"
+MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/vpnroutes.sh"
 load_config
@@ -73,7 +73,7 @@ net_up() {
   ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
 
   # 2. 转发
-  if ! ndc_ok ipfwd enable xroute; then
+  if ! ndc_ok ipfwd enable xrouter; then
     cat "${PROC}/sys/net/ipv4/ip_forward" > "${RUN}/ip_forward.orig"
     sysw "${PROC}/sys/net/ipv4/ip_forward" 1
   fi
@@ -166,7 +166,7 @@ net_down() {
   for o in $(cat "${RUN}/net.up_out" 2>/dev/null); do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
   while ip rule del pref 18900 2>/dev/null; do :; done
   while ip rule del pref 4800 2>/dev/null; do :; done
-  ndc ipfwd disable xroute >/dev/null 2>&1
+  ndc ipfwd disable xrouter >/dev/null 2>&1
   [ -f "${RUN}/ip_forward.orig" ] && sysw "${PROC}/sys/net/ipv4/ip_forward" "$(cat "${RUN}/ip_forward.orig")"
   ndc network route remove local "${XR_IF}" "${NET}" >/dev/null 2>&1
   ndc network interface remove local "${XR_IF}" >/dev/null 2>&1

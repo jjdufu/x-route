@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # shellcheck disable=SC2034  # share_* 变量由 vm.sh 使用
 # ==============================================================================
-# x-route v2: 目录共享（docs/v2-plan/09-share.md），被 vm.sh 引入。
+# XRouter: 目录共享（docs/v2-plan/09-share.md），被 vm.sh 引入。
 # share_prepare 设置三个变量供 vm_start 使用：
 #   share_mode  off|ro|rw          -> 传给 guest 的 xr.share=
 #   share_spec  crosvm --shared-dir 参数（空表示不共享）

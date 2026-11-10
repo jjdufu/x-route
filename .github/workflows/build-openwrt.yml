@@ -1,4 +1,4 @@
-name: Build ImmortalWrt ARM64 (OnePlus 13 Gunyah pVM)
+name: Build ImmortalWrt ARM64 (Gunyah pVM)
 
 # push 到 main 时构建并发布 Release；在其他分支手动触发只构建、上传 artifact，不发布。
 # 其他分支的日常检查由 package-module.yml 完成。
@@ -23,7 +23,7 @@ jobs:
     name: Build Kernel 6.12 + ImmortalWrt 25.12.2 Rootfs & SuKiSU Module Zip
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout x-route repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Build Dependencies & ARM64 Cross-Compiler
@@ -50,9 +50,9 @@ jobs:
       - name: Upload Firmware & SuKiSU Module Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: x-route-openwrt-and-sukisu-module
+          name: xrouter-openwrt-and-sukisu-module
           path: |
-            dist/x-route-sukisu-*.zip
+            dist/xrouter-sukisu-*.zip
             dist/openwrt/Image
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2
@@ -78,7 +78,7 @@ jobs:
           prerelease: true
           body_path: dist/RELEASE_NOTES.md
           files: |
-            dist/x-route-sukisu-*.zip
+            dist/xrouter-sukisu-*.zip
             dist/openwrt/Image
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2

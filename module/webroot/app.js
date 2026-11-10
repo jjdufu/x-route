@@ -1,10 +1,10 @@
 // ==============================================================================
-// x-route v2 WebUI（docs/v2-plan/10-cli-webui.md）
+// XRouter WebUI（docs/v2-plan/10-cli-webui.md）
 // 只通过 ksu.exec 调用 scripts/xr，不直接读写配置文件。
 // ==============================================================================
 "use strict";
 
-const XR = "sh /data/adb/modules/x_route/scripts/xr";
+const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 const SET_KEYS = [
   "XR_EXPOSE", "VPN_MODE", "VPN_ROUTES", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
   "AUTOSTART", "AUTOSTART_DELAY_SEC", "VM_CPUS", "VM_MEM_MB", "VM_SWIOTLB_MB",

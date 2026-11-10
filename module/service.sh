@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# x-route v2: 开机服务（熔断检查 + 可选自启）
+# XRouter: 开机服务（熔断检查 + 可选自启）
 MODDIR="${0%/*}"
 . "${MODDIR}/scripts/common.sh"
 ensure_dirs

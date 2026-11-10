@@ -1,5 +1,5 @@
 #!/bin/sh
-# x-route: 检查 config.conf 的键、common.sh 的 KEYS、valid_kv 的 case 分支三者一致
+# XRouter: 检查 config.conf 的键、common.sh 的 KEYS、valid_kv 的 case 分支三者一致
 set -e
 cd "$(dirname "$0")/.."
 a="$(sed -n 's/^\([A-Z_]*\)=.*/\1/p' module/config/config.conf | sort)"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# x-route: 在 VM（ImmortalWrt）里执行的能力核对脚本，由 tests/e2e-qemu.sh 通过 ssh 调用（不需要联网）。
+# XRouter: 在 VM（ImmortalWrt）里执行的能力核对脚本，由 tests/e2e-qemu.sh 通过 ssh 调用（不需要联网）。
 # 核对 OpenVPN 与 Clash 类插件（OpenClash / nikki 等）全功能所需的内核能力，全部通过时输出 CAPS_OK。
 bad=0; ok() { echo "ok: $*"; }; no() { echo "FAIL: $*"; bad=1; }
 # 1. 预装的官方 kmod 能 modprobe（内核与官方 =m 划分一致，kmodloader 依赖能解析）

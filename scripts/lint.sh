@@ -1,5 +1,5 @@
 #!/bin/sh
-# x-route: 静态检查（CI 与本地共用）
+# XRouter: 静态检查（CI 与本地共用）
 #   1. shellcheck（POSIX sh 语义，Android mksh / OpenWrt ash 均兼容）
 #   2. sh -n 语法检查
 #   3. 配置键一致性（scripts/check-config-keys.sh，存在时执行）

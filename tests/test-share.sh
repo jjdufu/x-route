@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: share.sh 测试（假 getprop；ro 包装脚本在用户命名空间里真实执行一次）
+# XRouter: share.sh 测试（假 getprop；ro 包装脚本在用户命名空间里真实执行一次）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

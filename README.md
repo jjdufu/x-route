@@ -1,13 +1,13 @@
-# x-route
+# XRouter
 
 > 在骁龙手机的 Gunyah 受保护虚拟机（AVF pVM）里运行 **ImmortalWrt 25.12**，给手机本机和热点设备提供 OpenWrt 网关与 OpenVPN 客户端。SukiSU / KernelSU 模块，自带 WebUI。
 
 [![Platform](https://img.shields.io/badge/Platform-OnePlus%2013%20(SM8750)-red)](https://github.com/jjdufu/x-route)
 [![Root](https://img.shields.io/badge/Root-SukiSU%20%2F%20KernelSU-blue)](https://github.com/jjdufu/x-route)
 [![Firmware](https://img.shields.io/badge/ImmortalWrt-25.12.2-green)](https://github.com/jjdufu/x-route)
-[![Status](https://img.shields.io/badge/Status-v2%20Pre--release%20(未经真机验证)-orange)](./docs/TESTING.md)
+[![Status](https://img.shields.io/badge/Status-v3%20Pre--release%20(未经真机验证)-orange)](./docs/TESTING.md)
 
-> **v2 是一次完整重写，目前只通过了单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
+> **XRouter v3 是一次完整重写，目前只通过了单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
 
 ## 1. 是什么
 
@@ -24,10 +24,10 @@
 
 ## 3. 安装
 
-- **只支持全新安装**：装过 v1 的，先在管理器里卸载旧版并重启，再刷入 v2。v1 的配置不会迁移。
+- **只支持全新安装**：先在管理器里卸载旧版并重启，再刷入本包。旧配置不会迁移。
 - 发布文件：
-  - `x-route-sukisu-full-<版本>.zip`：模块 + 内核 `Image` + 系统盘 `openwrt-rootfs.img.gz`，首次安装用它；
-  - `x-route-sukisu-lite-<版本>.zip`：只含脚本和 WebUI，要求 `/data/adb/x-route/images/` 下已有镜像；
+  - `xrouter-sukisu-full-<版本>.zip`：模块 + 内核 `Image` + 系统盘 `openwrt-rootfs.img.gz`，首次安装用它；
+  - `xrouter-sukisu-lite-<版本>.zip`：只含脚本和 WebUI，要求 `/data/adb/xrouter/images/` 下已有镜像；
   - `Image`、`openwrt-rootfs.img.gz`、`openwrt.qcow2`、`sha256sums.txt`：单独的固件文件与校验和。
 - 安装后**默认不自启**，在 WebUI 点“启动”。
 
@@ -75,7 +75,7 @@
 ## 9. 命令行
 
 ```sh
-XR="sh /data/adb/modules/x_route/scripts/xr"
+XR="sh /data/adb/modules/xrouter/scripts/xr"
 $XR start | stop | running          # 启动 / 停止 / 是否运行（返回码）
 $XR status-json | status-line       # 状态
 $XR get                             # 列出全部配置
@@ -102,12 +102,12 @@ sh tests/e2e-qemu.sh              # 可选：用 QEMU 启动真实镜像做端�
 
 ## 11. 日志与卸载
 
-- 日志：`/data/adb/x-route/log/xr.log`、`vmm.log`；VM 串口：`/data/adb/x-route/run/console.log`、`vm-ctl.log`。
-- 卸载：在管理器里卸载模块并重启，会删除 `/data/adb/x-route`（**包括 VM 系统盘**），并清除手机侧的网络规则。
+- 日志：`/data/adb/xrouter/log/module.log`、`vmm.log`；VM 串口：`/data/adb/xrouter/run/console.log`、`vm-ctl.log`。
+- 卸载：在管理器里卸载模块并重启，会删除 `/data/adb/xrouter`（**包括 VM 系统盘**），并清除手机侧的网络规则。
 
 ## 12. 已知限制
 
-- v2 尚未在真机上验证，见 [docs/TESTING.md](./docs/TESTING.md)。
+- 尚未在真机上验证，见 [docs/TESTING.md](./docs/TESTING.md)。
 - v1 出现过的整机复位根因仍未确认；保留了上面全部安全措施，复位时按测试清单逐项二分。
 - 依赖 netd 的默认网络规则格式（`fwmark 0x0/0xffff iif lo lookup <iface>`），Android 大版本升级后需要重新检查。
 - virtiofs 共享在 pVM 上未经测试，可能较慢或不可用；rw 依赖 crosvm 的属主映射支持。

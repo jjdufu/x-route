@@ -1,17 +1,17 @@
 #!/system/bin/sh
 # ==============================================================================
-# x-route v2: 安装脚本（只做全新安装，不做任何版本迁移）
+# XRouter: 安装脚本（只做全新安装，不做任何版本迁移）
 # Full 包自带 data/Image 与 data/openwrt-rootfs.img.gz；
-# Lite 包不带镜像，要求镜像已放在 /data/adb/x-route/images/ 下。
+# Lite 包不带镜像，要求镜像已放在 /data/adb/xrouter/images/ 下。
 # ==============================================================================
 # shellcheck disable=SC2034
 SKIPUNZIP=0
-XR_DATA="${XR_DATA:-/data/adb/x-route}"   # 测试时可覆盖
+XR_DATA="${XR_DATA:-/data/adb/xrouter}"   # 测试时可覆盖
 IMG="${XR_DATA}/images"
 ROOTFS="${IMG}/openwrt-rootfs.img"
 
 ui_print "===================================================="
-ui_print "  x-route v2 随身软路由 (ImmortalWrt 25.12.2)"
+ui_print "  XRouter (ImmortalWrt 25.12.2)"
 ui_print "  Author : jjdufu"
 ui_print "===================================================="
 [ "${ARCH}" = "arm64" ] || abort "! 仅支持 arm64（当前 ${ARCH}）"

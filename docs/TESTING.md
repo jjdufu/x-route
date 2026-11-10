@@ -1,8 +1,8 @@
-# x-route v2 真机测试清单
+# XRouter 真机测试清单
 
 只在用户的测试手机上，并且得到用户同意后执行。每一项都记录：结果（通过 / 失败）、相关日志片段（`xr log xr|console|ctl|vmm`）、发现的问题。不记录 IMEI、序列号、证书和密码。
 
-## 0 前置检查（在安装 v2 之前，只读）
+## 0 前置检查（在安装之前，只读）
 
 | 检查 | 命令 | 用途 |
 |---|---|---|
@@ -14,9 +14,9 @@
 
 ## 1 安装与启动
 
-1. 卸载旧版并重启。确认 `/data/adb/x-route` 已经不存在。
-2. 刷入 `x-route-sukisu-full-<版本>.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
-3. 重启手机：VM **没有**自动启动（`AUTOSTART=0`），`xr.log` 有记录 “AUTOSTART=0”。
+1. 卸载旧版并重启。确认 `/data/adb/xrouter` 已经不存在。
+2. 刷入 `xrouter-sukisu-full-<版本>.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
+3. 重启手机：VM **没有**自动启动（`AUTOSTART=0`），`module.log` 有记录 “AUTOSTART=0”。
 4. 在 WebUI 点“启动”：
    - `READY_TIMEOUT_SEC` 内出现 `XR_READY`，记录走的是 hvc 还是 ttyS0；
    - 经过 `STABLE_SEC` 后进入 stable 状态，写入 `last_good`。
@@ -34,7 +34,7 @@
    5. `VM_CPUS=1`。
    
    每次记录 `vmm.log` 的最后 50 行。
-4. 自启：手动成功启动后打开 AUTOSTART，重启手机，经过延迟后（并且已解锁）VM 自动启动。修改 `VM_MEM_MB` 后再重启手机：不会自启，`xr.log` 说明原因是 hash 不一致。
+4. 自启：手动成功启动后打开 AUTOSTART，重启手机，经过延迟后（并且已解锁）VM 自动启动。修改 `VM_MEM_MB` 后再重启手机：不会自启，`module.log` 说明原因是 hash 不一致。
 
 ## 3 VM 系统
 
@@ -75,7 +75,7 @@
 
 ## 7 卸载
 
-在管理器卸载模块并重启：`/data/adb/x-route` 被删除；`ip rule`、iptables、`ndc` 网络中都没有 x-route 的残留；没有 `x-route` wakelock。
+在管理器卸载模块并重启：`/data/adb/xrouter` 被删除；`ip rule`、iptables、`ndc` 网络中都没有本模块的残留；没有 `xrouter` 唤醒锁。
 
 ## 建议的首测顺序
 

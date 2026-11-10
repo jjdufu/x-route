@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# x-route: 开机完成后向手机侧发送就绪信号（XR_READY <uptime>）。
+# XRouter: 开机完成后向手机侧发送就绪信号（XR_READY <uptime>）。
 # 优先写 hvc0（crosvm 第二个 virtio-console，手机侧 run/vm-ctl.log），
 # 不存在时退回 ttyS0（主串口，手机侧 run/console.log）。
 # shellcheck disable=SC2034
@@ -13,5 +13,5 @@ start() {
     [ -c "$d" ] || continue
     echo "$msg" > "$d" 2>/dev/null && break
   done
-  logger -t x-route "$msg"
+  logger -t xrouter "$msg"
 }

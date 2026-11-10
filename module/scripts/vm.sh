@@ -1,10 +1,10 @@
 #!/system/bin/sh
 # ==============================================================================
-# x-route v2: crosvm 启停、启动熔断、磁盘扩容与重置（docs/v2-plan/06-vm.md）
+# XRouter: crosvm 启停、启动熔断、磁盘扩容与重置（docs/v2-plan/06-vm.md）
 # 用法：vm.sh start|stop|status|expand <MB>|reset-disk
 # 被 xr 用 . 引入时只定义函数；直接运行时才走文件末尾的分派。
 # ==============================================================================
-MODDIR="${MODDIR:-/data/adb/modules/x_route}"
+MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 
 CROSVM="${CROSVM:-/apex/com.android.virt/bin/crosvm}"

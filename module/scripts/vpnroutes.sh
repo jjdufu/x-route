@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ==============================================================================
-# x-route v2: 手工 VPN 网段（VPN_ROUTES）-> 手机路由 + 策略规则（docs/v2-plan/08-openvpn.md）
+# XRouter: 手工 VPN 网段（VPN_ROUTES）-> 手机路由 + 策略规则（docs/v2-plan/08-openvpn.md）
 # 被 net.sh 引入；依赖 common.sh 的 CIDR 工具与 net.sh 的 tether_ifaces / lnt。
 # VM 不向手机上报任何路由，网段只能在 WebUI 里手工填写。
 # ==============================================================================

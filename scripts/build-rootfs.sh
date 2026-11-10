@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# x-route: 用 ImmortalWrt 25.12.2 ImageBuilder 生成 VM 根文件系统（scripts/build-rootfs.sh）
+# XRouter: 用 ImmortalWrt 25.12.2 ImageBuilder 生成 VM 根文件系统（scripts/build-rootfs.sh）
 # 产物：dist/openwrt/openwrt-rootfs.img.gz（不带分区表的 ext4，guest 中为 /dev/vda）
 #       dist/openwrt/openwrt.qcow2（同一 rootfs 的 qcow2，便于在 PC 上用 QEMU 调试）
 # 依赖：build-kernel.sh 生成的 dist/openwrt/modules.builtin(.modinfo)
@@ -95,14 +95,14 @@ e2fsck -fy "${RAW}" >/dev/null 2>&1 || [ $? -le 1 ]
 
 # 检查：关键文件存在，禁止的文件不存在，只有 apk 没有 opkg
 for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/bin/apk /lib/apk/db/installed \
-         /etc/uci-defaults/10-x-route /etc/init.d/x-route-net /etc/init.d/x-route-ready /etc/init.d/x-route-share; do
+         /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
 done
 for f in /usr/bin/htop /usr/bin/owut /usr/lib/opkg /bin/opkg /usr/bin/easyrsa; do
   if debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:"; then echo "forbidden ${f}"; exit 1; fi
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-x-route /etc/init.d/x-route-net /etc/init.d/x-route-ready /etc/init.d/x-route-share; do
+for f in /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-share; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 

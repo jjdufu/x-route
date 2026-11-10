@@ -1,16 +1,16 @@
 #!/system/bin/sh
 # shellcheck disable=SC2034  # 本文件定义的变量供引入它的脚本使用
 # ==============================================================================
-# x-route v2: 公共定义与工具函数（被其他脚本 . 引入）
+# XRouter: 公共定义与工具函数（被其他脚本 . 引入）
 # 兼容 Android mksh（32 位算术）与 busybox ash。
 # ==============================================================================
-MODDIR="${MODDIR:-/data/adb/modules/x_route}"
-XR_DATA="${XR_DATA:-/data/adb/x-route}"
+MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
+XR_DATA="${XR_DATA:-/data/adb/xrouter}"
 BB="${BB:-/data/adb/ksu/bin/busybox}"
 MEDIA="${XR_MEDIA:-/data/media/0}"   # 共享目录允许的根（底层路径，不用 FUSE 的 /storage/emulated/0）
 CONF="${XR_DATA}/config/config.conf"
 RUN="${XR_DATA}/run"
-LOG="${XR_DATA}/log/xr.log"
+LOG="${XR_DATA}/log/module.log"
 IMG="${XR_DATA}/images"
 ROOTFS="${IMG}/openwrt-rootfs.img"
 FUSE="${XR_DATA}/config/vm_booting.fuse"
@@ -100,8 +100,8 @@ is_module_disabled() { [ -f "${MODDIR}/disable" ] || [ -f "${MODDIR}/remove" ]; 
 is_pid_running()     { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
 wait_boot_completed(){ until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done; }
 ce_ready()           { [ "$(getprop sys.user.0.ce_available)" = true ]; }
-wakelock_on()        { { echo x-route > /sys/power/wake_lock; } 2>/dev/null; }
-wakelock_off()       { { echo x-route > /sys/power/wake_unlock; } 2>/dev/null; }
+wakelock_on()        { { echo xrouter > /sys/power/wake_lock; } 2>/dev/null; }
+wakelock_off()       { { echo xrouter > /sys/power/wake_unlock; } 2>/dev/null; }
 
 # ---- CIDR 工具（08 使用）。mksh 只有 32 位有符号算术：只用按位与和相等比较，不做有符号的移位比较 ----
 # 注意：sh 没有局部变量，以下函数只用 _ 前缀变量，避免覆盖调用方的 n/b/c 等循环变量

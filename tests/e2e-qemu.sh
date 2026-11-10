@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: 端到端冒烟测试（手动运行）：vm.sh 生成的参数 -> QEMU 启动 dist/openwrt 下的真实 Image 与 rootfs，
+# XRouter: 端到端冒烟测试（手动运行）：vm.sh 生成的参数 -> QEMU 启动 dist/openwrt 下的真实 Image 与 rootfs，
 # 检查 XR_READY、稳定期、last_good、VM 内网络/防火墙/软件包，再停止。
 # 用法：sh tests/e2e-qemu.sh（需要 qemu-system-aarch64，先运行 build-kernel.sh / build-rootfs.sh）
 set -u

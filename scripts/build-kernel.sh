@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# x-route: 构建 Gunyah pVM guest 内核（scripts/build-kernel.sh）
+# XRouter: 构建 Gunyah pVM guest 内核（scripts/build-kernel.sh）
 #   Linux 6.12.103 + ImmortalWrt v25.12.2 的 generic/armsr 补丁
 #   配置基线：ImmortalWrt 25.12.2 官方 armsr/armv8 内核的最终 .config（取自同版本 SDK）
 #   再叠加 openwrt/kernel-gunyah-pvm.config 片段
@@ -97,7 +97,7 @@ done
 cat ../official/config "${ROOT}/openwrt/kernel-gunyah-pvm.config" > .config
 
 export ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
-export KBUILD_BUILD_USER=x-route KBUILD_BUILD_HOST=github-actions
+export KBUILD_BUILD_USER=xrouter KBUILD_BUILD_HOST=github-actions
 make -s olddefconfig
 assert_config .config ../official/config
 make -s -j"${JOBS}" Image modules.builtin

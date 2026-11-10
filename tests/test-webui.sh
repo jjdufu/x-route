@@ -1,5 +1,5 @@
 #!/bin/sh
-# x-route: WebUI 静态检查（需要 node；没有 node 时跳过）
+# XRouter: WebUI 静态检查（需要 node；没有 node 时跳过）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 W="$ROOT/module/webroot"

@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# x-route: 按 cmdline 的 xr.share=ro|rw 挂载手机共享目录（virtiofs 标签 xrshare）到 /mnt/sdcard。
+# XRouter: 按 cmdline 的 xr.share=ro|rw 挂载手机共享目录（virtiofs 标签 xrshare）到 /mnt/sdcard。
 # shellcheck disable=SC2034
 START=21
 # shellcheck disable=SC2034

@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# x-route: 每次开机按内核 cmdline（xr.ip / xr.gw / xr.dns / xr.vpnmode）写入网络与防火墙配置。
+# XRouter: 每次开机按内核 cmdline（xr.ip / xr.gw / xr.dns / xr.vpnmode）写入网络与防火墙配置。
 # START=11：在 uci-defaults（boot，10）之后、firewall（19）与 network（20）之前，无需 reload。
 # shellcheck disable=SC2034
 START=11

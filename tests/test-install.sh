@@ -1,6 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# x-route: customize.sh / service.sh / uninstall.sh 的模拟测试（假 MODPATH、假 getprop）
+# XRouter: customize.sh / service.sh / uninstall.sh 的模拟测试（假 MODPATH、假 getprop）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
@@ -45,7 +45,7 @@ MODDIR="$T/live" sh "$T/live/service.sh"
 chk '[ -f "$XR_DATA/config/tripped" ] && [ ! -f "$XR_DATA/config/vm_booting.fuse" ] && grep -q "AUTOSTART=\"0\"" "$XR_DATA/config/config.conf"'
 # AUTOSTART=1 但 last_good 不匹配 -> 跳过
 rm -f "$XR_DATA/config/tripped"; sed -i 's/^AUTOSTART=.*/AUTOSTART="1"/' "$XR_DATA/config/config.conf"
-MODDIR="$T/live" sh "$T/live/service.sh"; chk 'grep -q "last_good 与当前配置不一致" "$XR_DATA/log/xr.log"'
+MODDIR="$T/live" sh "$T/live/service.sh"; chk 'grep -q "last_good 与当前配置不一致" "$XR_DATA/log/module.log"'
 # 卸载删除数据目录
 MODDIR="$T/live" sh "$T/live/uninstall.sh"; chk '[ ! -d "$XR_DATA" ]'
 
