@@ -72,8 +72,9 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
     VPN_ROUTES)
       [ -z "$2" ] && return 0
       echo "$2" | grep -qE '^[0-9./,]+$' || return 1
-      n=0; for c in $(echo "$2" | tr ',' ' '); do valid_cidr "$c" || return 1; n=$((n+1)); done
-      [ "$n" -le 64 ] ;;
+      _k=0; for _r in $(echo "$2" | tr ',' ' '); do
+        valid_cidr "$_r" && cidr_private "$_r" && cidr_aligned "$_r" || return 1; _k=$((_k+1)); done
+      [ "$_k" -le 64 ] ;;
     AUTOSTART_DELAY_SEC)
       in_range "$2" 0 600 ;;
     READY_TIMEOUT_SEC|STABLE_SEC)
@@ -102,24 +103,25 @@ wakelock_on()        { { echo x-route > /sys/power/wake_lock; } 2>/dev/null; }
 wakelock_off()       { { echo x-route > /sys/power/wake_unlock; } 2>/dev/null; }
 
 # ---- CIDR 工具（08 使用）。mksh 只有 32 位有符号算术：只用按位与和相等比较，不做有符号的移位比较 ----
-ip2int() { o="$1"; a="${o%%.*}"; o="${o#*.}"; b="${o%%.*}"; o="${o#*.}"; c="${o%%.*}"; d="${o#*.}"
-  echo $(( (a<<24) | (b<<16) | (c<<8) | d )); }
+# 注意：sh 没有局部变量，以下函数只用 _ 前缀变量，避免覆盖调用方的 n/b/c 等循环变量
+ip2int() { _o="$1"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"; _o="${_o#*.}"; _c="${_o%%.*}"; _d="${_o#*.}"
+  echo $(( (_a<<24) | (_b<<16) | (_c<<8) | _d )); }
 prefix_mask() { [ "$1" -eq 0 ] && { echo 0; return; }; echo $(( (0xFFFFFFFF << (32-$1)) & 0xFFFFFFFF )); }
 valid_cidr() {
   echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/([89]|[12][0-9]|3[0-2])$' && valid_ip4 "${1%/*}"
 }
 cidr_private() { # 10/8 172.16/12 192.168/16 100.64/10（按网络地址判断，前缀不得比所在私网段更宽）
-  o="${1%/*}"; p="${1#*/}"; a="${o%%.*}"; o="${o#*.}"; b="${o%%.*}"
-  if [ "$a" -eq 10 ]; then [ "$p" -ge 8 ]
-  elif [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; then [ "$p" -ge 12 ]
-  elif [ "$a" -eq 192 ] && [ "$b" -eq 168 ]; then [ "$p" -ge 16 ]
-  elif [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ]; then [ "$p" -ge 10 ]
+  _o="${1%/*}"; _p="${1#*/}"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"
+  if [ "$_a" -eq 10 ]; then [ "$_p" -ge 8 ]
+  elif [ "$_a" -eq 172 ] && [ "$_b" -ge 16 ] && [ "$_b" -le 31 ]; then [ "$_p" -ge 12 ]
+  elif [ "$_a" -eq 192 ] && [ "$_b" -eq 168 ]; then [ "$_p" -ge 16 ]
+  elif [ "$_a" -eq 100 ] && [ "$_b" -ge 64 ] && [ "$_b" -le 127 ]; then [ "$_p" -ge 10 ]
   else return 1; fi
 }
-cidr_aligned() { n="$(ip2int "${1%/*}")"; m="$(prefix_mask "${1#*/}")"; [ $(( n & m )) -eq $(( n & 0xFFFFFFFF )) ]; }
+cidr_aligned() { _n="$(ip2int "${1%/*}")"; _m="$(prefix_mask "${1#*/}")"; [ $(( _n & _m )) -eq $(( _n & 0xFFFFFFFF )) ]; }
 cidr_overlap() { # $1 $2 两个 CIDR 是否重叠
-  a="$(ip2int "${1%/*}")"; pa="${1#*/}"; b="$(ip2int "${2%/*}")"; pb="${2#*/}"
-  if [ "$pa" -lt "$pb" ]; then p="$pa"; else p="$pb"; fi
-  m="$(prefix_mask "$p")"
-  [ $(( a & m )) -eq $(( b & m )) ]
+  _x="$(ip2int "${1%/*}")"; _pa="${1#*/}"; _y="$(ip2int "${2%/*}")"; _pb="${2#*/}"
+  if [ "$_pa" -lt "$_pb" ]; then _p="$_pa"; else _p="$_pb"; fi
+  _m="$(prefix_mask "$_p")"
+  [ $(( _x & _m )) -eq $(( _y & _m )) ]
 }

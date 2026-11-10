@@ -31,7 +31,7 @@ no valid_kv UNKNOWN 1
 
 # CIDR（含高位地址，验证 32 位算术下的正确性）
 ok cidr_private 10.20.0.0/16; ok cidr_private 172.16.0.0/12; ok cidr_private 192.168.50.0/24; ok cidr_private 100.64.0.0/10
-no cidr_private 8.8.8.0/24; no cidr_private 172.32.0.0/16; no cidr_private 192.0.0.0/8; no cidr_private 10.0.0.0/7
+no valid_kv VPN_ROUTES "8.8.8.0/24"; no valid_kv VPN_ROUTES "192.168.50.1/24"; no cidr_private 8.8.8.0/24; no cidr_private 172.32.0.0/16; no cidr_private 192.0.0.0/8; no cidr_private 10.0.0.0/7
 ok cidr_aligned 192.168.50.0/24; no cidr_aligned 192.168.50.1/24; ok cidr_aligned 172.16.0.0/12; no cidr_aligned 172.17.0.0/12
 ok cidr_overlap 192.168.0.0/16 192.168.50.0/24; no cidr_overlap 192.168.50.0/24 192.168.51.0/24
 ok cidr_overlap 172.29.233.0/24 172.16.0.0/12; no cidr_overlap 10.0.0.0/8 172.29.233.0/24
