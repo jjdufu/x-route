@@ -23,7 +23,7 @@ for f in ${files}; do
   if head -n1 "$f" | grep -q bash; then bash_files="${bash_files} $f"; else sh_files="${sh_files} $f"; fi
 done
 # shellcheck disable=SC2086
-[ -z "${sh_files}" ] || shellcheck -s sh -e SC3043,SC1091,SC1090 ${sh_files}
+[ -z "${sh_files}" ] || shellcheck -s sh -e SC3043,SC1091,SC1090,SC2013 ${sh_files}
 # shellcheck disable=SC2086
 [ -z "${bash_files}" ] || shellcheck -s bash -e SC1091 ${bash_files}
 

@@ -1,0 +1,30 @@
+#!/bin/sh
+# e2e 测试用：把 vm.sh 生成的 crosvm 参数翻译成 qemu-system-aarch64（virt/TCG）启动真实 Image + rootfs。
+# 网络用 QEMU user 模式（网段与 xr0 相同，网关 .1），宿主 127.0.0.1:2222 -> VM:22。
+[ "$1" = "--log-level=info" ] && shift
+if [ "$1" = stop ]; then touch "$2.stop"; exit 0; fi
+shift # run
+blk=""; con=""; ctl=""; sock=""; params=""; mem=512; cpus=2; kernel=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    --block) blk="${a%%,*}" ;;
+    --serial) p="$(echo "$a" | sed 's/.*path=\([^,]*\).*/\1/')"
+              case "$a" in *virtio-console*) ctl="$p";; *) con="$p";; esac ;;
+    --socket) sock="$a" ;;
+    --params) params="$a" ;;
+    --mem) mem="$a" ;;
+    --cpus) cpus="$a" ;;
+  esac
+  prev="$a"; kernel="$a"
+done
+params="$(echo "$params" | sed 's/console=ttyS0,115200/console=ttyAMA0,115200/')"
+qemu-system-aarch64 -M virt -cpu cortex-a72 -smp "$cpus" -m "$mem" -nographic -monitor none \
+  -kernel "$kernel" -append "$params" \
+  -drive "file=$blk,format=raw,if=none,id=d0" -device virtio-blk-pci,drive=d0 \
+  -netdev "user,id=n0,net=172.29.233.0/24,host=172.29.233.1,dns=172.29.233.3,hostfwd=tcp:127.0.0.1:${E2E_SSH_PORT:-2222}-172.29.233.254:22" \
+  -device virtio-net-pci,netdev=n0,mac=52:54:00:1d:e9:fe \
+  -device virtio-serial-pci -chardev "file,id=c1,path=$ctl" -device virtconsole,chardev=c1 \
+  -chardev "file,id=s0,path=$con" -serial chardev:s0 &
+q=$!
+while [ ! -f "${sock}.stop" ] && kill -0 $q 2>/dev/null; do sleep 0.5; done
+rm -f "${sock}.stop"; kill $q 2>/dev/null; wait $q 2>/dev/null

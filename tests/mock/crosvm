@@ -1,0 +1,17 @@
+#!/bin/sh
+# 测试用假 crosvm：记录参数，向 virtio-console 文件写 XR_READY，收到 stop 后退出
+[ "$1" = "--log-level=info" ] && shift
+if [ "$1" = stop ]; then touch "$2.stop"; exit 0; fi
+printf '%s\n' "$@" > "${FAKE_ARGS:-/dev/null}"
+ctl=""; sock=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    --serial) case "$a" in *hardware=virtio-console*) ctl="$(echo "$a" | sed 's/.*path=\([^,]*\).*/\1/')";; esac ;;
+    --socket) sock="$a" ;;
+  esac
+  prev="$a"
+done
+[ "${FAKE_NO_READY:-0}" = 1 ] || { sleep 1; echo "XR_READY 1.00" > "$ctl"; }
+[ "${FAKE_EXIT:-0}" = 1 ] && exit 1
+while [ ! -f "${sock}.stop" ]; do sleep 0.2; done
+rm -f "${sock}.stop"
