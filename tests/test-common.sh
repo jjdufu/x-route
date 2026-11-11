@@ -104,6 +104,17 @@ ok set_kv XR_MODE bypass; load_config; [ "$XR_MODE" = "bypass" ] || { echo "FAIL
 h="$(config_hash)"; [ "${#h}" -eq 16 ] || { echo "FAIL: config_hash"; fail=1; }
 set_kv VM_MEM_MB 1024; [ "$h" != "$(config_hash)" ] || { echo "FAIL: hash unchanged"; fail=1; }
 log_info test hello; grep -q "\[INFO\] \[test\] hello" "$LOG" || { echo "FAIL: log"; fail=1; }
+# 开机过程日志：文件不存在时不写；存在时 log_msg / blog / 改动类 xr_exec 都追加进去，查询类命令不写
+mkdir -p "$RUN"; rm -f "$BOOT_LOG"
+blog vm nope; log_info vm nope2; ok [ ! -e "$BOOT_LOG" ]
+: > "$BOOT_LOG"
+blog vm "进度 1"; log_info net "网络 up"; xr_exec true add x; xr_exec true -C x
+ok grep -q '^[0-9][0-9]:[0-9][0-9]:[0-9][0-9] \[vm\] 进度 1$' "$BOOT_LOG"
+ok grep -q '\[net\] 网络 up$' "$BOOT_LOG"
+ok grep -qx '  \$ true add x' "$BOOT_LOG"
+ok [ "$(grep -c 'true -C' "$BOOT_LOG")" = 0 ]
+ok [ "$(grep -c nope "$LOG")" = 1 ]
+rm -f "$BOOT_LOG"
 
 
 # /sdcard、/storage/emulated/0 视为 MEDIA

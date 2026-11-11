@@ -22,7 +22,7 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  parseBootTail, newBootBuf, feedBoot, trafficLine, hsSubnetCheck,
+  parseBootTail, newBootBuf, feedBoot, bootStep, trafficLine, hsSubnetCheck,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -279,10 +279,13 @@ function schedule() {
   }, fast ? 1500 : 5000);
 }
 
-// ---- 开机日志：增量读取（按字节偏移），约 400ms 一次。点击启动后电源按钮隐藏，舞台里显示瀑布式日志；
+// ---- 开机日志：增量读取（按字节偏移），约 200ms 一次。点击启动后电源按钮隐藏，舞台里显示瀑布式日志；
 // 启动完成或失败（阶段不再是 starting）即撤掉日志、恢复按钮 ----
-// 固定行池：BOOT_ROWS 个行元素一次建好，之后只改文字（不增删节点）；
-// 新到 k 行时整块先瞬时下移 k 行，再在下一帧用 transform 过渡回 0，看起来是平滑上滚，全程不读布局
+// 固定行池：BOOT_ROWS 个行元素一次建好，之后只改文字（不增删节点）。
+// 平滑瀑布：新到的行先进缓冲区（积压），每帧按 bootStep 滚动一小段（可为小数行）：
+//   - 整数部分变化时才改写行池文字（每帧最多一次）；
+//   - 小数部分用 translate3d 把整块下移，最新一行从底部渐隐区慢慢升起；
+//   - 积压滚完就停 rAF，没有空转帧；全程不读布局。
 const BOOT_ROWS = 16;
 const BOOT_LH = 14;      // 与 .boot-log 行高一致
 let bootRows = null;
@@ -296,12 +299,12 @@ function bootPool() {
 
 function bootOn() {
   if (boot) return;
-  // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
-  // 打开页面时已在开机：直接给出串口日志末尾一段
-  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, st: undefined, at: Date.now() };
+  // 点击启动：开机日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
+  // 打开页面时已在开机：直接给出已有内容（最多末尾一段）
+  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, pos: 0, st: undefined, at: Date.now() };
+  if (pending !== "start") boot.m = 0;
   bootPool().forEach((r) => { r.textContent = ""; });
-  const box = $("boot-log");
-  box.classList.remove("glide"); box.style.transform = "";
+  $("boot-log").style.transform = "";
   $("boot").hidden = false;
   bootTick(boot);
 }
@@ -314,31 +317,29 @@ function bootOff() {
   $("boot").hidden = true;
 }
 
-// 同一帧内只写一次：把缓冲区最后 BOOT_ROWS 行写进行池（文字没变的行不写），再做一次平滑上移
 function bootPaint(b) {
-  if (b.raf) return;
-  b.raf = requestAnimationFrame(() => {
-    b.raf = 0;
-    if (boot !== b) return;
+  if (!b.raf && page === 0) b.raf = requestAnimationFrame(() => bootFrame(b));
+}
+function bootFrame(b) {
+  b.raf = 0;
+  if (boot !== b || page !== 0) return;
+  const target = b.buf.total;
+  b.pos = bootStep(b.pos, target, BOOT_ROWS);
+  const top = Math.ceil(b.pos);
+  if (top !== b.shown) {
     const rows = bootPool();
-    const lines = b.buf.lines.slice(-BOOT_ROWS);
-    const pad = BOOT_ROWS - lines.length;
+    const lines = b.buf.lines;
+    const base = target - lines.length;      // 缓冲区第一行的累计序号
     for (let i = 0; i < BOOT_ROWS; i++) {
-      const t = i < pad ? "" : lines[i - pad];
+      const n = top - BOOT_ROWS + i;
+      const t = n >= base && n >= 0 ? (lines[n - base] || "") : "";
       if (rows[i].textContent !== t) rows[i].textContent = t;
     }
-    const k = Math.min(BOOT_ROWS, b.buf.total - b.shown);
-    b.shown = b.buf.total;
-    if (k <= 0) return;
-    const box = $("boot-log");
-    box.classList.remove("glide");
-    box.style.transform = `translateY(${k * BOOT_LH}px)`;
-    requestAnimationFrame(() => {
-      if (boot !== b) return;
-      box.classList.add("glide");
-      box.style.transform = "translateY(0)";
-    });
-  });
+    b.shown = top;
+  }
+  const off = (top - b.pos) * BOOT_LH;
+  $("boot-log").style.transform = off > 0.01 ? `translate3d(0,${off.toFixed(2)}px,0)` : "";
+  if (b.pos < target) b.raf = requestAnimationFrame(() => bootFrame(b));
 }
 
 // 开机期间的唯一轮询：约 200ms 一次，上一次 exec 返回后才排下一次（永不重叠）；
@@ -355,7 +356,7 @@ async function bootTick(b) {
       b.m = t.mod.size; b.c = t.con.size;
       const a = feedBoot(b.buf, "mod", t.mod.text);
       const c = feedBoot(b.buf, "con", t.con.text);
-      if ((a || c) && page === 0) bootPaint(b);
+      if (a || c) bootPaint(b);
       if (pending === "start" && bgArmed && t.rc !== null && t.rc !== 0) {
         // 后台 xr start 已失败退出：立刻结束，显示原因
         pending = null;
@@ -512,6 +513,7 @@ function goPage(i) {
   if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
   if (page === i) return;
   page = i;
+  if (i === 0 && boot) bootPaint(boot);   // 回到首页：补上不在首页时攒下的日志
   // 先让切页这一帧画出来，再去读流量（不和切页抢同一帧）
   if (i === 2) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }

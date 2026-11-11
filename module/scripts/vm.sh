@@ -21,7 +21,17 @@ vm_running() {
 }
 
 # 启动失败原因（单行，供 WebUI 显示）；再次启动或就绪时清除
-vm_fail() { log_err vm "$1"; echo "$2" > "${RUN}/last_error"; }
+vm_fail() {
+  log_err vm "$1"; echo "$2" > "${RUN}/last_error"
+  # 开机日志留几秒给 WebUI 读到最后一行，再删掉
+  ( sleep 5; rm -f "${BOOT_LOG}" ) </dev/null >/dev/null 2>&1 &
+}
+
+# 等待就绪期间每秒一行进度：已等待时间、串口已输出多少（OpenWrt 自身的输出走串口那一路）
+boot_progress() { # $1=已等待秒数
+  _cs="$(stat -c %s "${CON_LOG}" 2>/dev/null || echo 0)"
+  blog vm "等待 OpenWrt 就绪 ${1}s · 串口已输出 $((_cs / 1024))KB"
+}
 
 # ---- 熔断 ----
 fuse_arm()   { printf '%s %s\n' "$(date +%s)" "$(config_hash)" > "${FUSE}"; sync; sleep 1; }
@@ -37,11 +47,13 @@ fuse_watch() {
   while [ "$t" -lt "${READY_TIMEOUT_SEC}" ]; do
     vm_running || { rm -f "${FUSE}"; sync; vm_fail "就绪前 crosvm 已退出，详见 vmm.log" "虚拟机启动中退出"; return; }
     ready_seen && break
-    sleep 2; t=$((t+2))
+    sleep 1; t=$((t+1)); boot_progress "$t"
   done
   if ! ready_seen; then vm_fail "${READY_TIMEOUT_SEC} 秒内未就绪，停止 VM" "${READY_TIMEOUT_SEC} 秒内未就绪"; XR_IN_WATCH=1 vm_stop; return; fi
   echo ready > "${RUN}/state"; rm -f "${RUN}/last_error"; log_info vm "XR_READY（$(ready_channel)）"
+  blog net "重建转发 / NAT / 接管规则"
   sh "${MODDIR}/scripts/net.sh" sync
+  blog net "网络规则就绪，接管：$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
   load_config; diag_snap_bg "虚拟机就绪"
   t=0
   while [ "$t" -lt "${STABLE_SEC}" ]; do
@@ -50,23 +62,29 @@ fuse_watch() {
   done
   rm -f "${FUSE}"; config_hash > "${LAST_GOOD}"; sync
   echo stable > "${RUN}/state"; log_info vm "稳定，熔断已解除，last_good 已更新"
+  rm -f "${BOOT_LOG}"
 }
 
 # ---- 启动 ----
 vm_start_exec() {
   load_config
   vm_running && { log_info vm "已在运行"; return 0; }
+  [ -f "${BOOT_LOG}" ] || : > "${BOOT_LOG}"
+  blog vm "准备启动：CPU ${VM_CPUS} 核 · 内存 ${VM_MEM_MB}MB · 系统盘 $([ "${VM_DISK_RW}" = 1 ] && echo 读写 || echo 只读)"
   rm -f "${RUN}/last_error"
   [ -f "${TRIPPED}" ] && { log_err vm "熔断未确认（xr ack-trip）"; return 1; }
   if [ ! -x "${CROSVM}" ] || [ ! -f "${IMG}/Image" ] || [ ! -f "${ROOTFS}" ]; then
     vm_fail "缺少 crosvm 或镜像" "缺少虚拟化组件或系统镜像"; return 1
   fi
   ce_ready || log_info vm "警告：手机未解锁（CE 不可用）"
+  blog vm "内核 $(( $(stat -c %s "${IMG}/Image" 2>/dev/null || echo 0) / 1048576 ))MB · 系统盘 $(( $(stat -c %s "${ROOTFS}" 2>/dev/null || echo 0) / 1048576 ))MB · crosvm 就绪"
   mem="${VM_MEM_MB}"; [ "${mem}" -lt 384 ] && mem=512
 
   net_args=""
   if [ "${VM_NET}" = 1 ]; then
+    blog net "创建 xr0 / xr1、登记 netd 本地网络、建立转发规则"
     sh "${MODDIR}/scripts/net.sh" up || { vm_fail "net up 失败" "网络初始化失败"; return 1; }
+    blog net "手机侧网络就绪：上游 $(cat "${RUN}/net.up_if" 2>/dev/null || echo 无) · 模式 $(cat "${RUN}/net.mode" 2>/dev/null)"
     . "${MODDIR}/scripts/hotspot.sh"
     net_args="--net tap-name=xr0,mac=${XR_VM_MAC}"
     # 第二块网卡 eth1：热点网桥用（net.sh up 已创建 xr1）
@@ -79,6 +97,7 @@ vm_start_exec() {
   share_spec=""; share_mode=off; share_wrap=""
   . "${MODDIR}/scripts/share.sh"   # 设置 share_spec、share_mode、share_wrap（09）
   share_prepare
+  blog vm "共享目录：${share_mode} · 控制通道 virtiofs"
   mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
   chmod 0700 "${RUN}/guest"
   # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
@@ -88,6 +107,7 @@ vm_start_exec() {
   if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
     cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
     echo enable > "${RUN}/guest/host/openvpn.cmd"
+    blog vpn "下发 OpenVPN 配置"
   fi
 
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
@@ -98,6 +118,7 @@ vm_start_exec() {
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"
   dlog vm "启动参数：cpus=${VM_CPUS} mem=${mem} swiotlb=${VM_SWIOTLB_MB} net=${net_args:-无} disk=${rootmode} share=${share_mode} params=${params}"
   fuse_arm
+  blog vm "熔断已布防，启动 crosvm（gunyah）"
   # 解除 Android 默认 64KB RLIMIT_MEMLOCK（Gunyah 需要锁定 guest 内存）
   # shellcheck disable=SC3045
   ulimit -l unlimited 2>/dev/null
@@ -118,6 +139,7 @@ vm_start_exec() {
     --params "${params}" \
     "${IMG}/Image" </dev/null >> "${VMM_LOG}" 2>&1 &
   echo $! > "${PID_F}"
+  blog vm "crosvm pid $(cat "${PID_F}")，等待内核输出"
   sleep 2
   if ! vm_running; then
     vm_fail "crosvm 立即退出，详见 vmm.log" "虚拟机无法启动"; rm -f "${FUSE}" "${PID_F}"; sync; wakelock_off
@@ -145,7 +167,7 @@ vm_stop_exec() {
     if vm_running; then kill -TERM "$p" 2>/dev/null; sleep 5; fi
     if vm_running; then kill -KILL "$p" 2>/dev/null; fi
   fi
-  rm -f "${PID_F}" "${SOCK}" "${RUN}/state" "${RUN}/fuse_watch.pid" "${RUN}/share.mode" "${FUSE}"; sync
+  rm -f "${PID_F}" "${SOCK}" "${RUN}/state" "${RUN}/fuse_watch.pid" "${RUN}/share.mode" "${FUSE}" "${BOOT_LOG}"; sync
   sh "${MODDIR}/scripts/net.sh" down
   wakelock_off
   log_info vm "已停止"

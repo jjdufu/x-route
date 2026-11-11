@@ -1,0 +1,30 @@
+#!/bin/sh /etc/rc.common
+# XRouter: 开机期间把系统日志（logread -f）实时镜像到主串口 ttyS0（手机侧 run/console.log），
+# WebUI 的开机瀑布因此能看到 netifd / dnsmasq / firewall / openvpn 等服务一行行起来，而不是内核输出完就停住。
+# - 内核消息本来就直接打到串口，这里滤掉 kern.* 避免重复；时间戳缩成 时:分:秒；
+# - xrouter-ready 发出就绪信号 15 秒后停止，兜底最多 180 秒；平时不占用串口。
+# shellcheck disable=SC2034
+START=13
+PIDF=/var/run/xrouter-bootlog.pid
+TTY=/dev/ttyS0
+
+boot() { start; }
+
+start() {
+  [ -c "$TTY" ] || return 0
+  stop
+  # 子 shell 记下 logread 自身的 pid（stop 杀掉它，管道随之结束，sed 退出）；sed 输出到串口（tty 行缓冲）
+  (
+    ( logread -f 2>/dev/null & echo $! > "$PIDF"; wait ) \
+      | sed -e '/ kern\.[a-z]* /d' \
+            -e 's/^[A-Z][a-z]* [A-Z][a-z]* *[0-9]* \([0-9:]*\) [0-9]* [a-z]*\.[a-z]* /\1 /' > "$TTY" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  ( sleep 180; /etc/init.d/xrouter-bootlog stop ) </dev/null >/dev/null 2>&1 &
+}
+
+stop() {
+  p="$(cat "$PIDF" 2>/dev/null)"
+  [ -n "$p" ] && kill "$p" 2>/dev/null
+  rm -f "$PIDF"
+  return 0
+}

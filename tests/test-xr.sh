@@ -147,7 +147,7 @@ i=0; while [ ! -f "$RUN/bg.rc" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); do
 chk '[ "$(cat "$RUN/bg.rc")" = 0 ]'
 # boot-tail：按字节偏移增量读取、截断后从头读、去掉控制字符、超长只给末尾 6KB
 BT() { $XR boot-tail "$@" | python3 -c "import sys; f=sys.stdin.buffer.read().split(b'\x1f'); print(\"|\".join(x.decode().replace(chr(10), \"/\") for x in f))"; }
-printf 'l1\nl2\n' > "$RUN/console.log"; : > "$LOG"
+printf 'l1\nl2\n' > "$RUN/console.log"; rm -f "$RUN/boot.log"
 chk '[ "$(BT -1 -1)" = "R0|Sstopped|0||6|" ]'
 chk '[ "$(BT 0 0)" = "R0|Sstopped|0||6|l1/l2/" ]'
 printf 'l3\033[0m\r\n' >> "$RUN/console.log"
@@ -155,6 +155,10 @@ chk '[ "$(BT 0 6)" = "R0|Sstopped|0||14|l3[0m/" ]'
 chk '[ "$(BT 0 12345678)" = "R0|Sstopped|0||14|l1/l2/l3[0m/" ]'
 head -c 10000 /dev/zero | tr '\0' a > "$RUN/console.log"
 chk '[ "$($XR boot-tail -1 0 | python3 -c "import sys; print(len(sys.stdin.buffer.read().split(b\"\x1f\")[5]))")" = 6144 ]'
+# 手机侧一路读 run/boot.log（开机过程日志），不再读 module.log
+printf '09:00:01 [vm] 准备启动\n' > "$RUN/boot.log"; echo noise >> "$LOG"
+chk '[ "$(BT 0 0 | cut -d"|" -f3,4)" = "27|09:00:01 [vm] 准备启动/" ]'
+rm -f "$RUN/boot.log"
 rm -f "$RUN/bg.rc"; chk '$XR boot-tail -1 -1 | grep -q "^R-"'
 echo ready > "$RUN/state"; chk '[ "$(BT -1 -1 | cut -d"|" -f2)" = Sready ]'; rm -f "$RUN/state"
 # 快速路径：boot-tail 不加载其余脚本（不 source common.sh），开机期间每 ~200ms 调用也很轻

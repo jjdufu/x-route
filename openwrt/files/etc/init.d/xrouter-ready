@@ -17,4 +17,7 @@ start() {
     echo "$msg" > "$d" 2>/dev/null && break
   done
   logger -t xrouter "$msg"
+  # 开机日志镜像（xrouter-bootlog）再跟 15 秒：就绪后的接管 / VPN 连接过程也能在 WebUI 瀑布里看到
+  [ -x /etc/init.d/xrouter-bootlog ] && ( sleep 15; /etc/init.d/xrouter-bootlog stop ) </dev/null >/dev/null 2>&1 &
+  return 0
 }

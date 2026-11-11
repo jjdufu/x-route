@@ -177,7 +177,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 /* 运行中只变绿，不要呼吸光或持续发光 */
 .running .power { background: #1d3a26; color: var(--xr-ok); }
 .failed .power { background: #3d1c1a; color: var(--xr-bad); }
-/* 瀑布式开机日志：固定行池（BOOT_ROWS 个行元素，只改文字），新行到来时整体先下移 k 行再用 transform 平滑上移，
+/* 瀑布式开机日志：固定行池（BOOT_ROWS 个行元素，只改文字），每帧按积压滚动小数行（translate3d），
    只走合成层，不触发页面重排；上下静态渐隐 */
 .boot { position: absolute; inset: 0; overflow: hidden; pointer-events: none; contain: strict;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 88%, transparent 100%);
@@ -188,7 +188,6 @@ md-icon { --md-icon-size: 22px; flex: none; }
   will-change: transform;
 }
 .boot-log > div { height: 14px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-.boot-log.glide { transition: transform .18s ease-out; }
 .power-text { font-size: 18px; font-weight: 600; text-align: center; padding: 0 24px; min-height: 26px; }
 .power-text.failed { color: var(--xr-bad); }
 .power-text.running { color: var(--xr-ok); }

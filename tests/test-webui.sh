@@ -139,7 +139,12 @@ if (!/requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main))
 const blk = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
 const plog = blk(".boot-log");
 if (/blur|box-shadow|animation|filter/.test(plog + blk(".boot"))) fail("开机日志不得用模糊/阴影/动画");
-if (!/\.boot-log\.glide \{ transition: transform \.1\d+s/.test(css)) fail("上移只用短 transform 过渡");
+// 瀑布：rAF 里按积压行数小步上移（translate3d 小数位移），不用 CSS 过渡；只在有积压时请求下一帧
+if (/\.boot-log[^{]*\{[^}]*transition/.test(css)) fail("开机日志不得用 CSS 过渡");
+{ const bf = main.slice(main.indexOf("function bootFrame"), main.indexOf("async function bootTick"));
+  if (!/bootStep\(/.test(bf) || !/translate3d\(0,/.test(bf)) fail("瀑布应按 bootStep 小步 translate3d 上移");
+  if (!/if \(b\.pos < target\) b\.raf = requestAnimationFrame/.test(bf)) fail("没有积压时不应继续请求帧"); }
+if (!/page === 0\) b\.raf = requestAnimationFrame/.test(main)) fail("不在首页时不画开机日志");
 if (!/const BOOT_ROWS = \d+;/.test(main) || !/Array\.from\(\{ length: BOOT_ROWS \}/.test(main)) fail("应使用固定行池");
 if (/getBoundingClientRect|offsetHeight|scrollHeight/.test(main.slice(main.indexOf("function bootPaint"), main.indexOf("async function bootTick")))) fail("绘制开机日志时不得读布局");
 const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启动 pid=1\n\x1f30\x1f[    0.000000] Booting Linux\n[ 0.1] half");
@@ -157,8 +162,18 @@ eq(bb.lines, ["[vm] 已启动 pid=1", "[    0.000000] Booting Linux"], "feedBoot
 L.feedBoot(bb, "con", " line\n\x1b[0m\x1b[1;32mok\x1b[0m\n");
 eq(bb.lines.slice(-2), ["[ 0.1] half line", "ok"], "feedBoot 拼接半行并去颜色码");
 for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
-eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
+eq([bb.lines.length, bb.lines[53].length], [54, L.BOOT_COLS], "feedBoot 列宽上限");
 eq(bb.total, 54, "feedBoot 累计行数");
+const bc = L.newBootBuf(); for (let i = 0; i < 9; i++) L.feedBoot(bc, "con", `l${i}\n`, 5);
+eq([bc.lines, bc.total], [["l4", "l5", "l6", "l7", "l8"], 9], "feedBoot 自定义上限");
+eq(L.BOOT_LINES >= 300, true, "开机日志保留足够多行");
+// bootStep：积压越多走得越快，但每帧有上下限；积压超过缓冲直接跳到末尾附近
+eq(L.bootStep(10, 10), 10, "bootStep 无积压");
+eq(L.bootStep(0, 0.05), 0.05, "bootStep 不越过目标");
+eq(L.bootStep(0, 0.5), L.BOOT_MIN_STEP, "bootStep 最小步");
+eq(L.bootStep(0, 100), L.BOOT_MAX_STEP, "bootStep 最大步");
+eq(L.bootStep(0, 5) > L.BOOT_MIN_STEP && L.bootStep(0, 5) < L.BOOT_MAX_STEP, true, "bootStep 按积压加速");
+eq(L.bootStep(0, 1000, 16), 1000 - 16, "bootStep 积压过多直接跳到末尾一屏");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
 // 启动中：电源按钮整个隐藏、没有转圈。舞台三态：未启动红色断电电路板（静态）、开机中只有日志、运行中绿色电路板 + 电流
 if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");

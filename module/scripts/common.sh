@@ -46,6 +46,8 @@ XR_NET6="fd7a:7872:e9"
 CONF="${XR_DATA}/config/config.conf"
 RUN="${XR_DATA}/run"
 LOG="${XR_DATA}/log/module.log"
+# 开机过程日志（WebUI 瀑布）：每次启动清空，稳定或停止后删除；只在文件存在时追加，平时零开销
+BOOT_LOG="${RUN}/boot.log"
 IMG="${XR_DATA}/images"
 ROOTFS="${IMG}/openwrt-rootfs.img"
 FUSE="${XR_DATA}/config/vm_booting.fuse"
@@ -66,6 +68,14 @@ log_msg() { # $1=级别 $2=模块 $3...=消息
   mkdir -p "${XR_DATA}/log"
   rotate_file "${LOG}" mv
   echo "$(date '+%F %T') [${lv}] [${m}] $*" >> "${LOG}"
+  [ -f "${BOOT_LOG}" ] && echo "$(date +%T) [${m}] $*" >> "${BOOT_LOG}"
+  return 0
+}
+# 只写开机过程日志（不进 module.log）：细粒度的启动进度
+blog() { # $1=模块 $2...=消息
+  [ -f "${BOOT_LOG}" ] || return 0
+  _bm="$1"; shift
+  echo "$(date +%T) [${_bm}] $*" >> "${BOOT_LOG}"
 }
 log_info() { log_msg INFO "$@"; }
 log_err()  { log_msg ERROR "$@"; }
@@ -100,6 +110,10 @@ _dbg_mut() {
 }
 # 执行系统网络命令：调试模式记下命令、返回值和错误输出（错误输出照常交给调用方）
 xr_exec() {
+  # 开机中：改动系统状态的网络命令也逐条进开机日志（纯 shell 拼接，不额外起进程）
+  if [ -f "${BOOT_LOG}" ] && _dbg_mut "$@"; then
+    _bc="$*"; printf '%s\n' "  \$ ${_bc#"${SYSBIN}/"}" >> "${BOOT_LOG}"
+  fi
   dbg_on || { "$@"; return $?; }
   _def="$(mktemp "${RUN}/.dbg.XXXXXX" 2>/dev/null || echo "${RUN}/.dbg.$$")"
   "$@" 2>"$_def"; _drc=$?

@@ -133,7 +133,8 @@ export function fmtSize(mb) {
 }
 
 // ---- 启动动画：按钮背景里滚动的真实启动日志（xr boot-tail） ----
-export const BOOT_LINES = 20;
+// 开机日志缓冲：保留最近 400 行做「待滚动」积压（一次轮询可能到几十上百行），界面只显示末尾 16 行
+export const BOOT_LINES = 400;
 export const BOOT_COLS = 64;
 const SEP = "\x1f";
 
@@ -208,4 +209,16 @@ export function hsSubnetCheck(v) {
   const host = ip & ((2 ** (32 - len)) - 1);
   if (host === 0 || host === 2 ** (32 - len) - 1) return { ok: false, error: "网关不能是网络地址或广播地址" };
   return { ok: true, value: v };
+}
+
+// 瀑布滚动速度（单位：行 / 帧）：积压越多越快，至少 0.12 行 / 帧（约 7 行 / 秒，保持「在滚」），
+// 最多 1.5 行 / 帧（约 90 行 / 秒）；积压超出缓冲（落后太多）直接跳到末尾一屏。
+// pos 是已滚到的位置（可为小数），target 是累计行数；返回下一帧的位置
+export const BOOT_MIN_STEP = 0.12;
+export const BOOT_MAX_STEP = 1.5;
+export function bootStep(pos, target, rows = 16) {
+  const back = target - pos;
+  if (back <= 0) return target;
+  if (back > BOOT_LINES - rows) return target - rows;
+  return Math.min(target, pos + Math.min(BOOT_MAX_STEP, Math.max(BOOT_MIN_STEP, back * 0.18)));
 }

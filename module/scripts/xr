@@ -8,7 +8,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 
 # ---- 开机日志增量读取（WebUI 开机时每 ~200ms 调一次）：走快速路径，不加载其余脚本、不建目录，
 # 只 stat 文件大小并从上次的字节偏移读新增部分，尽量少占 CPU，开机期间界面不卡 ----
-# 输出：R<退出码或 -> \037 S<虚拟机状态> \037 模块日志大小 \037 内容 \037 串口日志大小 \037 内容
+# 输出：R<退出码或 -> \037 S<虚拟机状态> \037 开机过程日志（run/boot.log）大小 \037 内容 \037 串口日志大小 \037 内容
 if [ "${1:-}" = boot-tail ]; then
   _run="${XR_DATA:-/data/adb/xrouter}/run"
   tail_from() {   # $1=文件 $2=上次的字节偏移（-1 表示只取当前大小）；新增内容最多 6KB，去掉控制字符
@@ -25,7 +25,7 @@ if [ "${1:-}" = boot-tail ]; then
   _st="$(cat "${_run}/state" 2>/dev/null)"
   [ -n "$_st" ] || { [ -f "${_run}/crosvm.pid" ] && _st=booting; }
   printf 'R%s\037S%s\037' "$(cat "${_run}/bg.rc" 2>/dev/null || echo -)" "${_st:-stopped}"
-  tail_from "${XR_DATA:-/data/adb/xrouter}/log/module.log" "${2:--1}"; printf '\037'
+  tail_from "${_run}/boot.log" "${2:--1}"; printf '\037'
   tail_from "${_run}/console.log" "${3:--1}"
   exit 0
 fi
@@ -266,6 +266,8 @@ bg_run() {
   if [ "$1" = start ] && ! vm_running; then
     # 旧串口日志属于上一次开机；先清空，WebUI 才能从 0 开始实时跟随这次的启动输出
     : > "${CON_LOG}"
+    # 开机过程日志从这次启动开始记（WebUI 瀑布的「手机侧」一路）
+    : > "${BOOT_LOG}"; blog xr "收到启动请求"
   fi
   _ss=""; command -v setsid >/dev/null 2>&1 && _ss=setsid
   export MODDIR
