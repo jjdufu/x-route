@@ -13,8 +13,9 @@
 
 1. 发版前检查：
    - `git status` 干净，`git log origin/main..HEAD` 即为第 0–8 步（及修复）的全部提交；
-   - `module.prop` 为 `v3.0.0` / `300` / `id=xrouter` / `name=XRouter`；
-   - `scripts/package-module.sh` 生成的 Release 说明保持简短：中文、版本号、预发布/全新安装/空密码提示和包名即可，不要长文；
+   - `module.prop` 的 `version` / `versionCode` 已更新，`id=xrouter`、`name=XRouter`；
+   - 发版标题为干净的 `XRouter <version>`，不含 Build 序号与作者；标签仍为 `<version>-build.<run_number>`；
+   - `scripts/package-module.sh` 生成的 Release 说明从上次发版标签以来的 feat/fix 提交提取梗概，并附预发布、全新安装、空密码提示和包名，不要长文；
    - README 同样精简，TESTING 与最终行为一致；
    - 仓库中无密钥、ovpn 私钥、VPN 服务器公网地址。
 2. 快进推送：`git push origin main`。禁止 `--force`。禁止删除或移动已有标签 `v2.0.1-build.8` 等。
