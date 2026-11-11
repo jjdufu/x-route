@@ -39,4 +39,5 @@ if [ ! -f "$SRC/debug.keystore" ]; then
 fi
 apksigner sign --ks "$SRC/debug.keystore" --ks-pass pass:android --key-pass pass:android \
   --out "$OUT" "$T/unsigned.apk"
+rm -f "${OUT}.idsig"
 echo "[+] $OUT"

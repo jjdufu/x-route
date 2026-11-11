@@ -26,9 +26,16 @@ for f in index.html config.json icon.png; do
   [ -s "${REPO}/module/webroot/${f}" ] || { echo "WebUI 构建产物缺少 ${f}"; exit 1; }
 done
 
+# 保活伴生 APK：有 JDK 与 build-tools 时现场构建，否则使用已入库的预编译包
+if command -v javac >/dev/null 2>&1 && { command -v aapt >/dev/null 2>&1 || command -v aapt2 >/dev/null 2>&1; }; then
+  sh "${REPO}/companion/build.sh" "${REPO}/module/apk/keepalive.apk"
+fi
+[ -s "${REPO}/module/apk/keepalive.apk" ] || { echo "缺少 module/apk/keepalive.apk，请先运行 sh companion/build.sh"; exit 1; }
+
 ST="$(mktemp -d)"; trap 'rm -rf "${ST}"' EXIT
 cp -a "${REPO}/module/." "${ST}/"
 find "${ST}" -name .gitkeep -delete
+find "${ST}" -name '*.idsig' -delete
 rm -rf "${ST}/data"
 chmod 0755 "${ST}"/*.sh "${ST}/scripts/"*.sh "${ST}/scripts/xr"
 [ ! -e "${ST}/META-INF" ] || { echo "不应包含 META-INF"; exit 1; }
@@ -52,12 +59,19 @@ echo "[+] ${FULL}"
 ( cd "${OW}" && sha256sum Image openwrt-rootfs.img.gz openwrt.qcow2 ) > "${OW}/sha256sums.txt"
 ( cd "${DIST}" && sha256sum "${FULL##*/}" "${LITE##*/}" ) >> "${OW}/sha256sums.txt"
 
-cat > "${DIST}/RELEASE_NOTES.md" <<EOF
-### ${NAME} ${VER}
-
-预发布。仅支持全新安装。登录 root，空密码，请尽快在 LuCI 中设置。
-
-- 完整包：${FULL##*/}
-- 精简包：${LITE##*/}
-EOF
+# 发版说明：干净版本号 + 自上次发版标签以来 feat/fix 提交梗概 + 必要提示
+PREV_TAG="$(git -C "${REPO}" tag --list 'v*-build.*' --sort=-v:refname | head -n 1 || true)"
+{
+  echo "### ${NAME} ${VER}"
+  echo
+  if [ -n "${PREV_TAG}" ] && git -C "${REPO}" rev-parse --verify "${PREV_TAG}" >/dev/null 2>&1; then
+    git -C "${REPO}" log --reverse --format='%s' "${PREV_TAG}..HEAD" \
+      | awk -F': *' '/^(feat|fix)\(/ && !/^(feat|fix)\((lint|docs)\):/ { sub(/^(feat|fix)\([^)]+\): */,""); print "- " $0 }' 
+  fi
+  echo
+  echo "预发布。仅支持全新安装。登录 root，空密码，请尽快在 LuCI 中设置。"
+  echo
+  echo "- 完整包：${FULL##*/}"
+  echo "- 精简包：${LITE##*/}"
+} > "${DIST}/RELEASE_NOTES.md"
 echo "[+] ${DIST}/RELEASE_NOTES.md"

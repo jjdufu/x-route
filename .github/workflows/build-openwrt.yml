@@ -26,6 +26,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Node.js (WebUI)
         uses: actions/setup-node@v4
@@ -55,6 +58,29 @@ jobs:
       - name: Build Rootfs (ImmortalWrt 25.12.2 ImageBuilder)
         run: bash scripts/build-rootfs.sh
 
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
+          mkdir -p "$ANDROID_HOME"
+          curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf /tmp/clt "$ANDROID_HOME/cmdline-tools/latest"
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/clt
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          mv /tmp/clt/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_JAR=$ANDROID_HOME/platforms/android-35/android.jar" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
       - name: Package SuKiSU Module (Lite & Full All-in-One Zip)
         run: bash scripts/package-module.sh
 
@@ -83,7 +109,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
-          name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}"
+          name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }}"
           prerelease: true
           body_path: dist/RELEASE_NOTES.md
           files: |

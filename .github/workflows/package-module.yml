@@ -37,6 +37,29 @@ jobs:
       - name: Lint (shellcheck + sh -n + config keys)
         run: sh scripts/lint.sh
 
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
+          mkdir -p "$ANDROID_HOME"
+          curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf /tmp/clt "$ANDROID_HOME/cmdline-tools/latest"
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/clt
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          mv /tmp/clt/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_JAR=$ANDROID_HOME/platforms/android-35/android.jar" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
       - name: Package SuKiSU Lite Module Zip
         run: |
           if [ -f scripts/package-module.sh ]; then
