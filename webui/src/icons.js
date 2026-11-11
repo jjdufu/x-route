@@ -40,4 +40,10 @@ export const ICONS = {
   error: "\u{f8b6}",
   lan: "\u{eb2f}",
   public: "\u{e80b}",
+  info: "\u{e88e}",
+  code: "\u{e86f}",
+  person: "\u{f0d3}",
+  smartphone: "\u{e7ba}",
+  wifi_tethering: "\u{e1e2}",
+  data_usage: "\u{eff2}",
 };

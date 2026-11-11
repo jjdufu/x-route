@@ -35,7 +35,7 @@ export const NOTIFY_OPTS = [
   { value: "lan", label: "内网" },
 ];
 export const VPN_TXT = { down: "未连接", connecting: "连接中", up: "已连接" };
-export const STEPS = ["启动虚拟机", "网络就绪", "运行中"];
+export const STEPS = ["正在启动", "网络就绪", "运行中"];
 
 export function shq(v) {
   return "'" + String(v).replace(/'/g, "'\\''") + "'";
@@ -194,15 +194,39 @@ export function trafficLine(d, mode) {
   return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
 }
 
+// 组网页隧道列表（按列表渲染，将来多份 OpenVPN 配置时每条一项）：后端 vpn.tunnels 优先；
+// 旧后端没有 tunnels 时由汇总字段拼出一项。未导入任何配置时也给一项占位（状态未连接、导入按钮在其下）。
+// 返回 [{ key, name, status, text, addr, routes }]；routes 只列已同步到手机的网段（routes_active），多隧道时按隧道归属
+export function vpnTunnels(vpn) {
+  vpn = vpn || {};
+  const active = vpn.routes_active || [];
+  const list = Array.isArray(vpn.tunnels) && vpn.tunnels.length ? vpn.tunnels
+    : [{ dev: "", name: "OpenVPN", status: vpn.status || "down", addr: vpn.addr || "", routes: active }];
+  const multi = list.length > 1;
+  return list.map((t, i) => {
+    const st = VPN_TXT[t.status] ? t.status : "down";
+    const own = Array.isArray(t.routes) ? t.routes : [];
+    const routes = multi ? active.filter((a) => own.some((r) => r === a || `${r}/32` === a || `${r}/128` === a)) : active;
+    return { key: t.dev || `#${i}`, name: t.name || "OpenVPN", status: st, text: VPN_TXT[st], addr: String(t.addr || "").replace(/\/\d+$/, ""), routes };
+  });
+}
+
+// 累计流量弹窗：手机本机 / 热点设备各三项（总流量 | 公网 | 内网），口径与保活通知一致
+export function splitLines(d) {
+  const one = (x) => ({ total: trafficLine(x, "total"), wan: trafficLine(x, "wan"), lan: trafficLine(x, "lan") });
+  if (!d || !d.ok) return null;
+  return { phone: one(d.phone), hotspot: one(d.hotspot) };
+}
+
 // 固定热点网段（与手机侧 hs_subnet_valid 一致的前端预检；冲突检查以手机侧为准）
 export function hsSubnetCheck(v) {
   v = String(v || "").trim();
   if (!v) return { ok: true, value: "" };
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(v);
-  if (!m) return { ok: false, error: "格式：网关地址/前缀，如 10.233.0.1/24" };
+  if (!m) return { ok: false, error: "格式：地址/掩码，如 172.28.222.254/24" };
   const o = m.slice(1, 5).map(Number); const len = Number(m[5]);
   if (o.some((x) => x > 255)) return { ok: false, error: "地址无效" };
-  if (len < 16 || len > 30) return { ok: false, error: "前缀需在 16–30 之间" };
+  if (len < 16 || len > 30) return { ok: false, error: "掩码需在 16–30 之间" };
   const priv = o[0] === 10 || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168 && len >= 16);
   if (!priv) return { ok: false, error: "需为私网地址（10/8、172.16/12、192.168/16）" };
   const ip = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;

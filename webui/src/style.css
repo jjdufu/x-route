@@ -65,18 +65,30 @@ body { font: 15px/1.45 system-ui, "Noto Sans SC", sans-serif; overflow: hidden; 
 [hidden] { display: none !important; }
 [unresolved] { opacity: 0; }
 .shell {
+  position: relative; z-index: 1;
   height: 100dvh; min-height: 100dvh; display: flex; flex-direction: column;
   padding-left: var(--window-inset-left, 0px); padding-right: var(--window-inset-right, 0px);
-  background: var(--md-sys-color-surface);
+  background: transparent;
   transition: opacity .12s;
 }
+/* 还没有状态（首次打开且无缓存）：按钮、舞台与状态标签先不画，拿到状态后淡入，不先闪「已停止」 */
+.nostate .power-area, .nostate .chip { opacity: 0; }
+.power-area, .chip { transition: opacity .18s ease-out; }
+
+/* 整页电路板背景（src/pcb.css 的静态 SVG 平铺）：红 / 绿两层，状态切换只交叉淡入淡出（220ms），不重绘；
+   组网、设置页整体变弱（.dim）。卡片不透明，背景只在空隙里露出，不抢内容 */
+.bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; transition: opacity .2s ease-out; }
+.bg.dim { opacity: .5; }
+.bg-layer { position: absolute; inset: 0; transition: opacity .22s ease-out; }
+.bg-green, .bg.running .bg-red { opacity: 0; }
+.bg.running .bg-green { opacity: 1; }
 md-icon { --md-icon-size: 22px; flex: none; }
 
 /* 顶栏：背景延伸到挖孔状态栏，文字避开安全区；与页面同色，避免分层色带 */
 .appbar {
   flex: none; display: flex; align-items: center; gap: 12px;
   padding: calc(var(--top-inset) + 12px) 20px 8px;
-  background: var(--md-sys-color-surface);
+  background: transparent;
 }
 .title { flex: 1; font-size: 22px; font-weight: 600; letter-spacing: .2px; }
 .chip {
@@ -91,15 +103,15 @@ md-icon { --md-icon-size: 22px; flex: none; }
 
 .tabs {
   flex: none;
-  --md-primary-tab-container-color: var(--md-sys-color-surface);
+  --md-primary-tab-container-color: transparent;
   --md-divider-color: var(--md-sys-color-outline-variant);
 }
 
-/* 内容区：多页叠放，只显示当前页；切换瞬时完成，无滑动或淡入动画 */
+/* 内容区：多页叠放，只显示当前页；切换时新页 180ms 横移淡入（main.js goPage，WAAPI），旧页立即隐藏 */
 .pager { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; overscroll-behavior: none; }
 .page {
   position: absolute; inset: 0;
-  overflow-y: auto; padding: 16px 16px calc(24px + var(--bottom-inset));
+  overflow-y: auto; overflow-x: hidden; padding: 16px 16px calc(24px + var(--bottom-inset));
   display: flex; flex-direction: column; gap: 12px;
 }
 /* 隐藏页跳过渲染但保留滚动位置 */
@@ -134,19 +146,26 @@ md-icon { --md-icon-size: 22px; flex: none; }
 
 .alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
-/* 首页舞台：开机自启上方的方形区域，三种状态：
-   - 未启动 / 失败 / 停止中：红色电路板（芯片、引脚扇出走线、45° 折角、过孔、总线、贴片元件），走线在芯片附近断开，全静态；
-   - 开机中：深色底，只显示瀑布式开机日志（电源按钮隐藏）；
-   - 运行中：绿色电路板，8 条走线（四边中线 + 四角斜线）上有电流脉冲流向中间的芯片（电源按钮压在芯片上）。
-   底图是 src/pcb.css 里的静态 SVG（scripts/gen-pcb.py 生成），浏览器只栅格化一次；
-   脉冲是 HTML 元素，只做 transform 动画（合成层，不重绘、不重排），不在首页或页面不可见时暂停；无发光、模糊、滤镜。 */
+/* 首页舞台：电源按钮周围是整页电路板最密的一块（芯片、引脚扇出走线、45° 折角、过孔、总线、贴片元件），
+   边缘由静态径向遮罩淡出、融进整页底纹（没有方块和硬边）：
+   - 未启动 / 失败 / 停止中：红色，走线断开，全静态；
+   - 开机中：电路板变暗，按钮淡出，瀑布式开机日志淡入；
+   - 运行中：绿色，8 条走线（四边中线 + 四角斜线）上有电流脉冲流向中间的芯片（电源按钮压在芯片上）。
+   红 / 绿两层只做透明度交叉淡入淡出；脉冲是 HTML 元素，只做 transform 动画（合成层，不重绘、不重排），
+   不在首页或页面不可见时暂停；无发光、模糊、滤镜。 */
 .power-area { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0 0 8px; }
-.stage {
-  position: relative; width: 100%; height: 252px; border-radius: var(--xr-radius); overflow: hidden;
-  display: grid; place-items: center; contain: strict;
+.stage { position: relative; width: 100%; height: 252px; display: grid; place-items: center; }
+.st-wrap { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: opacity .2s ease-out; }
+.st-layer, .pcb-flow {
+  position: absolute; left: 50%; top: 50%;
+  -webkit-mask-image: radial-gradient(closest-side, #000 30%, rgba(0, 0, 0, .55) 58%, transparent 80%);
+  mask-image: radial-gradient(closest-side, #000 30%, rgba(0, 0, 0, .55) 58%, transparent 80%);
 }
-.stage.starting { background-color: var(--md-sys-color-surface-container-lowest); background-image: none; }
-.pcb-flow { position: absolute; left: 50%; top: 50%; width: 400px; height: 252px; margin: -126px 0 0 -200px; pointer-events: none; display: none; }
+.st-layer { transition: opacity .22s ease-out; }
+.st-green, .running .st-red { opacity: 0; }
+.running .st-green { opacity: 1; }
+.stage.starting .st-wrap { opacity: .32; }
+.pcb-flow { width: 480px; height: 320px; margin: -160px 0 0 -240px; display: none; }
 .running .pcb-flow { display: block; }
 .pf { position: absolute; height: 2px; margin-top: -1px; transform-origin: 0 50%; overflow: hidden; }
 .pf i {
@@ -168,8 +187,11 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .power:active { transform: scale(.96); }
 .power md-icon { --md-icon-size: 56px; }
 .power:disabled { cursor: default; }
-/* 启动中：按钮整个隐藏（没有转圈等动画），舞台里只显示开机日志；完成或失败后按钮恢复 */
-.starting.power-wrap { display: none; }
+/* 按钮 ↔ 开机日志：交叉淡入淡出。启动：按钮 180ms 淡出（略缩小），日志稍后 200ms 淡入；
+   结束：日志 180ms 淡出，按钮稍后 200ms 淡入。没有转圈、弹跳或呼吸光 */
+.power-wrap { transition: opacity .2s ease-out .06s, transform .2s ease-out .06s, visibility 0s linear 0s; }
+.starting.power-wrap { opacity: 0; transform: scale(.94); visibility: hidden; pointer-events: none;
+  transition: opacity .18s ease-in, transform .18s ease-in, visibility 0s linear .18s; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .ring circle { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }
 .stopping .ring { opacity: 1; animation: spin .8s linear infinite; }
@@ -180,6 +202,8 @@ md-icon { --md-icon-size: 22px; flex: none; }
 /* 瀑布式开机日志：固定行池（BOOT_ROWS 个行元素，只改文字），每帧按积压滚动小数行（translate3d），
    只走合成层，不触发页面重排；上下静态渐隐 */
 .boot { position: absolute; inset: 0; overflow: hidden; pointer-events: none; contain: strict;
+  opacity: 0; visibility: hidden; transition: opacity .18s ease-in, visibility 0s linear .18s;
+  background: radial-gradient(closest-side, rgba(8, 10, 12, .82), rgba(8, 10, 12, .5) 70%, transparent);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 88%, transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 88%, transparent 100%); }
 .boot-log {
@@ -187,6 +211,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
   font: 11px/14px ui-monospace, "JetBrains Mono", monospace; color: #3dff8a; opacity: .9;
   will-change: transform;
 }
+.boot.on { opacity: 1; visibility: visible; transition: opacity .2s ease-out .08s, visibility 0s linear 0s; }
 .boot-log > div { height: 14px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .power-text { font-size: 18px; font-weight: 600; text-align: center; padding: 0 24px; min-height: 26px; }
 .power-text.failed { color: var(--xr-bad); }
@@ -272,3 +297,30 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .gone-title { font-size: 22px; font-weight: 600; }
 .gone-text { font-size: 14px; color: var(--md-sys-color-on-surface-variant); max-width: 320px; line-height: 1.5; }
 .gone.bad md-icon { color: var(--xr-bad); }
+
+/* 组网：隧道卡片列表（模板克隆）。单条：标题 OpenVPN、连接状态、路由网段、底部导入按钮（与原布局相同）；
+   多条：标题为隧道名，状态缩成右侧小标记，显示隧道地址与各自自动同步的网段，导入按钮在列表下方 */
+.vpn-list { display: flex; flex-direction: column; gap: 12px; }
+.vpn-card .vpn-addr-row, .vpn-card .vpn-badge { display: none; }
+.vpn-card.multi .vpn-addr-row { display: flex; }
+.vpn-card.multi .vpn-badge { display: inline-flex; }
+.vpn-card.multi .vpn-st-row { display: none; }
+.vpn-badge { align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 500;
+  background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
+.vpn-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.vpn-badge.up, .vpn-st.up { color: var(--xr-ok); }
+.vpn-badge.up { background: var(--xr-ok-dim); }
+.vpn-badge.connecting, .vpn-st.connecting { color: var(--md-sys-color-primary); }
+.vpn-list > .actions { padding: 0 4px; }
+
+/* 运行中系统盘：灰显但可点（点了提示「停止后可修改」） */
+.soft-off { opacity: .45; }
+.mono-sub { font-family: ui-monospace, monospace; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 累计流量弹窗 */
+.tr-dlg { display: flex; flex-direction: column; gap: 14px; min-width: 260px; }
+.tr-group { display: flex; flex-direction: column; gap: 6px; }
+.tr-title { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--md-sys-color-on-surface); }
+.tr-title md-icon { --md-icon-size: 20px; color: var(--md-sys-color-primary); }
+.tr-row { display: flex; justify-content: space-between; gap: 12px; padding-left: 28px; font-size: 14px; color: var(--md-sys-color-on-surface-variant); }
+.tr-row span:last-child { font-variant-numeric: tabular-nums; color: var(--md-sys-color-on-surface); }

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""生成首页舞台的电路板底图（src/pcb.css）与电流走线表（src/pcb.js）。
+"""生成整页电路板背景（src/pcb.css）与电流走线表（src/pcb.js）。
 
-底图是静态 SVG（data URI，浏览器只栅格化一次）：细网格、中央芯片（四边各 9 个引脚）、
-每个引脚引出一条带 45° 折角的走线（扇出到四边）、过孔 / 焊盘、角落的总线组与贴片元件。
-- 未启动 / 失败：红色，每条走线在靠近芯片处断开一小段（「断电」），完全静态；
-- 运行中：绿色，走线接通；另由 pcb.js 列出的 8 段直线走线叠加电流脉冲（HTML 元素，只做 transform 动画）。
+两层，都是静态 SVG（data URI，浏览器只栅格化一次），红 / 绿各一份，状态切换只交叉淡入淡出不重绘：
+- 整页底纹（.bg-red / .bg-green）：可无缝平铺的稀疏走线、过孔与贴片元件，铺满整个界面，透明度很低，不抢内容；
+- 电源按钮周围（.st-red / .st-green）：中央芯片（四边各 9 个引脚）、每个引脚引出带 45° 折角的扇出走线、
+  过孔、总线组与贴片元件，越靠近按钮越密；边缘由 CSS 径向遮罩淡出，与整页底纹融为一体（没有硬边）。
+- 未启动 / 失败：红色，每条走线断开一小段（「断电」），完全静态；
+- 运行中：绿色，走线接通；另由 pcb.js 列出的 8 段直线走线叠加电流脉冲（HTML 元素，只做 transform 动画），流向芯片 / 按钮。
 运行：python3 scripts/gen-pcb.py（结果提交进仓库，构建时不需要 Python）。
 """
 import math
@@ -12,7 +14,7 @@ import random
 from pathlib import Path
 from urllib.parse import quote
 
-W, H = 400, 252
+W, H = 480, 320
 CX, CY = W / 2, H / 2
 CHIP = 132                       # 芯片边长（电源按钮直径 120，压在芯片中央）
 X0, Y0 = CX - CHIP / 2, CY - CHIP / 2
@@ -133,6 +135,7 @@ def svg(color, broken):
     # 贴片元件（电阻 / 电容）：角落空地里的小焊盘对
     parts = []
     for cx, cy in ((54, 112), (346, 140), (58, 170), (342, 82), (110, 236), (290, 18), (300, 236), (100, 16)):
+        cx, cy = cx * W / 400, cy * H / 252
         horiz = rnd.random() < 0.5
         w, h = (12, 6) if horiz else (6, 12)
         parts.append(f"<rect x='{fmt(cx - w / 2)}' y='{fmt(cy - h / 2)}' width='{w}' height='{h}' rx='1'/>")
@@ -181,21 +184,71 @@ def flows():
     return out
 
 
+TILE = 240
+
+
+def tile_svg(color, broken):
+    """整页底纹：TILE 见方、可无缝平铺（走线不碰边），稀疏的折线走线 + 过孔 + 贴片元件"""
+    r = random.Random(7)
+    lines, vias, parts = [], [], []
+    for _ in range(9):
+        x, y = r.randrange(16, TILE - 16, 8), r.randrange(16, TILE - 16, 8)
+        pts = [(x, y)]
+        d = r.choice(((1, 0), (-1, 0), (0, 1), (0, -1)))
+        for _seg in range(r.randint(2, 3)):
+            n = r.randrange(16, 56, 8)
+            nx, ny = pts[-1][0] + d[0] * n, pts[-1][1] + d[1] * n
+            nx, ny = min(max(nx, 10), TILE - 10), min(max(ny, 10), TILE - 10)
+            if (nx, ny) == pts[-1]:
+                break
+            pts.append((nx, ny))
+            # 45° 折角后换一个正交方向
+            k = r.randrange(8, 20, 4)
+            t = (d[1], d[0]) if r.random() < 0.5 else (-d[1], -d[0])
+            bx, by = nx + d[0] * k + t[0] * k, ny + d[1] * k + t[1] * k
+            if 10 <= bx <= TILE - 10 and 10 <= by <= TILE - 10:
+                pts.append((bx, by))
+                d = t
+        if len(pts) < 2:
+            continue
+        vias.append(pts[0])
+        vias.append(pts[-1])
+        if broken:
+            lines += list(split_gap(pts, 6))
+        else:
+            lines.append(pts)
+    for _ in range(4):
+        cx, cy = r.randrange(20, TILE - 20), r.randrange(20, TILE - 20)
+        if r.random() < 0.5:
+            parts.append(f"<rect x='{cx - 6}' y='{cy - 3}' width='12' height='6' rx='1'/>")
+        else:
+            parts.append(f"<rect x='{cx - 3}' y='{cy - 6}' width='6' height='12' rx='1'/>")
+    g = [f"<svg xmlns='http://www.w3.org/2000/svg' width='{TILE}' height='{TILE}' viewBox='0 0 {TILE} {TILE}'>"]
+    g.append("<defs><pattern id='g' width='24' height='24' patternUnits='userSpaceOnUse'>"
+             f"<path d='M24 0H0V24' fill='none' stroke='{color}' stroke-opacity='.035'/></pattern></defs>")
+    g.append(f"<rect width='{TILE}' height='{TILE}' fill='url(%23g)'/>")
+    g.append(f"<g fill='none' stroke='{color}' stroke-opacity='.12' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'>")
+    g.append("<path d='" + " ".join(path_d(t) for t in lines) + "'/></g>")
+    g.append(f"<g fill='none' stroke='{color}' stroke-opacity='.18' stroke-width='1'>")
+    g.append("".join(f"<circle cx='{fmt(x)}' cy='{fmt(y)}' r='2.2'/>" for x, y in vias))
+    g.append("</g>")
+    g.append(f"<g fill='{color}' fill-opacity='.10'>" + "".join(parts) + "</g>")
+    g.append("</svg>")
+    return "".join(g)
+
+
 root = Path(__file__).resolve().parent.parent
 red = data_uri(svg("%23ff6b5e", True))
 green = data_uri(svg("%2357e389", False))
-css = f"""/* 由 scripts/gen-pcb.py 生成，勿手改。首页舞台电路板底图：{W}x{H} 静态 SVG，居中，只栅格化一次 */
-.stage {{
-  background-color: #140d0e;
-  background-image: radial-gradient(ellipse at 50% 50%, transparent 0 40%, rgba(10, 10, 12, .78) 86%), url("{red}");
-  background-size: 100% 100%, {W}px {H}px;
-  background-position: center, center;
-  background-repeat: no-repeat;
-}}
-.stage.running {{
-  background-color: #0a120d;
-  background-image: radial-gradient(ellipse at 50% 50%, transparent 0 40%, rgba(8, 12, 10, .72) 86%), url("{green}");
-}}
+tred = data_uri(tile_svg("%23ff6b5e", True))
+tgreen = data_uri(tile_svg("%2357e389", False))
+css = f"""/* 由 scripts/gen-pcb.py 生成，勿手改。整页电路板：底纹 {TILE}x{TILE} 平铺 + 按钮周围 {W}x{H} 密集走线，静态 SVG，只栅格化一次 */
+.bg-red {{ background-color: #120c0d; background-image: url("{tred}"); }}
+.bg-green {{ background-color: #0b110d; background-image: url("{tgreen}"); }}
+.bg-layer {{ background-size: {TILE}px {TILE}px; background-repeat: repeat; }}
+.st-red {{ background-image: url("{red}"); }}
+.st-green {{ background-image: url("{green}"); }}
+.st-layer {{ width: {W}px; height: {H}px; margin: -{H // 2}px 0 0 -{W // 2}px; background-size: {W}px {H}px; background-repeat: no-repeat; }}
 """
 (root / "src" / "pcb.css").write_text(css)
 js = "// 由 scripts/gen-pcb.py 生成，勿手改。电流走线（舞台坐标 %dx%d，起点在外、终点在芯片）\nexport const PCB_W = %d;\nexport const PCB_H = %d;\nexport const PCB_FLOW = [\n%s\n];\n" % (

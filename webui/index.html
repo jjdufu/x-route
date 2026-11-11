@@ -9,7 +9,9 @@
   <script type="module" src="./src/main.js"></script>
 </head>
 <body>
-  <div class="shell" unresolved>
+  <!-- 整页电路板背景：红 / 绿两层只做交叉淡入淡出；组网、设置页整体变弱 -->
+  <div id="bg" class="bg stopped" aria-hidden="true"><div class="bg-layer bg-red"></div><div class="bg-layer bg-green"></div></div>
+  <div class="shell nostate" unresolved>
     <header class="appbar">
       <span class="title">XRouter</span>
       <span id="chip" class="chip chip-off"><span class="dot"></span><span id="chip-text">已停止</span></span>
@@ -31,9 +33,13 @@
         </div>
 
         <div class="power-area">
-          <!-- 舞台：未启动红色断电电路板；开机中按钮隐藏、显示瀑布式开机日志；运行中绿色电路板、电流流向芯片（电源按钮） -->
-          <div id="stage" class="stage">
-            <div id="pcb-flow" class="pcb-flow" aria-hidden="true"></div>
+          <!-- 舞台：电源按钮周围是整页电路板最密的一块（芯片 + 扇出走线），边缘径向淡出融进整页底纹。
+               未启动红色断电；开机中按钮淡出、瀑布式开机日志淡入；运行中绿色、电流流向芯片（电源按钮） -->
+          <div id="stage" class="stage stopped">
+            <div class="st-wrap" aria-hidden="true">
+              <div class="st-layer st-red"></div><div class="st-layer st-green"></div>
+              <div id="pcb-flow" class="pcb-flow"></div>
+            </div>
             <div id="power-wrap" class="power-wrap stopped">
               <svg class="ring" viewBox="0 0 140 140" aria-hidden="true"><circle cx="70" cy="70" r="66"></circle></svg>
               <button id="power" class="power" type="button" aria-label="电源">
@@ -42,11 +48,11 @@
                 <md-icon data-icon="power_settings_new"></md-icon>
               </button>
             </div>
-            <div id="boot" class="boot" aria-hidden="true" hidden><div id="boot-log" class="boot-log"></div></div>
+            <div id="boot" class="boot" aria-hidden="true"><div id="boot-log" class="boot-log"></div></div>
           </div>
           <div id="power-text" class="power-text">已停止</div>
           <div id="power-steps" class="steps" hidden>
-            <span data-step="0">启动虚拟机</span><md-icon data-icon="chevron_right"></md-icon>
+            <span data-step="0">正在启动</span><md-icon data-icon="chevron_right"></md-icon>
             <span data-step="1">网络就绪</span><md-icon data-icon="chevron_right"></md-icon>
             <span data-step="2">运行中</span>
           </div>
@@ -69,15 +75,11 @@
         </div>
       </section>
 
-      <!-- 组网 -->
+      <!-- 组网：OpenVPN 隧道按列表渲染（每条各自状态、地址、自动同步的网段）；只有一条时与单卡片布局相同 -->
       <section class="page" id="page-link">
-        <div class="card list">
-          <div class="card-head"><md-icon data-icon="vpn_lock"></md-icon><span class="grow">OpenVPN</span></div>
-          <div class="item"><md-icon data-icon="link"></md-icon><span class="grow">连接状态</span><span id="v-vpn" class="val">未连接</span></div>
-          <div class="item item-top"><md-icon data-icon="alt_route"></md-icon><span class="grow">路由网段</span><span id="v-routes" class="val mono">无</span></div>
-          <div class="actions">
-            <md-filled-tonal-button id="btn-import"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
-          </div>
+        <div id="vpn-list" class="vpn-list"></div>
+        <div id="vpn-actions" class="actions">
+          <md-filled-tonal-button id="btn-import"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
         </div>
       </section>
 
@@ -88,15 +90,15 @@
           <div class="item"><md-icon data-icon="swap_horiz"></md-icon><span class="grow">运行模式</span><div id="seg-mode" class="seg"></div></div>
           <div class="item"><md-icon data-icon="admin_panel_settings"></md-icon><span class="grow">管理访问</span>
             <md-outlined-select id="sel-access" class="sel"></md-outlined-select></div>
-          <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">热点 DHCP<span id="v-hotspot" class="sub"></span></span><md-switch id="sw-hotspot" icons></md-switch></div>
-          <div id="row-hs-net" class="item item-btn"><md-ripple></md-ripple><md-icon data-icon="lan"></md-icon><span class="grow">热点网段<span id="v-hs-net-cur" class="sub"></span></span><span id="v-hs-net" class="val">跟随安卓</span></div>
+          <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">DHCP<span id="v-hotspot" class="sub"></span></span><md-switch id="sw-hotspot" icons></md-switch></div>
+          <div id="row-hs-net" class="item item-btn"><md-ripple></md-ripple><md-icon data-icon="lan"></md-icon><span class="grow">网关地址<span id="v-hs-net-cur" class="sub"></span></span><span id="v-hs-net" class="val">跟随安卓</span></div>
           <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><md-switch id="sw-ipv6" icons></md-switch></div>
         </div>
 
         <div class="group-title">通知</div>
         <div class="card list">
           <div class="item"><md-icon data-icon="public"></md-icon><span class="grow">通知显示</span><div id="seg-notify" class="seg seg-tight"></div></div>
-          <div class="item"><md-icon data-icon="description"></md-icon><span class="grow">累计流量</span><span id="v-traffic" class="val">—</span></div>
+          <button id="row-traffic" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="data_usage"></md-icon><span class="grow">累计流量</span><span id="v-traffic" class="val">—</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
           <div class="actions">
             <md-outlined-button id="btn-traffic-reset" class="danger"><md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零</md-outlined-button>
           </div>
@@ -109,10 +111,15 @@
           <button id="btn-share-path" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="folder"></md-icon><span class="grow">目录</span><span id="v-share-path" class="val path">内部存储</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
         </div>
 
-        <div class="group-title">虚拟机资源</div>
+        <div class="group-title">资源</div>
         <div class="card list">
           <div class="item"><md-icon data-icon="memory"></md-icon><span class="grow">CPU</span><md-outlined-select id="sel-cpu" class="sel"></md-outlined-select></div>
           <div class="item"><md-icon data-icon="developer_board"></md-icon><span class="grow">内存</span><md-outlined-select id="sel-mem" class="sel"></md-outlined-select></div>
+          <div id="row-disk" class="item"><md-icon data-icon="hard_drive"></md-icon><span class="grow">系统盘<span id="v-disk-sub" class="sub"></span></span><span id="v-disk" class="val">—</span></div>
+          <div id="disk-actions" class="actions">
+            <md-outlined-button id="btn-expand"><md-icon slot="icon" data-icon="expand_content"></md-icon>扩容</md-outlined-button>
+            <md-outlined-button id="btn-reset" class="danger"><md-icon slot="icon" data-icon="restart_alt"></md-icon>重置</md-outlined-button>
+          </div>
         </div>
 
         <div class="group-title">日志</div>
@@ -124,17 +131,10 @@
           </div>
         </div>
 
-        <div class="group-title">系统盘</div>
+        <div class="group-title">关于</div>
         <div class="card list">
-          <div class="item"><md-icon data-icon="hard_drive"></md-icon><span class="grow">容量</span><span id="v-disk" class="val">—</span></div>
-          <div class="actions">
-            <md-outlined-button id="btn-expand"><md-icon slot="icon" data-icon="expand_content"></md-icon>扩容</md-outlined-button>
-            <md-outlined-button id="btn-reset" class="danger"><md-icon slot="icon" data-icon="restart_alt"></md-icon>重置</md-outlined-button>
-          </div>
-        </div>
-
-        <div class="group-title">模块</div>
-        <div class="card list">
+          <button id="btn-project" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="code"></md-icon><span class="grow">项目地址<span class="sub mono-sub">https://github.com/jjdufu/x-route</span></span><md-icon class="trail" data-icon="open_in_new"></md-icon></button>
+          <div class="item"><md-icon data-icon="person"></md-icon><span class="grow">作者</span><span class="val">jjdufu</span></div>
           <div class="item"><md-icon data-icon="delete_sweep"></md-icon><span class="grow">卸载 XRouter<span class="sub">删除全部数据，无需重启</span></span>
             <md-outlined-button id="btn-uninstall" class="danger">立即卸载</md-outlined-button></div>
         </div>
@@ -159,19 +159,41 @@
     </div>
   </md-dialog>
 
-  <!-- 固定热点网段 -->
+  <!-- 网关地址（热点固定网段） -->
   <md-dialog id="dlg-hsnet" class="dlg">
-    <div slot="headline">热点网段</div>
+    <div slot="headline">网关地址</div>
     <form slot="content" id="dlg-hsnet-form" method="dialog" class="hsnet">
-      <label class="field"><span>网关地址 / 前缀</span>
-        <input id="in-hsnet" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="10.233.0.1/24"></label>
-      <div class="hint">留空 = 跟随安卓（每次开热点网段随机）。私网地址，前缀 16–30，不能与上游网络或 XRouter 内部网段冲突；改后立即生效，不重启虚拟机。</div>
+      <label class="field"><span>地址/掩码</span>
+        <input id="in-hsnet" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="172.28.222.254/24"></label>
       <div id="hsnet-err" class="hint bad"></div>
     </form>
     <div slot="actions">
       <md-text-button id="hsnet-clear" type="button">跟随安卓</md-text-button>
       <md-text-button form="dlg-hsnet-form" value="cancel">取消</md-text-button>
       <md-filled-button form="dlg-hsnet-form" value="ok">保存</md-filled-button>
+    </div>
+  </md-dialog>
+
+  <!-- 累计流量：手机本机 / 热点分开，口径与保活通知一致 -->
+  <md-dialog id="dlg-traffic" class="dlg">
+    <div slot="headline">累计流量</div>
+    <form slot="content" id="dlg-traffic-form" method="dialog" class="tr-dlg">
+      <div class="tr-group">
+        <div class="tr-title"><md-icon data-icon="smartphone"></md-icon>手机流量</div>
+        <div class="tr-row"><span>总流量</span><span id="tr-ph-total">—</span></div>
+        <div class="tr-row"><span>公网</span><span id="tr-ph-wan">—</span></div>
+        <div class="tr-row"><span>内网</span><span id="tr-ph-lan">—</span></div>
+      </div>
+      <div class="tr-group">
+        <div class="tr-title"><md-icon data-icon="wifi_tethering"></md-icon>热点流量</div>
+        <div class="tr-row"><span>总流量</span><span id="tr-hs-total">—</span></div>
+        <div class="tr-row"><span>公网</span><span id="tr-hs-wan">—</span></div>
+        <div class="tr-row"><span>内网</span><span id="tr-hs-lan">—</span></div>
+      </div>
+      <div id="tr-note" class="hint"></div>
+    </form>
+    <div slot="actions">
+      <md-text-button form="dlg-traffic-form" value="cancel">关闭</md-text-button>
     </div>
   </md-dialog>
 
@@ -199,6 +221,16 @@
       <md-filled-button id="fb-pick" form="dlg-files-form" value="ok">选择此文件夹</md-filled-button>
     </div>
   </md-dialog>
+
+  <!-- 组网页的隧道卡片（每条隧道克隆一份） -->
+  <template id="tpl-vpn">
+    <div class="card list vpn-card">
+      <div class="card-head"><md-icon data-icon="vpn_lock"></md-icon><span class="grow vpn-name">OpenVPN</span><span class="vpn-badge"><span class="dot"></span><span class="vpn-badge-text"></span></span></div>
+      <div class="item vpn-st-row"><md-icon data-icon="link"></md-icon><span class="grow">连接状态</span><span class="val vpn-st">未连接</span></div>
+      <div class="item vpn-addr-row"><md-icon data-icon="lan"></md-icon><span class="grow">隧道地址</span><span class="val mono vpn-addr">—</span></div>
+      <div class="item item-top"><md-icon data-icon="alt_route"></md-icon><span class="grow">路由网段<span class="sub vpn-sync"></span></span><span class="val mono vpn-routes">无</span></div>
+    </div>
+  </template>
 
   <div id="snack" class="snack" role="status"></div>
 </body>

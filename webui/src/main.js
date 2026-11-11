@@ -2,6 +2,7 @@
 import "@material/web/tabs/tabs.js";
 import "@material/web/tabs/primary-tab.js";
 import { Tab, ANIMATE_INDICATOR } from "@material/web/tabs/internal/tab.js";
+import { EASING } from "@material/web/internal/motion/animation.js";
 import "@material/web/switch/switch.js";
 import "@material/web/button/filled-button.js";
 import "@material/web/button/filled-tonal-button.js";
@@ -20,9 +21,9 @@ import "./pcb.css";
 import { PCB_FLOW } from "./pcb.js";
 import { ICONS } from "./icons.js";
 import {
-  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, VPN_TXT,
+  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  parseBootTail, newBootBuf, feedBoot, bootStep, trafficLine, hsSubnetCheck,
+  parseBootTail, newBootBuf, feedBoot, bootStep, trafficLine, hsSubnetCheck, vpnTunnels, splitLines,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -165,7 +166,8 @@ async function setKey(key, value) {
 function renderPower(d) {
   const v = vmView(d, pending);
   cls($("power-wrap"), "power-wrap " + v.phase);
-  cls($("stage"), "stage " + v.phase);   // 舞台底色随阶段：停止 / 失败普通，启动中深色日志，运行中电路板
+  cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红色断电，启动中变暗叠开机日志，运行中绿色 + 电流
+  cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
   txt($("power-text"), v.text);
   cls($("power-text"), "power-text " + v.phase);
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped));
@@ -180,6 +182,44 @@ function renderPower(d) {
   if (v.phase === "starting") bootOn(); else bootOff();
   cls($("chip"), "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
   txt($("chip-text"), v.chip);
+  tog(document.querySelector(".shell"), "nostate", false);   // 拿到状态（或上次缓存）才显示按钮与背景，不先闪「已停止」
+}
+
+// ---- 组网：隧道列表。每条隧道一张卡片（模板克隆一次，之后只改文字）；只有一条时与原单卡片布局相同：
+// 标题 OpenVPN + 连接状态 + 路由网段，导入按钮在卡片底部。多条时每张卡片标题为隧道名、状态缩成标题右侧的小标记，
+// 显示隧道地址与各自同步的网段；导入按钮单独放在列表下方 ----
+const vpnCards = new Map();   // key -> 卡片元素
+function vpnCard(key) {
+  let c = vpnCards.get(key);
+  if (!c) {
+    c = $("tpl-vpn").content.firstElementChild.cloneNode(true);
+    c.querySelectorAll("md-icon[data-icon]").forEach(icon);
+    vpnCards.set(key, c);
+  }
+  return c;
+}
+function renderVpn(vpn) {
+  const list = vpnTunnels(vpn);
+  const multi = list.length > 1;
+  const box = $("vpn-list");
+  const cards = list.map((t) => {
+    const c = vpnCard(t.key);
+    tog(c, "multi", multi);
+    txt(c.querySelector(".vpn-name"), multi ? t.name : "OpenVPN");
+    txt(c.querySelector(".vpn-st"), t.text);
+    cls(c.querySelector(".vpn-st"), "val vpn-st " + t.status);
+    cls(c.querySelector(".vpn-badge"), "vpn-badge " + t.status);
+    txt(c.querySelector(".vpn-badge-text"), t.text);
+    txt(c.querySelector(".vpn-addr"), t.addr || "—");
+    txt(c.querySelector(".vpn-sync"), multi && t.routes.length ? "自动同步" : "");
+    txt(c.querySelector(".vpn-routes"), t.routes.length ? t.routes.join("\n") : "无");
+    return c;
+  });
+  const acts = $("vpn-actions");
+  if (!multi) cards[0].append(acts);
+  const want = multi ? [...cards, acts] : cards;
+  if (box.children.length !== want.length || want.some((c, i) => box.children[i] !== c)) box.replaceChildren(...want);
+  for (const k of vpnCards.keys()) if (!list.some((t) => t.key === k)) vpnCards.delete(k);
 }
 
 function render(d) {
@@ -208,9 +248,7 @@ function render(d) {
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
   if ($("i-up").dataset.icon !== ic) setIcon($("i-up"), ic);
 
-  txt($("v-vpn"), VPN_TXT[vpn.status] || "未连接");
-  const routes = vpn.routes_active || [];
-  txt($("v-routes"), routes.length ? routes.join("\n") : "无");
+  renderVpn(vpn);
 
   seg($("seg-mode"), MODE_OPTS, cfg.XR_MODE || "global", pickMode);
   fillSelect($("sel-access"), ACCESS_OPTS, cfg.XR_EXPOSE || "lan");
@@ -236,8 +274,10 @@ function render(d) {
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
   fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "768");
   txt($("v-disk"), fmtSize(cfg.VM_DISK_SIZE_MB));
-  prop($("btn-expand"), "disabled", !!vm.running);
-  prop($("btn-reset"), "disabled", !!vm.running);
+  // 运行中系统盘灰显（不设 disabled：点了要能提示「停止后可修改」）
+  txt($("v-disk-sub"), vm.running ? "停止后可修改" : "");
+  tog($("row-disk"), "soft-off", !!vm.running);
+  tog($("disk-actions"), "soft-off", !!vm.running);
 }
 
 // 状态刷新单飞：同一时刻最多一个 status-json 在途，期间再要求刷新只记一次，结束后补一次
@@ -269,6 +309,20 @@ async function refreshOnce() {
   for (const [k, e] of edits) if (e.doneAt !== null && t0 > e.doneAt) edits.delete(k);
   overlay(d);
   render(d);
+  saveCache(r.stdout);
+}
+
+// 上次的状态缓存：重新打开模块页面时先按它画按钮与背景，等 status-json 返回再更正（不先闪「已停止」）
+const CACHE_KEY = "xr.status";
+function saveCache(raw) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), raw })); } catch { /* 存储不可用 */ }
+}
+function loadCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (!c || Date.now() - c.t > 6 * 3600e3) return null;
+    return JSON.parse(c.raw);
+  } catch { return null; }
 }
 
 function schedule() {
@@ -307,18 +361,23 @@ function bootOn() {
   // 打开页面时已在开机：直接给出已有内容（最多末尾一段）
   boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, pos: 0, st: undefined, at: Date.now() };
   if (pending !== "start") boot.m = 0;
+  clearTimeout(bootClear);
   bootPool().forEach((r) => { r.textContent = ""; });
   $("boot-log").style.transform = "";
-  $("boot").hidden = false;
+  tog($("boot"), "on", true);   // CSS：按钮先淡出，日志随后淡入（交叉淡入淡出约 200ms）
   bootTick(boot);
 }
 
+// 结束开机阶段：日志淡出、按钮淡入；淡出结束后再清空行池（淡出过程中文字保持不动）
+let bootClear = 0;
 function bootOff() {
   if (!boot) return;
   clearTimeout(boot.timer);
   if (boot.raf) cancelAnimationFrame(boot.raf);
   boot = null;
-  $("boot").hidden = true;
+  tog($("boot"), "on", false);
+  clearTimeout(bootClear);
+  bootClear = setTimeout(() => { if (!boot) { bootPool().forEach((r) => { r.textContent = ""; }); $("boot-log").style.transform = ""; } }, 260);
 }
 
 function bootPaint(b) {
@@ -402,7 +461,7 @@ async function power() {
   const v = vmView(status || {}, pending);
   if (v.phase === "starting" || v.phase === "stopping") return;
   if (v.phase === "running" || (status && status.vm && status.vm.running)) {
-    if (!await confirmDlg("停止虚拟机", "", "停止", true)) return;
+    if (!await confirmDlg("停止服务", "", "停止", true)) return;
     act("stop");
   } else {
     act("start");
@@ -441,7 +500,7 @@ async function pickSharePath() {
   if (path) setKey("VM_SHARE_PATH", path);
 }
 
-// 固定热点网段：前端先做格式预检，冲突（上游 / xr0 网段）由手机侧校验后返回原因
+// 热点网关地址：前端先做格式预检，冲突（上游 / xr0 网段）由手机侧校验后返回原因
 async function editHotspotNet() {
   if (status && status.config && status.config.XR_HOTSPOT_BRIDGE === "0") return;
   const input = $("in-hsnet"); const err = $("hsnet-err");
@@ -457,7 +516,25 @@ async function editHotspotNet() {
   }
 }
 
+// 运行中系统盘不可改：按钮灰显但仍可点，点了只提示
+function diskLocked() {
+  if (status && status.vm && status.vm.running) { snack("停止后可修改"); return true; }
+  return false;
+}
+
+// CPU / 内存：重启虚拟机才生效，保存前先确认；取消则把下拉框恢复原值
+async function pickRestartKey(key, sel, label, fmt) {
+  const cur = (status && status.config && status.config[key]) || "";
+  const v = sel.value;
+  if (v === cur) return;
+  const running = !!(status && status.vm && status.vm.running);
+  const ok = await confirmDlg(`${label}改为 ${fmt(v)}`, running ? "需要重启虚拟机后生效" : "下次启动虚拟机时生效", "保存");
+  if (!ok) { sel.select(cur); return; }
+  setKey(key, v);
+}
+
 async function expandDisk() {
+  if (diskLocked()) return;
   const cur = Number(status && status.config && status.config.VM_DISK_SIZE_MB) || 1024;
   const sizes = expandSizes(cur);
   if (!sizes.length) { snack("已达上限", true); return; }
@@ -472,6 +549,7 @@ async function expandDisk() {
 }
 
 async function resetDisk() {
+  if (diskLocked()) return;
   if (!await confirmDlg("重置系统盘", "OpenWrt 内的数据将全部清除", "重置", true)) return;
   const r = await xr("reset-disk");
   snack(r.errno === 0 ? "已重置" : "重置失败", r.errno !== 0);
@@ -511,6 +589,29 @@ async function resetTraffic() {
   loadTraffic();
 }
 
+// ---- 累计流量弹窗：手机本机 / 热点各三项（总流量 | 公网 | 内网），由 OpenWrt 分来源统计 ----
+let splitBusy = false;
+async function openTraffic() {
+  if (splitBusy) return;
+  splitBusy = true;
+  for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "…");
+  txt($("tr-note"), "");
+  const shown = dialogResult($("dlg-traffic"));
+  const r = await xr("traffic-split");
+  splitBusy = false;
+  const res = lastJson(r.stdout);
+  const l = splitLines(res);
+  if (!l) {
+    for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "—");
+    txt($("tr-note"), (res && res.error) || "读取失败");
+  } else {
+    txt($("tr-ph-total"), l.phone.total); txt($("tr-ph-wan"), l.phone.wan); txt($("tr-ph-lan"), l.phone.lan);
+    txt($("tr-hs-total"), l.hotspot.total); txt($("tr-hs-wan"), l.hotspot.wan); txt($("tr-hs-lan"), l.hotspot.lan);
+    txt($("tr-note"), "本次运行以来，经 OpenWrt 转发的流量");
+  }
+  await shown;
+}
+
 // ---- 日志导出：日志统一，只分普通 / 调试。调试模式关闭时导出普通日志，开启时导出完整诊断快照 ----
 let exportBusy = false;
 function exportMode() { return status && status.config && status.config.XR_DEBUG === "1" ? "diag" : "log"; }
@@ -525,9 +626,16 @@ async function exportLogs() {
   snack(res && res.ok ? `已保存到 Download/${String(res.path).split("/").pop()}` : "导出失败", !(res && res.ok));
 }
 
-// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动，均瞬时切换、不做任何过渡 ----
-// 关掉 Material Tab 指示条的 250ms 滑动动画：激活态由 CSS :host([active]) 直接显示
-Tab.prototype[ANIMATE_INDICATOR] = function () {};
+// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动都有短而干脆的横移淡入（180ms，ease-out）。
+// 只动新页（WAAPI，transform + opacity，走合成层），旧页立即隐藏，不重叠、不跟手、不吸附；点击当帧就切 ----
+// Material Tab 指示条：默认 250ms，缩短为 180ms，与页面同步
+const PAGE_MS = 180;
+Tab.prototype[ANIMATE_INDICATOR] = function (previousTab) {
+  if (!this.indicator) return;
+  this.indicator.getAnimations().forEach((a) => a.cancel());
+  const frames = this.getKeyframes(previousTab);
+  if (frames !== null) this.indicator.animate(frames, { duration: PAGE_MS, easing: EASING.EMPHASIZED_DECELERATE || "cubic-bezier(.2,.8,.2,1)" });
+};
 
 function goPage(i) {
   i = Math.max(0, Math.min(2, i));
@@ -536,7 +644,11 @@ function goPage(i) {
   const tabs = $("tabs");
   if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
   if (page === i) return;
+  const dir = i > page ? 1 : -1;
   page = i;
+  pages[i].animate([{ opacity: 0, transform: `translate3d(${dir * 28}px,0,0)` }, { opacity: 1, transform: "none" }],
+    { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" });
+  tog($("bg"), "dim", i !== 0);
   if (i === 0 && boot) bootPaint(boot);   // 回到首页：补上不在首页时攒下的日志
   // 先让切页这一帧画出来，再去读流量（不和切页抢同一帧）
   if (i === 2) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
@@ -604,8 +716,10 @@ function bind() {
   $("btn-import").addEventListener("click", importVpn);
   $("btn-share-path").addEventListener("click", pickSharePath);
   $("sel-access").addEventListener("change", (e) => setKey("XR_EXPOSE", e.target.value));
-  $("sel-cpu").addEventListener("change", (e) => setKey("VM_CPUS", e.target.value));
-  $("sel-mem").addEventListener("change", (e) => setKey("VM_MEM_MB", e.target.value));
+  $("sel-cpu").addEventListener("change", (e) => pickRestartKey("VM_CPUS", e.target, "CPU ", (v) => `${v} 核`));
+  $("sel-mem").addEventListener("change", (e) => pickRestartKey("VM_MEM_MB", e.target, "内存", fmtSize));
+  $("row-traffic").addEventListener("click", openTraffic);
+  $("btn-project").addEventListener("click", () => xr("project"));
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
   $("btn-traffic-reset").addEventListener("click", resetTraffic);
@@ -632,6 +746,8 @@ function edgeToEdge() {
   edgeToEdge();
   bind();
   await customElements.whenDefined("md-tabs");
+  const cached = loadCache();
+  if (cached) render(cached);
   document.querySelector(".shell").removeAttribute("unresolved");
   await refresh();
   schedule();

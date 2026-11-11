@@ -49,16 +49,20 @@ if (css.includes("breathe") || /animation:\s*breathe/.test(css) || css.includes(
 if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得使用大面积模糊");
 if (html.includes("概览") || main.includes("概览") || css.includes("概览")) fail("页签名应为「主页」");
 for (const t of ["开机自启", "运行时长", "上游网络", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
-  "存储共享", "目录", "虚拟机资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "热点 DHCP", "整机复位后自启已关闭"]) {
+  "存储共享", "目录", "资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "DHCP", "网关地址", "地址/掩码", "整机复位后自启已关闭",
+  "关于", "项目地址", "https://github.com/jjdufu/x-route", "作者", "jjdufu", "卸载 XRouter", "立即卸载"]) {
   if (!html.includes(t)) fail(`缺少文案 ${t}`);
 }
-for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH"]) {
+for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH", "虚拟机资源", "热点 DHCP", "热点网段", "网关地址/前缀", "op13"]) {
   if (html.includes(t) || main.includes(t)) fail(`旧文案残留 ${t}`);
 }
-// 页面切换必须瞬时：无横向滚动吸附、无 smooth 滚动、关闭 Tab 指示条动画
+// 页面切换：短而干脆的横移淡入（150-200ms ease-out，WAAPI 只动新页），无滚动吸附、无 smooth 滚动；Tab 指示条同步缩短
 if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得使用滚动吸附动画");
 if (/behavior:\s*["']smooth|behavior:\s*smooth/.test(main)) fail("页面切换不得使用 smooth 滚动");
-if (!/Tab\.prototype\[ANIMATE_INDICATOR\]\s*=/.test(main)) fail("未关闭 Tab 指示条动画");
+if (!/Tab\.prototype\[ANIMATE_INDICATOR\]\s*=/.test(main)) fail("Tab 指示条动画应改为短时长");
+{ const m = main.match(/const PAGE_MS = (\d+);/); if (!m || +m[1] < 150 || +m[1] > 200) fail("切页动画应 150-200ms"); }
+if (!/pages\[i\]\.animate\(/.test(main) || !/duration: PAGE_MS, easing: "cubic-bezier\(\.2,\.8,\.2,1\)"/.test(main)) fail("切页应 WAAPI ease-out 横移淡入");
+if (/bounce|spring|infinite[^;]*(scale|glow)/i.test(css.replace(/\.pf i[^}]*\}/g, ""))) fail("不得有回弹 / 呼吸动画");
 if (!/\.page:not\(\.on\)/.test(css) || !html.includes('class="page on" id="page-home"')) fail("页面应按 .on 直接显隐");
 if (/\.page[^{]*\{[^}]*(transition|animation(?!-play-state))/.test(css)) fail("页面不得带过渡动画");
 const visible = html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ");
@@ -89,9 +93,9 @@ eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");
 if (!/XR_EXPOSE="lan"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("管理访问默认应为内网");
 for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(common)) fail(`SET_KEYS 含未知键 ${k}`);
 
-// 确认弹窗只用于：运行模式、停止、重置 / 扩容系统盘、清空日志、立即卸载
+// 确认弹窗只用于：运行模式、停止服务、需重启的 CPU / 内存修改、重置 / 扩容系统盘、清零流量、立即卸载
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);
-eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清零流量统计", "重置系统盘", "立即卸载 XRouter"].sort(), "确认弹窗范围");
+eq(confirms.sort(), ["切换为${label}", "停止服务", "${label}改为 ${fmt(v)}", "清零流量统计", "重置系统盘", "立即卸载 XRouter"].sort(), "确认弹窗范围");
 if (!main.includes('dialogResult($("dlg-expand"))')) fail("扩容需确认");
 
 // 纯函数
@@ -101,8 +105,8 @@ let threw = false; try { L.xrCmd("set;reboot"); } catch { threw = true; } if (!t
 eq(L.lastJson('x\n{"ok":true}'), { ok: true }, "lastJson");
 const st = (vm, net = {}, config = {}) => ({ vm, net: { gw: "block", ...net }, config: { XR_MODE: "global", ...config } });
 eq(L.vmView(st({ running: false, tripped: null })).phase, "stopped", "停止");
-eq(L.vmView(st({ running: false, tripped: null }), "start"), { phase: "starting", chip: "已停止", text: "启动虚拟机", step: 0 }, "点击启动");
-eq(L.vmView(st({ running: true, state: "booting" })).text, "启动虚拟机", "booting");
+eq(L.vmView(st({ running: false, tripped: null }), "start"), { phase: "starting", chip: "已停止", text: "正在启动", step: 0 }, "点击启动");
+eq(L.vmView(st({ running: true, state: "booting" })).text, "正在启动", "booting");
 eq(L.vmView(st({ running: true, state: "ready" }, { gw: "off" })).text, "网络就绪", "等待接管");
 eq(L.vmView(st({ running: true, state: "ready" }, { gw: "off" }, { XR_MODE: "bypass" })).phase, "running", "旁路就绪即运行");
 eq(L.vmView(st({ running: true, state: "stable" })), { phase: "running", chip: "运行中", text: "运行中", step: 2 }, "运行中");
@@ -182,21 +186,42 @@ if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" 
   if (iC < 0 || iR < 0 || iX < 0 || !(iC < iR && iR < iX) || !/Download/.test(u) || !/, true\)\) return;/.test(u)) fail("卸载应先确认、再换静态页、最后请求删除");
   if (!/gone = true;/.test(u) || !/if \(gone\) return Promise\.resolve\(\);/.test(main) || !/clearTimeout\(timer\);\n  if \(gone\) return;/.test(main)) fail("卸载后应停止一切轮询"); }
 if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
-// 启动中：电源按钮整个隐藏、没有转圈。舞台三态：未启动红色断电电路板（静态）、开机中只有日志、运行中绿色电路板 + 电流
-if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
+// 启动中：电源按钮淡出（150-250ms 交叉淡化）后出现瀑布，没有转圈；瀑布文字只有「正在启动」
+{ const m = /\.starting\.power-wrap \{([^}]*)\}/.exec(css); if (!m || !/opacity: 0/.test(m[1]) || !/visibility: hidden/.test(m[1])) fail("启动中应隐藏电源按钮"); }
+{ const ds = [...css.matchAll(/\.(?:power-wrap|boot|st-layer|st-wrap|bg-layer) \{[^}]*transition:([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)s/g)].map((x) => +x[1]).filter((x) => x > 0.1));
+  if (!ds.length || ds.some((x) => x < 0.15 || x > 0.25)) fail(`交叉淡化应 150-250ms: ${ds}`); }
+if (!/\.boot\.on \{/.test(css) || !/classList\.(add|toggle)\("on"/.test(main)) fail("瀑布应淡入淡出");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
-// 底图：src/pcb.css（scripts/gen-pcb.py 生成的静态 SVG）。红色版走线断开（路径段数多于绿色版），绿色版接通
+if (!/STEPS = \["正在启动"/.test(fs.readFileSync(W + "/src/logic.js", "utf8"))) fail("启动文字应为「正在启动」");
+// 底图：src/pcb.css（scripts/gen-pcb.py 生成的静态 SVG）。全屏铺底（红 / 绿随状态切换），电源键附近更密，组网 / 设置页更淡
 const pcb = fs.readFileSync(W + "/src/pcb.css", "utf8");
 const pblk = (sel) => pcb.slice(pcb.indexOf(sel + " {"), pcb.indexOf("}\n", pcb.indexOf(sel + " {")));
-const stg = pblk(".stage"); const stgRun = pblk(".stage.running");
 const svgOf = (b) => { const m = /url\("data:image\/svg\+xml,([^"]+)"\)/.exec(b); return m ? decodeURIComponent(m[1]) : ""; };
 const segs = (b) => (svgOf(b).match(/ ?M[-\d.]+ [-\d.]+/g) || []).length;
+const stg = pblk(".st-red"), stgRun = pblk(".st-green");
 if (!/%23ff6b5e/.test(stg) || /animation|transition/.test(stg + stgRun)) fail("未启动：红色静态电路板");
 if (!/%2357e389/.test(stgRun)) fail("运行中：绿色电路板");
-if (!(segs(stg) > segs(stgRun) * 1.8)) fail("未启动的走线应断开");
-for (const t of ["<pattern", "stroke-dasharray", "<circle", "rx='12'"]) if (!svgOf(stgRun).includes(t)) fail(`电路板应含 ${t}`);
+if (!(segs(stg) > segs(stgRun) * 1.5)) fail("未启动的走线应断开");
+for (const t of ["<circle", "rx="]) if (!svgOf(stgRun).includes(t)) fail(`电路板应含 ${t}`);
+if (!svgOf(pblk(".bg-red")) || !svgOf(pblk(".bg-green")) || !/background-repeat: repeat/.test(pblk(".bg-layer"))) fail("应有全屏平铺底图");
+if (!(svgOf(stgRun).length > svgOf(pblk(".bg-green")).length * 1.5)) fail("电源键附近应比全屏底图更密");
+if (!html.includes('id="bg"') || html.indexOf('id="bg"') > html.indexOf('class="shell')) fail("全屏底图应在内容之下");
+if (!/\.bg\.dim \{[^}]*opacity/.test(css) || !/"dim"/.test(main)) fail("组网 / 设置页底图应更淡");
 if (!/import "\.\/pcb\.css";/.test(main) || !fs.existsSync(W + "/scripts/gen-pcb.py")) fail("电路板底图应由 gen-pcb.py 生成并引入");
-if (!/\.stage\.starting \{[^}]*background-image: none/.test(css) || !/\.pcb-flow \{[^}]*display: none; \}/.test(css)) fail("开机中只显示日志");
+if (!/\.pcb-flow \{[^}]*display: none; \}/.test(css)) fail("开机中不应有电流");
+// 重新打开不闪「已停止」：先渲染缓存状态，未确定前隐藏电源区
+if (!/class="shell nostate/.test(html) || !/localStorage/.test(main) || !/\.nostate/.test(css)) fail("重新打开不应闪「已停止」");
+// 组网页按隧道列表渲染（单条保持原样）；系统盘运行中置灰
+if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !/function renderVpn/.test(main)) fail("组网页应按列表渲染");
+const vt = L.vpnTunnels({ status: "up", addr: "10.8.0.5/24", routes_active: ["10.8.0.0/24", "192.168.50.0/24", "192.168.31.0/24"],
+  tunnels: [{ dev: "tun0", name: "home", status: "up", addr: "10.8.0.5/24", routes: ["10.8.0.0/24", "192.168.31.0/24"] }, { dev: "tun1", name: "office", status: "up", addr: "10.9.0.6/24", routes: ["192.168.50.0/24"] }] });
+eq(vt.map((t) => [t.name, t.addr, t.routes]), [["home", "10.8.0.5", ["10.8.0.0/24", "192.168.31.0/24"]], ["office", "10.9.0.6", ["192.168.50.0/24"]]], "vpnTunnels 多隧道");
+eq(L.vpnTunnels({ status: "up", addr: "10.8.0.5", routes_active: ["10.8.0.0/24"], tunnels: [] }).length, 1, "vpnTunnels 单条");
+const sl = L.splitLines({ ok: true, phone: { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 0 }, total: { up: 1024, down: 2048 } }, hotspot: { wan: { up: 0, down: 0 }, lan: { up: 0, down: 1024 }, total: { up: 0, down: 1024 } } });
+eq([sl.phone.total, sl.phone.wan, sl.hotspot.lan], ["↑1.0 KB ↓2.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB"], "splitLines");
+eq(L.splitLines({ ok: false }), null, "splitLines 失败");
+for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!html.includes(`id="${id}"`)) fail(`累计流量弹窗缺少 ${id}`);
+if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随启动阶段切换");
 // 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜；元素启动时一次建好
 const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
