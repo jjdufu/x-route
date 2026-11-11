@@ -20,40 +20,64 @@ routes_source() {
   scrape_ctl_routes | tr ' ' '\n'
 }
 
+# 默认路由 / redirect-gateway 的分半路由不同步（由运行模式处理）
+is_default_route() {
+  case "$1" in
+    default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) return 0 ;;
+  esac
+  return 1
+}
+
+is_ip6_cidr() { case "$1" in *:*) return 0 ;; *) return 1 ;; esac; }
+
 routes_valid() {
   up="$(cat "${RUN}/net.up_if" 2>/dev/null)"
-  busy="${XR_NET_PREFIX}.0/24 127.0.0.0/8 169.254.0.0/16"
+  busy="${XR_NET_PREFIX}.0/24 127.0.0.0/8 169.254.0.0/16 ${XR_NET6}::/64"
   for i in $up $(tether_ifaces); do
     busy="$busy $(ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')"
+    busy="$busy $(ip -6 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')"
   done
   n=0
   for c in $(routes_source | tr ', ' '\n'); do
-    case "$c" in
-      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
-    esac
-    valid_cidr "$c"   || { log_err vpn "格式错误 $c"; continue; }
-    cidr_aligned "$c" || { log_err vpn "主机位不为 0：$c"; continue; }
+    case "$c" in "") continue ;; esac
+    is_default_route "$c" && continue
+    nc="$(norm_route "$c")" || { log_err vpn "格式错误 $c"; continue; }
+    is_default_route "$nc" && continue
+    valid_cidr "$nc"   || { log_err vpn "格式错误 $c"; continue; }
+    cidr_aligned "$nc" || { log_err vpn "主机位不为 0：$c"; continue; }
     ok=1
-    for b in $busy; do cidr_overlap "$c" "$b" && { log_err vpn "$c 与 $b 重叠"; ok=0; break; }; done
+    for b in $busy; do
+      [ -n "$b" ] || continue
+      cidr_overlap "$nc" "$b" && { log_err vpn "$nc 与 $b 重叠"; ok=0; break; }
+    done
     [ $ok = 1 ] || continue
     n=$((n+1)); [ $n -le 64 ] || { log_err vpn "超过 64 条，其余忽略"; break; }
-    echo "$c"
+    echo "$nc"
   done | sort -u
 }
 
+route_via() { if is_ip6_cidr "$1"; then echo "${XR_NET6}::254"; else echo "${XR_NET_PREFIX}.254"; fi; }
+# $1=路由，其后为 ip 子命令；IPv6 走 ip -6
+ipx() {
+  _r="$1"; shift
+  if is_ip6_cidr "$_r"; then ip6 "$@"; else ip "$@"; fi
+}
+
 route_add() {
+  via="$(route_via "$1")"
   if [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = ndc ]; then
-    ndc network route add local xr0 "$1" "${XR_NET_PREFIX}.254" >/dev/null 2>&1
+    ndc network route add local xr0 "$1" "$via" >/dev/null 2>&1
   else
-    ip route replace "$1" via "${XR_NET_PREFIX}.254" dev xr0 table 97
+    ipx "$1" route replace "$1" via "$via" dev xr0 table 97
   fi
-  ip rule del pref 4801 to "$1" 2>/dev/null
-  ip rule add pref 4801 to "$1" lookup "$(lnt)"
+  ipx "$1" rule del pref 4801 to "$1" 2>/dev/null
+  ipx "$1" rule add pref 4801 to "$1" lookup "$(lnt)"
 }
 route_del() {
-  ndc network route remove local xr0 "$1" "${XR_NET_PREFIX}.254" >/dev/null 2>&1
-  ip route del "$1" table 97 2>/dev/null
-  ip rule del pref 4801 to "$1" 2>/dev/null
+  via="$(route_via "$1")"
+  ndc network route remove local xr0 "$1" "$via" >/dev/null 2>&1
+  ipx "$1" route del "$1" table 97 2>/dev/null
+  ipx "$1" rule del pref 4801 to "$1" 2>/dev/null
 }
 routes_sync() {
   load_config
@@ -65,7 +89,7 @@ routes_sync() {
 }
 routes_reassert() {
   for c in $(cat "${RUN}/routes.active" 2>/dev/null); do
-    ip route show table 97 2>/dev/null | grep -q "^$c via" || route_add "$c"
+    ipx "$c" route show table 97 2>/dev/null | grep -q "^$c via" || route_add "$c"
   done
 }
 routes_clear() {

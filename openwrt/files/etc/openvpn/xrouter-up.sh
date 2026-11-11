@@ -10,11 +10,14 @@ echo up > "$ST/openvpn.status"
 echo "${ifconfig_local:-}" > "$ST/openvpn.addr"
 echo "${dev}" > "$ST/openvpn.if"
 : > "$ST/openvpn.routes"
-ip -4 route show dev "$dev" 2>/dev/null | awk '{print $1}' | while read -r c; do
-  case "$c" in
-    ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
-    *) echo "$c" >> "$ST/openvpn.routes" ;;
-  esac
+# 上报实际生效的路由（含裸主机地址、IPv6）；主机侧再规范化并过滤默认路由
+for fam in -4 -6; do
+  ip $fam route show dev "$dev" 2>/dev/null | awk '{print $1}' | while read -r c; do
+    case "$c" in
+      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
+      *) echo "$c" >> "$ST/openvpn.routes" ;;
+    esac
+  done
 done
 if [ ! -d /var/run/xrouter ]; then
   routes="$(tr '\n' ' ' < "$ST/openvpn.routes")"

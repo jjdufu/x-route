@@ -36,6 +36,24 @@ ok cidr_aligned 192.168.50.0/24; no cidr_aligned 192.168.50.1/24; ok cidr_aligne
 ok cidr_overlap 192.168.0.0/16 192.168.50.0/24; no cidr_overlap 192.168.50.0/24 192.168.51.0/24
 ok cidr_overlap 172.29.233.0/24 172.16.0.0/12; no cidr_overlap 10.0.0.0/8 172.29.233.0/24
 
+# OpenVPN 路由规范化：裸主机、点分掩码、IPv6；非法项拒绝
+ok valid_cidr 10.58.88.2; ok valid_cidr 10.58.88.2/32; ok valid_cidr 10.8.0.0/24
+ok valid_cidr 8.8.8.0/24; ok valid_cidr 10.1.2.3/255.255.255.255
+[ "$(norm_route 10.58.88.2)" = "10.58.88.2/32" ] || { echo "FAIL: norm bare v4"; fail=1; }
+[ "$(norm_route 10.8.0.0/255.255.255.0)" = "10.8.0.0/24" ] || { echo "FAIL: norm mask"; fail=1; }
+ok valid_cidr 2001:db8::1; ok valid_cidr 2001:db8::1/128; ok valid_cidr 2001:db8:1::/64
+[ "$(norm_route 2001:db8::1)" = "2001:db8::1/128" ] || { echo "FAIL: norm bare v6"; fail=1; }
+[ "$(ip6_expand 2001:db8::1)" = "20010db8000000000000000000000001" ] || { echo "FAIL: ip6_expand"; fail=1; }
+[ "$(ip6_expand ::1)" = "00000000000000000000000000000001" ] || { echo "FAIL: ip6_expand ::1"; fail=1; }
+ok cidr_aligned 10.58.88.2; ok cidr_aligned 10.58.88.2/32; ok cidr_aligned 2001:db8::1
+ok cidr_aligned 2001:db8:1::/64; no cidr_aligned 2001:db8:1::1/64; no cidr_aligned 10.9.0.1/24
+ok cidr_overlap 10.58.88.2 10.58.88.0/24; no cidr_overlap 10.58.88.2 10.58.89.0/24
+ok cidr_overlap 2001:db8:1::/64 2001:db8:1::5/128; no cidr_overlap 2001:db8:1::/64 2001:db8:2::/64
+no cidr_overlap 10.58.88.2 2001:db8::1
+no valid_cidr bad; no valid_cidr 10.0.0.1/99; no valid_cidr 999.1.1.1; no valid_cidr gggg::1
+no valid_cidr 10.0.0.0/0; no valid_cidr 2001:db8::/129; no valid_cidr 2001:db8:::1
+no valid_cidr 10.8.0.0/255.0.255.0
+
 # set_kv：合法值写入，非法值不改文件
 ok set_kv XR_EXPOSE local; grep -qx 'XR_EXPOSE="local"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }
 h1="$(sha256sum "$CONF")"; no set_kv XR_EXPOSE bad; [ "$h1" = "$(sha256sum "$CONF")" ] || { echo "FAIL: set_kv modified on invalid"; fail=1; }

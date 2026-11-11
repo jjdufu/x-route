@@ -20,11 +20,13 @@ refresh_routes() {
   ip -4 -o addr show dev tun0 2>/dev/null | awk '{print $4}' | head -1 > "$ST/openvpn.addr"
   echo tun0 > "$ST/openvpn.if"
   : > "$ST/openvpn.routes"
-  ip -4 route show dev tun0 2>/dev/null | awk '{print $1}' | while read -r c; do
-    case "$c" in
-      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
-      *) echo "$c" >> "$ST/openvpn.routes" ;;
-    esac
+  for fam in -4 -6; do
+    ip $fam route show dev tun0 2>/dev/null | awk '{print $1}' | while read -r c; do
+      case "$c" in
+        ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
+        *) echo "$c" >> "$ST/openvpn.routes" ;;
+      esac
+    done
   done
 }
 

@@ -13,7 +13,9 @@ case "$*" in
   "-4 route show dev "*) cat "$MOCK/devrt.$5" 2>/dev/null ;;
   "route show dev "*) cat "$MOCK/devrt.$4" 2>/dev/null ;;
   "-4 -o addr show dev "*) cat "$MOCK/addr.$6" 2>/dev/null ;;
+  "-6 -o addr show dev "*) cat "$MOCK/addr6.$6" 2>/dev/null ;;
   "-6 rule"|"-6 rule show") cat "$MOCK/iprule6" 2>/dev/null ;;
+  "-6 route show table 97") cat "$MOCK/t97v6" 2>/dev/null ;;
   "-6 rule del"*) exit 1 ;;
   "-6 route show table "*" dev "*) cat "$MOCK/devrt6.$5.$7" 2>/dev/null ;;
   "-6 route show table "*) cat "$MOCK/rt6.$5" 2>/dev/null ;;

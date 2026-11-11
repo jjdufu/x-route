@@ -260,6 +260,7 @@ sync_all() {
   for i in $ex; do
     ${IPT} -A XR_FWD -i "$i" -o "${XR_IF}" -d "${NET}" -j ACCEPT
     for c in $(cat "${RUN}/routes.active" 2>/dev/null); do
+      case "$c" in *:*) continue ;; esac
       ${IPT} -A XR_FWD -i "$i" -o "${XR_IF}" -d "$c" -j ACCEPT
     done
   done
@@ -294,7 +295,12 @@ sync_v6() {
   if vm_v6; then   # 虚拟机自身 IPv6 出网（旁路模式同样可用）
     for o in $outs6; do ${IP6T} -A XR_FWD6 -i "${XR_IF}" -o "$o" -j ACCEPT; done
   fi
-  for i in $ex; do ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -d "${NET6}" -j ACCEPT; done
+  for i in $ex; do
+    ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -d "${NET6}" -j ACCEPT
+    for c in $(cat "${RUN}/routes.active" 2>/dev/null); do
+      case "$c" in *:*) ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -d "$c" -j ACCEPT ;; esac
+    done
+  done
   for o in $outs6; do
     case " $ex " in *" $o "*) ;; *) ${IP6T} -A XR_FWD6 -i "$o" -o "${XR_IF}" -j DROP ;; esac
   done

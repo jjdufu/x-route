@@ -17,7 +17,9 @@ echo "192.168.43.0/24 dev wlan1 proto static scope link" > "$MOCK/lnroutes"
 echo "30: wlan1    inet 192.168.43.1/24 brd 192.168.43.255 scope global wlan1" > "$MOCK/addr.wlan1"
 # 客侧上报的实际路由（含非法项，由运行时过滤）；默认路由应被忽略
 mkdir -p "$RUN/guest/guest"
-printf '%s\n' "10.8.0.0/24" "192.168.43.0/25" "8.8.8.0/24" "10.9.0.1/24" "bad" "172.29.233.0/24" "0.0.0.0/0" "0.0.0.0/1" "128.0.0.0/1" > "$RUN/guest/guest/openvpn.routes"
+printf '%s\n' "10.8.0.0/24" "192.168.43.0/25" "8.8.8.0/24" "10.9.0.1/24" "bad" "172.29.233.0/24" "0.0.0.0/0" "0.0.0.0/1" "128.0.0.0/1" \
+  "10.58.88.2" "10.1.2.3/32" "10.8.0.0/255.255.255.0" "2001:db8:10::/64" "2001:db8::5" "::/0" "::/1" "8000::/1" \
+  "not-a-route" "gggg::1" "10.0.0.1/99" "fd7a:7872:e9::/64" "2001:db8:10::1/64" > "$RUN/guest/guest/openvpn.routes"
 
 # 1. up（ndc 可用，热点暴露，蜂窝上游）
 $NET up; chk '[ $? -eq 0 ]'
@@ -28,9 +30,16 @@ chk 'grep -q "^ndc ipfwd enable xrouter" "$MOCK/calls" && grep -q "^ndc ipfwd ad
 chk '[ -f "$MOCK/fwd_hook" ] && [ -f "$MOCK/nat_hook" ]'
 chk 'grep -qx -- "-s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE" "$MOCK/XR_NAT"'
 chk 'grep -q "10.8.0.0/24" "$RUN/routes.active" && grep -q "8.8.8.0/24" "$RUN/routes.active" && ! grep -q "0.0.0.0" "$RUN/routes.active"'
+chk 'grep -qx "10.58.88.2/32" "$RUN/routes.active" && grep -qx "10.1.2.3/32" "$RUN/routes.active"'
+chk 'grep -qx "2001:db8:10::/64" "$RUN/routes.active" && grep -qx "2001:db8::5/128" "$RUN/routes.active"'
+chk '! grep -q "fd7a:7872:e9" "$RUN/routes.active" && ! grep -q "::/0" "$RUN/routes.active"'
 chk 'grep -q "^ndc network route add local xr0 10.8.0.0/24 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule add pref 4801 to 10.8.0.0/24 lookup local_network" "$MOCK/calls"'
 chk 'grep -q "^ndc network route add local xr0 8.8.8.0/24 172.29.233.254" "$MOCK/calls"'
-chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 4'
+chk 'grep -q "^ndc network route add local xr0 10.58.88.2/32 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule add pref 4801 to 10.58.88.2/32 lookup local_network" "$MOCK/calls"'
+chk 'grep -q "^ndc network route add local xr0 2001:db8:10::/64 fd7a:7872:e9::254" "$MOCK/calls"'
+chk 'grep -q "^ip -6 rule add pref 4801 to 2001:db8:10::/64 lookup local_network" "$MOCK/calls"'
+chk 'grep -q "^ndc network route add local xr0 2001:db8::5/128 fd7a:7872:e9::254" "$MOCK/calls"'
+chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 9'
 chk 'grep -q "192.168.43.0/25 与 192.168.43.1/24 重叠" "$LOG"'
 # 蜂窝上游 = WAN：出站放行、回包放行、入站丢弃（与 Wi-Fi 上游规则相同）
 chk 'grep -qx -- "-i xr0 -o rmnet_data2 -j ACCEPT" "$FWD" && grep -qx -- "-i rmnet_data2 -o xr0 -j DROP" "$FWD"'
@@ -38,6 +47,8 @@ chk '! grep -q -- "-i rmnet+" "$FWD"'
 chk '[ "$(sed -n 1p "$FWD")" = "-o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ] && [ "$(sed -n 2p "$FWD")" = "-i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ]'
 chk '[ "$(sed -n 3p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 8.8.8.0/24 -j ACCEPT" "$FWD"'
+chk 'grep -qx -- "-i wlan1 -o xr0 -d 10.58.88.2/32 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.1.2.3/32 -j ACCEPT" "$FWD"'
+chk 'grep -qx -- "-i wlan1 -o xr0 -d 2001:db8:10::/64 -j ACCEPT" "$MOCK/XR_FWD6" && grep -qx -- "-i wlan1 -o xr0 -d 2001:db8::5/128 -j ACCEPT" "$MOCK/XR_FWD6"'
 chk '[ "$(tail -2 "$FWD" | tr "\n" "|")" = "-o xr0 -j DROP|-i xr0 -j DROP|" ]'
 chk '$NET status | grep -q "\"mode\":\"ndc\",\"up_if\":\"rmnet_data2\",\"expose\":\"lan\",\"expose_if\":\[\"wlan1\"\]"'
 # 默认全局，但 VM 未就绪：不得安装接管规则，以免把手机上网搞断

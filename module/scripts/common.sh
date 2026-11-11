@@ -76,6 +76,120 @@ valid_ip4() {
   o="$1"; for _ in 1 2 3 4; do v="${o%%.*}"; [ "$v" -le 255 ] || return 1; o="${o#*.}"; done
 }
 
+# IPv4 点分掩码 -> 前缀长度；非连续掩码返回失败
+mask2len() {
+  valid_ip4 "$1" || return 1
+  _m=$(( $(ip2int "$1") & 0xFFFFFFFF ))
+  _p=0
+  while [ "$_p" -le 32 ]; do
+    [ $(( $(prefix_mask "$_p") & 0xFFFFFFFF )) -eq "$_m" ] && { echo "$_p"; return 0; }
+    _p=$((_p+1))
+  done
+  return 1
+}
+
+# 把 IPv6 地址展开为 32 位小写十六进制（不含冒号）。不合法则返回 1。
+ip6_expand() {
+  printf '%s' "$1" | awk '
+  function collect(s, arr,    n, t, i) {
+    if (s == "") return 0
+    n = split(s, t, /:/)
+    for (i = 1; i <= n; i++) {
+      if (t[i] == "" || length(t[i]) > 4 || t[i] !~ /^[0-9a-f]+$/) return -1
+      arr[i] = t[i]
+      while (length(arr[i]) < 4) arr[i] = "0" arr[i]
+    }
+    return n
+  }
+  {
+    s = tolower($0)
+    if (s == "" || s ~ /[^0-9a-f:]/) exit 1
+    n = split(s, parts, /::/)
+    if (n > 2) exit 1
+    if (n == 1) {
+      if (s ~ /^:/ || s ~ /:$/) exit 1
+      ng = collect(s, g)
+      if (ng != 8) exit 1
+    } else {
+      lg = collect(parts[1], left)
+      rg = collect(parts[2], right)
+      if (lg < 0 || rg < 0) exit 1
+      miss = 8 - lg - rg
+      if (miss < 1) exit 1
+      ng = 0
+      for (i = 1; i <= lg; i++) g[++ng] = left[i]
+      for (i = 1; i <= miss; i++) g[++ng] = "0000"
+      for (i = 1; i <= rg; i++) g[++ng] = right[i]
+    }
+    out = ""
+    for (i = 1; i <= 8; i++) out = out g[i]
+    print out
+  }'
+}
+
+# $1=32 位十六进制 $2=前缀长度 -> 主机位置零后的 32 位十六进制
+ip6_mask() {
+  _h="$1"; _p="$2"
+  [ "${#_h}" -eq 32 ] || return 1
+  is_uint "$_p" && [ "$_p" -ge 0 ] && [ "$_p" -le 128 ] || return 1
+  _fn=$((_p / 4)); _rem=$((_p % 4))
+  if [ "$_fn" -gt 0 ]; then _out="$(printf '%s' "$_h" | cut -c1-"$_fn")"; else _out=""; fi
+  if [ "$_fn" -lt 32 ]; then
+    if [ "$_rem" -gt 0 ]; then
+      _nib="$(printf '%s' "$_h" | cut -c$((_fn + 1)))"
+      case "$_nib" in
+        a|A) _val=10 ;; b|B) _val=11 ;; c|C) _val=12 ;; d|D) _val=13 ;; e|E) _val=14 ;; f|F) _val=15 ;;
+        [0-9]) _val="$_nib" ;; *) return 1 ;;
+      esac
+      case "$_rem" in 1) _mod=8 ;; 2) _mod=4 ;; 3) _mod=2 ;; esac
+      _val=$((_val - (_val % _mod)))
+      _out="${_out}$(printf '%x' "$_val")"
+      _z=$((32 - _fn - 1))
+    else
+      _z=$((32 - _fn))
+    fi
+    while [ "$_z" -gt 0 ]; do _out="${_out}0"; _z=$((_z - 1)); done
+  fi
+  echo "$_out"
+}
+
+# 把 OpenVPN 上报的路由规范成 CIDR：裸 IPv4 -> /32，裸 IPv6 -> /128，点分掩码换成前缀长度
+norm_route() {
+  _t="$1"
+  case "$_t" in ""|default) return 1 ;; esac
+  case "$_t" in
+    *.*.*.*/*.*.*.*)
+      _a="${_t%/*}"; _m="${_t#*/}"
+      valid_ip4 "$_a" || return 1
+      _p="$(mask2len "$_m")" || return 1
+      [ "$_p" -ge 1 ] && [ "$_p" -le 32 ] || return 1
+      echo "$_a/$_p"; return 0
+      ;;
+  esac
+  if valid_ip4 "$_t"; then echo "$_t/32"; return 0; fi
+  case "$_t" in
+    *.*.*.*/*)
+      echo "$_t" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$' && valid_ip4 "${_t%/*}" && { echo "$_t"; return 0; }
+      return 1
+      ;;
+    *:*)
+      case "$_t" in
+        */*)
+          _a="${_t%/*}"; _p="${_t#*/}"
+          [ "$_a" != "$_t" ] && is_uint "$_p" && [ "$_p" -ge 1 ] && [ "$_p" -le 128 ] || return 1
+          ip6_expand "$_a" >/dev/null || return 1
+          echo "$_t"; return 0
+          ;;
+        *)
+          ip6_expand "$_t" >/dev/null || return 1
+          echo "$_t/128"; return 0
+          ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
 valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
   case "$1" in
     XR_NET_PREFIX)
@@ -140,7 +254,17 @@ ip2int() { _o="$1"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"; _o="${_o#*.}"
   echo $(( (_a<<24) | (_b<<16) | (_c<<8) | _d )); }
 prefix_mask() { [ "$1" -eq 0 ] && { echo 0; return; }; echo $(( (0xFFFFFFFF << (32-$1)) & 0xFFFFFFFF )); }
 valid_cidr() {
-  echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/([89]|[12][0-9]|3[0-2])$' && valid_ip4 "${1%/*}"
+  # 接受规范 CIDR，以及裸主机地址、IPv4 点分掩码（先经 norm_route）
+  _c="$(norm_route "$1")" || return 1
+  case "$_c" in
+    *:*)
+      _p="${_c#*/}"
+      is_uint "$_p" && [ "$_p" -ge 1 ] && [ "$_p" -le 128 ]
+      ;;
+    *)
+      echo "$_c" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$' && valid_ip4 "${_c%/*}"
+      ;;
+  esac
 }
 cidr_private() { # 10/8 172.16/12 192.168/16 100.64/10（按网络地址判断，前缀不得比所在私网段更宽）
   _o="${1%/*}"; _p="${1#*/}"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"
@@ -150,10 +274,36 @@ cidr_private() { # 10/8 172.16/12 192.168/16 100.64/10（按网络地址判断�
   elif [ "$_a" -eq 100 ] && [ "$_b" -ge 64 ] && [ "$_b" -le 127 ]; then [ "$_p" -ge 10 ]
   else return 1; fi
 }
-cidr_aligned() { _n="$(ip2int "${1%/*}")"; _m="$(prefix_mask "${1#*/}")"; [ $(( _n & _m )) -eq $(( _n & 0xFFFFFFFF )) ]; }
-cidr_overlap() { # $1 $2 两个 CIDR 是否重叠
-  _x="$(ip2int "${1%/*}")"; _pa="${1#*/}"; _y="$(ip2int "${2%/*}")"; _pb="${2#*/}"
-  if [ "$_pa" -lt "$_pb" ]; then _p="$_pa"; else _p="$_pb"; fi
-  _m="$(prefix_mask "$_p")"
-  [ $(( _x & _m )) -eq $(( _y & _m )) ]
+cidr_aligned() {
+  _c="$(norm_route "$1")" || return 1
+  case "$_c" in
+    *:*)
+      _h="$(ip6_expand "${_c%/*}")" || return 1
+      _z="$(ip6_mask "$_h" "${_c#*/}")" || return 1
+      [ "$_h" = "$_z" ]
+      ;;
+    *)
+      _n="$(ip2int "${_c%/*}")"; _m="$(prefix_mask "${_c#*/}")"
+      [ $(( _n & _m )) -eq $(( _n & 0xFFFFFFFF )) ]
+      ;;
+  esac
+}
+cidr_overlap() { # $1 $2 两个 CIDR 是否重叠（不同协议视为不重叠）
+  _ca="$(norm_route "$1")" || return 1
+  _cb="$(norm_route "$2")" || return 1
+  case "$_ca" in *:*) _va=6 ;; *) _va=4 ;; esac
+  case "$_cb" in *:*) _vb=6 ;; *) _vb=4 ;; esac
+  [ "$_va" = "$_vb" ] || return 1
+  if [ "$_va" = 4 ]; then
+    _x="$(ip2int "${_ca%/*}")"; _pa="${_ca#*/}"; _y="$(ip2int "${_cb%/*}")"; _pb="${_cb#*/}"
+    if [ "$_pa" -lt "$_pb" ]; then _p="$_pa"; else _p="$_pb"; fi
+    _m="$(prefix_mask "$_p")"
+    [ $(( _x & _m )) -eq $(( _y & _m )) ]
+  else
+    _x="$(ip6_expand "${_ca%/*}")" || return 1
+    _y="$(ip6_expand "${_cb%/*}")" || return 1
+    _pa="${_ca#*/}"; _pb="${_cb#*/}"
+    if [ "$_pa" -lt "$_pb" ]; then _p="$_pa"; else _p="$_pb"; fi
+    [ "$(ip6_mask "$_x" "$_p")" = "$(ip6_mask "$_y" "$_p")" ]
+  fi
 }

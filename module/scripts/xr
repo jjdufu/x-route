@@ -45,9 +45,13 @@ vpn_rejected() {
   [ -f "$gf" ] || return 0
   for c in $(tr ', ' '\n' < "$gf"); do
     case "$c" in
-      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1) continue ;;
+      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
     esac
-    echo "$act" | grep -qx "$c" || echo "$c"
+    nc="$(norm_route "$c" 2>/dev/null)" || { echo "$c"; continue; }
+    case "$nc" in
+      0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
+    esac
+    echo "$act" | grep -qx "$nc" || echo "$nc"
   done
 }
 
