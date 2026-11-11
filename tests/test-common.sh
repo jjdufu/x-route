@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 XR_DATA="$T/data"; MODDIR="$ROOT/module"; export XR_DATA MODDIR
 . "$ROOT/module/scripts/common.sh"
+. "$ROOT/module/scripts/v6.sh"
 ensure_dirs; cp "$ROOT/module/config/config.conf" "$CONF"
 fail=0
 ok()  { if "$@"; then :; else echo "FAIL: $*"; fail=1; fi; }
@@ -53,6 +54,16 @@ no cidr_overlap 10.58.88.2 2001:db8::1
 no valid_cidr bad; no valid_cidr 10.0.0.1/99; no valid_cidr 999.1.1.1; no valid_cidr gggg::1
 no valid_cidr 10.0.0.0/0; no valid_cidr 2001:db8::/129; no valid_cidr 2001:db8:::1
 no valid_cidr 10.8.0.0/255.0.255.0
+
+# IPv6 前缀共享：EUI-64 与选址（避开已占用地址）
+[ "$(mac_eui64 52:54:00:1d:e9:fe)" = "505400fffe1de9fe" ] || { echo "FAIL: mac_eui64"; fail=1; }
+[ "$(v6_compose 2409:8a00:1:2::/64 505400fffe1de9fe)" = "2409:8a00:0001:0002:5054:00ff:fe1d:e9fe" ] || { echo "FAIL: v6_compose"; fail=1; }
+_pick="$(v6_pick_addr 2409:8a00:1:2::/64 "2409:8a00:1:2:1111:2222:3333:4444/64" 52:54:00:1d:e9:fe)"
+[ "$_pick" = "2409:8a00:0001:0002:5054:00ff:fe1d:e9fe/64" ] || { echo "FAIL: v6_pick_addr $_pick"; fail=1; }
+_busy="2409:8a00:0001:0002:5054:00ff:fe1d:e9fe/64"
+_pick="$(v6_pick_addr 2409:8a00:1:2::/64 "$_busy" 52:54:00:1d:e9:fe)"
+[ "$_pick" = "2409:8a00:0001:0002:7872:00e9:0000:0254/64" ] || { echo "FAIL: v6_pick_addr fallback $_pick"; fail=1; }
+v6_is_ll fe80::1 && ! v6_is_ll 2409:8a00:1:2::1 && v6_is_ula fd7a:7872:e9::1 && ! v6_is_ula 2409:8a00:1:2::1 || { echo "FAIL: v6_is_ll/ula"; fail=1; }
 
 # set_kv：合法值写入，非法值不改文件
 ok set_kv XR_EXPOSE local; grep -qx 'XR_EXPOSE="local"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }

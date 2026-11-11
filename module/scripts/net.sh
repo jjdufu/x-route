@@ -5,11 +5,13 @@
 #   up    创建 xr0、登记 netd 本地网络、打开转发、建 XR_FWD/XR_NAT，并在后台启动 watch
 #   down  逆序撤销全部改动（每一步都容错）
 #   sync  按当前上游 / XR_EXPOSE / VPN 路由 / 虚拟机 IPv6 状态重建规则（幂等）
-# IPv6 与 IPv4 同构：xr0 上 ${XR_NET6}::1/64（手机）与 ::254（虚拟机），同样的 pref 与表号（ip -6）。
+# IPv6：xr0 上 ${XR_NET6}::1/64（手机）与 ::254（虚拟机）用于本机通信；出网不走 NAT66，
+# 而从上游委托前缀中取地址交给虚拟机，手机做 ND 代理并转发。无 ip6tables nat 也能工作。
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/vpnroutes.sh"
+. "${MODDIR}/scripts/v6.sh"
 load_config
 
 XR_IF=xr0
@@ -60,9 +62,10 @@ fwd6_first() {
   while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
   ${IP6T} -I FORWARD 1 -j XR_FWD6
 }
+# 不再使用 ip6tables nat / NAT66；保留函数名以免旧调用报错，并顺手拆掉残留挂钩
 nat6_first() {
-  [ -f "${RUN}/net.nat6" ] || return 0
-  ${IP6T} -t nat -C POSTROUTING -j XR_NAT6 2>/dev/null || ${IP6T} -t nat -I POSTROUTING 1 -j XR_NAT6
+  while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
+  return 0
 }
 
 net_up() {
@@ -100,13 +103,15 @@ net_up() {
   # 3. 链
   ${IPT} -N XR_FWD 2>/dev/null; ${IPT} -t nat -N XR_NAT 2>/dev/null
   fwd_first; nat_first
-  ${IP6T} -N XR_FWD6 2>/dev/null; fwd6_first
-  # 手机侧 NAT66：内核无 ip6tables nat 时，虚拟机 IPv6 视为不可用（全局模式下仅拦截）
-  if ${IP6T} -t nat -N XR_NAT6 2>/dev/null || ${IP6T} -t nat -S XR_NAT6 >/dev/null 2>&1; then
-    : > "${RUN}/net.nat6"; nat6_first
+  rm -f "${RUN}/net.nat6"   # 旧版残留，IPv6 出网改为邻居代理，不再依赖 nat 表
+  if ${IP6T} -N XR_FWD6 2>/dev/null || ${IP6T} -S XR_FWD6 >/dev/null 2>&1; then
+    : > "${RUN}/net.fwd6"; fwd6_first
+  elif v6_nft_setup; then
+    log_info net "ip6tables filter 不可用，IPv6 转发改用 nft"
   else
-    rm -f "${RUN}/net.nat6"; log_err net "ip6tables nat 不可用，IPv6 无法经虚拟机出网"
+    log_err net "ip6tables filter 与 nft 均不可用，IPv6 仅靠路由表拦截旁路"
   fi
+  nat6_first
   rm -f "${RUN}/net.up_if"
   sync_all
   nohup sh "${MODDIR}/scripts/net.sh" watch >/dev/null 2>&1 &
@@ -159,7 +164,7 @@ vm_v6() { [ "$(cat "${RUN}/guest/guest/ipv6" 2>/dev/null)" = 1 ]; }
 # 全局接管状态：off 不接管；v6 IPv4/IPv6 都进虚拟机；block IPv4 进虚拟机、IPv6 直接拒绝（应用立刻回落 IPv4）
 gw_want() {
   if ! want_gateway; then echo off
-  elif vm_v6 && [ -f "${RUN}/net.nat6" ]; then echo v6
+  elif vm_v6 && [ -f "${RUN}/net.v6proxy" ]; then echo v6
   else echo block; fi
 }
 
@@ -277,17 +282,14 @@ sync_all() {
   ${IPT} -A XR_FWD -o "${XR_IF}" -j DROP
   ${IPT} -A XR_FWD -i "${XR_IF}" -j DROP
   fwd_first
+  v6_proxy_sync
   g="$(gw_want)"
   sync_v6 "$g"
   if [ "$g" = off ]; then gw_remove; else gw_install "$g"; fi
 }
 
-# IPv6 转发与 NAT66：与 IPv4 同构；VM_v6 关闭时热点 IPv6 也不绕过虚拟机（全局下被拒绝）
+# IPv6 转发（filter / nft）：开关关闭时热点 IPv6 也不绕过虚拟机（全局下被拒绝）
 sync_v6() {
-  if [ -f "${RUN}/net.nat6" ]; then
-    ${IP6T} -t nat -F XR_NAT6
-    for o in $outs6; do ${IP6T} -t nat -A XR_NAT6 -s "${NET6}" -o "$o" -j MASQUERADE; done
-  fi
   echo "$outs6" > "${RUN}/net.up_out6"; { vm_v6 && echo 1; } > "${RUN}/net.v6"
   ${IP6T} -F XR_FWD6
   ${IP6T} -A XR_FWD6 -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -316,6 +318,7 @@ sync_v6() {
   ${IP6T} -A XR_FWD6 -o "${XR_IF}" -j DROP
   ${IP6T} -A XR_FWD6 -i "${XR_IF}" -j DROP
   fwd6_first
+  v6_nft_sync "$1"
 }
 
 net_watch() {
@@ -329,6 +332,7 @@ net_watch() {
        || [ "$ex" != "$(cat "${RUN}/net.expose_if" 2>/dev/null)" ] \
        || [ "$want_gw" != "$have_gw" ] || [ "$(upstream_out6 "$up")" != "$(cat "${RUN}/net.up_out6" 2>/dev/null)" ] \
        || [ "$(vm_v6 && echo 1)" != "$(cat "${RUN}/net.v6" 2>/dev/null)" ] \
+       || [ "$(v6_src_fingerprint)" != "$(cat "${RUN}/net.v6src" 2>/dev/null)" ] \
        || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
     fwd_first; nat_first; fwd6_first; nat6_first
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
@@ -347,6 +351,8 @@ net_watch() {
 
 net_down() {
   w="$(cat "${RUN}/net_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
+  v6_proxy_remove
+  v6_nft_teardown
   gw_remove
   routes_clear
   while ${IPT} -D FORWARD -j XR_FWD 2>/dev/null; do :; done

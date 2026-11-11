@@ -63,7 +63,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""
+  last=""; last6=""; lastwan=""
   while :; do
     [ -d "$CTL" ] || exit 0
     cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
@@ -75,6 +75,11 @@ watch() {
     if [ -n "$c6" ] && [ "$c6" != "$last6" ]; then
       last6="$c6"
       /usr/libexec/xrouter-ipv6 "${c6%% *}"
+    fi
+    wan="$(cat "${CTL}/host/ipv6.wan" 2>/dev/null)"
+    if [ "$wan" != "$lastwan" ]; then
+      lastwan="$wan"
+      /usr/libexec/xrouter-ipv6 wan
     fi
     /usr/libexec/xrouter-ipv6 state > "${CTL}/guest/ipv6.tmp" && mv -f "${CTL}/guest/ipv6.tmp" "${CTL}/guest/ipv6"
     refresh_routes

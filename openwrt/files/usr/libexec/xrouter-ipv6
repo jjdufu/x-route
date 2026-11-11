@@ -1,11 +1,58 @@
 #!/bin/sh
-# XRouter: 虚拟机 IPv6 开关（由 xrouter-vpn 控制循环按手机侧 ipv6.cmd 调用）
+# XRouter: 虚拟机 IPv6 开关与 WAN 地址（由 xrouter-vpn 按手机侧 ipv6.cmd / ipv6.wan 调用）
 #   xrouter-ipv6 on|off   修改 network.xr_eth0.ipv6 并立即生效（不重启虚拟机）
+#   xrouter-ipv6 wan      按 host/ipv6.wan 给 eth0 加上游前缀中的地址，并把单臂 IPv6 改为 SNAT 到该地址
 #   xrouter-ipv6 state    输出实际状态 1/0（以内核 eth0 的 disable_ipv6 为准）
 DEV=eth0
+CTL=/var/run/xrouter
+WAN_STATE=/tmp/xrouter.ipv6.wan
+ULA_NET="fd7a:7872:e9::/64"
+
 state() {
   [ "$(cat /proc/sys/net/ipv6/conf/${DEV}/disable_ipv6 2>/dev/null)" = 0 ] && echo 1 || echo 0
 }
+
+lan_net6() {
+  n="$(uci -q get network.lan.ip6addr | awk '{print $1}')"
+  [ -n "$n" ] && echo "${n%%::*}::/64" || echo "$ULA_NET"
+}
+
+write_onelink_ip6() {
+  # $1=可选全局地址（无前缀）。无则保留伪装，有则 SNAT 到该地址（不依赖手机侧 NAT66）
+  net4="$(uci -q get network.lan.ipaddr)"
+  net4="${net4%.*}.0/24"
+  net6="$(lan_net6)"
+  mkdir -p /etc/nftables.d
+  {
+    echo "chain xrouter_onelink {"
+    echo "  type nat hook postrouting priority 110;"
+    echo "  oifname \"eth0\" ip daddr != ${net4} masquerade"
+    if [ -n "$1" ]; then
+      echo "  oifname \"eth0\" ip6 daddr != ${net6} snat to $1"
+    else
+      echo "  oifname \"eth0\" ip6 daddr != ${net6} masquerade"
+    fi
+    echo "}"
+  } > /etc/nftables.d/xrouter-onelink.nft
+  /etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+apply_wan() {
+  want="$(tr -d ' \t\r\n' < "${CTL}/host/ipv6.wan" 2>/dev/null)"
+  old="$(cat "$WAN_STATE" 2>/dev/null)"
+  if [ -n "$old" ] && [ "$old" != "$want" ]; then
+    ip -6 addr del "$old" dev "$DEV" 2>/dev/null
+    : > "$WAN_STATE"
+  fi
+  if [ "$(state)" != 1 ] || [ -z "$want" ]; then
+    write_onelink_ip6 ""
+    return 0
+  fi
+  ip -6 addr show dev "$DEV" 2>/dev/null | grep -q " ${want%/*}" || ip -6 addr add "$want" dev "$DEV" nodad 2>/dev/null
+  echo "$want" > "$WAN_STATE"
+  write_onelink_ip6 "${want%/*}"
+}
+
 apply() {
   v="$1"
   uci -q get network.xr_eth0 >/dev/null || { uci -q set network.xr_eth0=device; uci -q set network.xr_eth0.name="${DEV}"; }
@@ -16,12 +63,15 @@ apply() {
   if [ "$v" = 1 ]; then d=0; else d=1; fi
   echo "$d" > "/proc/sys/net/ipv6/conf/${DEV}/disable_ipv6" 2>/dev/null
   [ "$v" = 1 ] && ifup lan >/dev/null 2>&1
+  apply_wan
   /etc/init.d/firewall reload >/dev/null 2>&1
   return 0
 }
+
 case "$1" in
   on) apply 1 ;;
   off) apply 0 ;;
+  wan) apply_wan ;;
   state) state ;;
-  *) echo "usage: xrouter-ipv6 on|off|state"; exit 2 ;;
+  *) echo "usage: xrouter-ipv6 on|off|wan|state"; exit 2 ;;
 esac

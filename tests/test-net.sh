@@ -138,37 +138,52 @@ chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|
 chk '! grep -q "^ip -6 rule add pref 19100" "$MOCK/calls" && ! grep -q -- "REJECT" "$MOCK/XR_FWD6"'
 $NET down
 
-# 7. IPv6 真全局：客侧上报 IPv6 已开 -> 本机与热点 IPv6 经 ::254，NAT66 出上游；关掉后恢复拒绝
+# 7. IPv6 经邻居代理出网：客侧打开后从上游前缀取地址，不依赖 ip6tables nat；关掉后恢复拒绝
 set_kv XR_MODE global; set_kv XR_EXPOSE lan
 echo "default via fe80::1 dev rmnet_data2 proto ra metric 1024 pref medium" > "$MOCK/rt6.rmnet_data2"
 echo "2409:8a00:1:2::/64 proto kernel metric 256 expires 7000sec pref medium" > "$MOCK/devrt6.main.rmnet_data2"
 echo "2409:8a00:1:3::/64 proto static metric 1024 pref medium" > "$MOCK/devrt6.local_network.wlan1"
+printf '%s\n' "2: rmnet_data2    inet6 fe80::abcd/64 scope link" "2: rmnet_data2    inet6 2409:8a00:1:2:1111:2222:3333:4444/64 scope global" > "$MOCK/addr6.rmnet_data2"
 mkdir -p "$T/sysnet/xr0"; echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"; echo 1 > "$RUN/guest/guest/ipv6"
 : > "$MOCK/calls"; $NET up
+WAN="2409:8a00:0001:0002:5054:00ff:fe1d:e9fe"
 chk 'grep -q "^ip -6 addr add fd7a:7872:e9::1/64 dev xr0 nodad" "$MOCK/calls" && [ "$(cat "$T/proc/sys/net/ipv6/conf/xr0/disable_ipv6")" = 0 ]'
 chk 'grep -q "^ndc network route add local xr0 fd7a:7872:e9::/64" "$MOCK/calls" && grep -q "^ip -6 rule add pref 4800 to fd7a:7872:e9::/64 lookup local_network" "$MOCK/calls"'
 chk 'grep -q "^ip -6 rule add pref 18800 iif xr0 lookup local_network" "$MOCK/calls" && grep -q "^ip -6 rule add pref 18900 iif xr0 lookup rmnet_data2" "$MOCK/calls"'
 chk 'grep -q "^ip -6 route replace default via fd7a:7872:e9::254 dev xr0 src fd7a:7872:e9::1 table 233" "$MOCK/calls" && grep -q "^ip -6 rule add pref 19100 lookup 233" "$MOCK/calls"'
 chk 'grep -q "^ip -6 route replace 2409:8a00:1:2::/64 proto kernel metric 256 pref medium dev rmnet_data2 table 233" "$MOCK/calls"'
 chk 'grep -q "^ip -6 route replace 2409:8a00:1:3::/64 proto static metric 1024 pref medium dev wlan1 table 233" "$MOCK/calls"'
-chk '[ "$(cat "$RUN/net.gw")" = v6 ] && [ -f "$MOCK/fwd6_hook" ] && [ -f "$MOCK/nat6_hook" ]'
-chk 'grep -qx -- "-s fd7a:7872:e9::/64 -o rmnet_data2 -j MASQUERADE" "$MOCK/XR_NAT6"'
+chk '[ "$(cat "$RUN/net.gw")" = v6 ] && [ -f "$MOCK/fwd6_hook" ] && [ -f "$RUN/net.v6proxy" ] && [ ! -f "$RUN/net.nat6" ]'
+chk '[ "$(cat "$T/proc/sys/net/ipv6/conf/rmnet_data2/proxy_ndp")" = 1 ] && [ "$(cat "$T/proc/sys/net/ipv6/conf/all/forwarding")" = 1 ]'
+chk 'grep -q "^ip -6 neigh replace proxy $WAN dev rmnet_data2" "$MOCK/calls"'
+chk 'grep -q "^ip -6 route replace $WAN/128 dev xr0" "$MOCK/calls"'
+chk '[ "$(cat "$RUN/guest/host/ipv6.wan")" = "$WAN/64" ] && grep -q "IPv6 邻居代理" "$LOG"'
+chk '! grep -qE "^ip6tables .*?-t nat -[AN]" "$MOCK/calls" && [ ! -f "$MOCK/XR_NAT6" -o ! -s "$MOCK/XR_NAT6" ]'
 chk 'grep -qx -- "-i xr0 -o rmnet_data2 -j ACCEPT" "$MOCK/XR_FWD6" && grep -qx -- "-i wlan1 -o xr0 -j ACCEPT" "$MOCK/XR_FWD6" && grep -qx -- "-i xr0 -o wlan1 -j ACCEPT" "$MOCK/XR_FWD6"'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d fd7a:7872:e9::/64 -j ACCEPT" "$MOCK/XR_FWD6" && grep -qx -- "-i rmnet_data2 -o xr0 -j DROP" "$MOCK/XR_FWD6"'
 chk '[ "$(tail -2 "$MOCK/XR_FWD6" | tr "\n" "|")" = "-o xr0 -j DROP|-i xr0 -j DROP|" ]'
 chk '$NET status | grep -q "\"gw\":\"v6\""'
-# 客侧关闭 IPv6 -> 拒绝
+# 客侧关闭 IPv6（不重启虚拟机）-> 拆除代理并拒绝旁路
 echo 0 > "$RUN/guest/guest/ipv6"; : > "$MOCK/calls"; $NET sync
-chk '[ "$(cat "$RUN/net.gw")" = block ] && grep -q "^ip -6 route replace unreachable default table 233" "$MOCK/calls"'
+chk '[ "$(cat "$RUN/net.gw")" = block ] && [ ! -f "$RUN/net.v6proxy" ] && grep -q "^ip -6 route replace unreachable default table 233" "$MOCK/calls"'
 chk '! grep -q "default via fd7a:7872:e9::254" "$MOCK/calls" && ! grep -qx -- "-i wlan1 -o xr0 -j ACCEPT" "$MOCK/XR_FWD6"'
-# 内核无 ip6 nat：即使客侧开了 IPv6 也只拒绝，不进虚拟机
+chk 'grep -q "^ip -6 neigh del proxy $WAN dev rmnet_data2" "$MOCK/calls" && [ "$(cat "$T/proc/sys/net/ipv6/conf/rmnet_data2/proxy_ndp")" = 0 ]'
+chk '[ ! -s "$RUN/guest/host/ipv6.wan" ]'
+# 内核无 ip6 nat 时，只要有可共享前缀，仍走邻居代理
 $NET down; echo 1 > "$RUN/guest/guest/ipv6"; mkdir -p "$T/sysnet/xr0"; : > "$MOCK/calls"
 NAT6_FAIL=1 $NET up
-chk '[ "$(cat "$RUN/net.gw")" = block ] && [ ! -f "$RUN/net.nat6" ] && grep -q "ip6tables nat 不可用" "$LOG"'
+chk '[ "$(cat "$RUN/net.gw")" = v6 ] && [ -f "$RUN/net.v6proxy" ] && [ ! -f "$RUN/net.nat6" ]'
+chk '! grep -q "ip6tables nat 不可用" "$LOG" && grep -q "^ip -6 neigh replace proxy $WAN dev rmnet_data2" "$MOCK/calls"'
+# 上游只有 /128：无法共享前缀，全局下只拦截
+$NET down; printf '%s\n' "2: rmnet_data2    inet6 2409:8a00:1:2:1111:2222:3333:4444/128 scope global" > "$MOCK/addr6.rmnet_data2"
+mkdir -p "$T/sysnet/xr0"; echo 1 > "$RUN/guest/guest/ipv6"; echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
+: > "$MOCK/calls"; $NET up
+chk '[ "$(cat "$RUN/net.gw")" = block ] && [ ! -f "$RUN/net.v6proxy" ] && grep -q "没有可共享的 IPv6 前缀" "$LOG"'
+chk 'grep -q "^ip -6 route replace unreachable default table 233" "$MOCK/calls"'
 # down 清理全部 IPv6 规则、链与表
-rmdir "$T/sysnet/xr0"; : > "$MOCK/calls"; $NET down
+rmdir "$T/sysnet/xr0" 2>/dev/null; : > "$MOCK/calls"; $NET down
 chk 'grep -q "^ip -6 rule del pref 19100" "$MOCK/calls" && grep -q "^ip -6 route flush table 233" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18800" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18900" "$MOCK/calls" && grep -q "^ip -6 rule del pref 4800" "$MOCK/calls"'
-chk '[ ! -f "$MOCK/fwd6_hook" ] && [ ! -f "$MOCK/nat6_hook" ] && [ ! -f "$MOCK/XR_FWD6" ] && [ ! -f "$MOCK/XR_NAT6" ]'
+chk '[ ! -f "$MOCK/fwd6_hook" ] && [ ! -f "$MOCK/XR_FWD6" ] && [ ! -f "$RUN/net.v6proxy" ]'
 chk 'grep -q "^ndc network route remove local xr0 fd7a:7872:e9::/64" "$MOCK/calls"'
 
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi
