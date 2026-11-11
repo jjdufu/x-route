@@ -4,6 +4,10 @@ name: Build ImmortalWrt ARM64 (Gunyah pVM)
 # 其他分支的日常检查由 package-module.yml 完成。
 # Tag 规则沿用历史：<module.prop version>-build.<run_number>。
 # 发布为正式版（非预发布），并标记为 Latest。
+# 虚拟机镜像（内核 Image + rootfs）只在镜像输入变化时重建：
+#   镜像指纹 = openwrt/** 与 build-kernel.sh / build-rootfs.sh 的 git 对象哈希；
+#   先查 Actions 缓存，再查最近几个 Release 里指纹相同的镜像（校验 sha256 后复用），都没有才重新构建。
+#   手动触发时可勾选 rebuild_image 强制重建。
 on:
   push:
     branches:
@@ -15,6 +19,11 @@ on:
       - 'webui/**'
       - '.github/workflows/build-openwrt.yml'
   workflow_dispatch:
+    inputs:
+      rebuild_image:
+        description: 强制重建虚拟机镜像（忽略缓存与上个 Release）
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -52,11 +61,69 @@ jobs:
       - name: Lint
         run: sh scripts/lint.sh
 
+      - name: Image Fingerprint
+        id: img
+        run: |
+          KEY="$(git ls-files -s openwrt scripts/build-kernel.sh scripts/build-rootfs.sh | sha256sum | cut -c1-24)"
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+          echo "镜像指纹 ${KEY}"
+
+      - name: Restore Image Cache
+        id: imgcache
+        if: ${{ !inputs.rebuild_image }}
+        uses: actions/cache/restore@v4
+        with:
+          key: openwrt-image-${{ steps.img.outputs.key }}
+          path: |
+            dist/openwrt/Image
+            dist/openwrt/openwrt-rootfs.img.gz
+            dist/openwrt/openwrt.qcow2
+            dist/openwrt/image.key
+
+      - name: Reuse Image From Previous Release
+        id: rel
+        if: ${{ !inputs.rebuild_image && steps.imgcache.outputs.cache-hit != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.img.outputs.key }}
+        run: |
+          set -u
+          mkdir -p dist/openwrt /tmp/rel
+          for tag in $(gh release list --limit 10 --exclude-drafts --json tagName -q '.[].tagName'); do
+            rm -rf /tmp/rel/*
+            gh release download "$tag" -p image.key -D /tmp/rel >/dev/null 2>&1 || continue
+            [ "$(cat /tmp/rel/image.key)" = "$KEY" ] || continue
+            gh release download "$tag" -p Image -p openwrt-rootfs.img.gz -p openwrt.qcow2 -p sha256sums.txt -D /tmp/rel || continue
+            if ( cd /tmp/rel && grep -E ' (Image|openwrt-rootfs\.img\.gz|openwrt\.qcow2)$' sha256sums.txt | sha256sum -c - ); then
+              cp /tmp/rel/Image /tmp/rel/openwrt-rootfs.img.gz /tmp/rel/openwrt.qcow2 /tmp/rel/image.key dist/openwrt/
+              echo "hit=true" >> "$GITHUB_OUTPUT"
+              echo "复用 ${tag} 的虚拟机镜像（指纹 ${KEY}）"
+              exit 0
+            fi
+          done
+          echo "没有指纹相同的旧镜像，重新构建"
+
       - name: Build Kernel (Image, Linux 6.12.103 + Gunyah pVM config)
+        id: build
+        if: ${{ inputs.rebuild_image || (steps.imgcache.outputs.cache-hit != 'true' && steps.rel.outputs.hit != 'true') }}
         run: bash scripts/build-kernel.sh
 
       - name: Build Rootfs (ImmortalWrt 25.12.2 ImageBuilder)
-        run: bash scripts/build-rootfs.sh
+        if: ${{ steps.build.outcome == 'success' }}
+        run: |
+          bash scripts/build-rootfs.sh
+          echo "${{ steps.img.outputs.key }}" > dist/openwrt/image.key
+
+      - name: Save Image Cache
+        if: ${{ steps.build.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          key: openwrt-image-${{ steps.img.outputs.key }}
+          path: |
+            dist/openwrt/Image
+            dist/openwrt/openwrt-rootfs.img.gz
+            dist/openwrt/openwrt.qcow2
+            dist/openwrt/image.key
 
 
       - name: Setup Java (notifier jar)
@@ -94,6 +161,7 @@ jobs:
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2
             dist/openwrt/sha256sums.txt
+            dist/openwrt/image.key
           if-no-files-found: error
 
       - name: Read Module Metadata
@@ -119,3 +187,4 @@ jobs:
             dist/openwrt/openwrt-rootfs.img.gz
             dist/openwrt/openwrt.qcow2
             dist/openwrt/sha256sums.txt
+            dist/openwrt/image.key

@@ -46,7 +46,8 @@ zipdir "${ST}" "${LITE}"
 echo "[+] ${LITE}"
 [ "${LITE_ONLY}" = 1 ] && exit 0
 
-for f in Image openwrt-rootfs.img.gz openwrt.qcow2 kernel.config; do
+# kernel.config 只是构建记录，不打包；复用旧镜像时不一定有
+for f in Image openwrt-rootfs.img.gz openwrt.qcow2; do
   [ -s "${OW}/$f" ] || { echo "缺少 ${OW}/$f（先运行 build-kernel.sh 与 build-rootfs.sh）"; exit 1; }
 done
 FULL="${DIST}/xrouter-sukisu-full-${VER}.zip"
