@@ -22,7 +22,7 @@ cat > "$T/bin/getprop" <<'G'
 case "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac
 G
 chmod +x "$T/bin/getprop"; PATH="$T/bin:$PATH"; export PATH
-export XR_DATA="$T/data"
+export XR_DATA="$T/data" XR_WATCHDOG_INTERVAL=300
 
 install_pkg() { # $1=full|lite
   rm -rf "$T/mod"; cp -a "$ROOT/module" "$T/mod"

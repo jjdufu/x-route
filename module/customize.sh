@@ -47,9 +47,13 @@ rm -rf "${MODPATH}/data"
 sync
 
 set_perm_recursive "${MODPATH}" 0 0 0755 0644
-for f in xr vm.sh net.sh share.sh vpnroutes.sh common.sh daemon.sh; do
+for f in xr vm.sh net.sh share.sh vpnroutes.sh common.sh daemon.sh v6.sh keepalive.sh watchdog.sh; do
   [ -f "${MODPATH}/scripts/${f}" ] && set_perm "${MODPATH}/scripts/${f}" 0 0 0755
 done
 chmod 0700 "${XR_DATA}"
+# 伴生前台服务：用于在本机真正显示常驻通知并辅助保活
+if [ -f "${MODPATH}/apk/keepalive.apk" ]; then
+  pm install -r -g "${MODPATH}/apk/keepalive.apk" >/dev/null 2>&1     && ui_print "- 已安装保活应用"     || ui_print "- 保活应用未能安装，将在启动时重试"
+fi
 ui_print "- 安装完成。VM 默认不启动，请在 WebUI 中手动启动。"
 ui_print "- VM 地址 172.29.233.254，登录 root，上游默认空密码（可在 LuCI 设置）"

@@ -33,7 +33,7 @@ kill_match() {
     [ -n "$cmd" ] || continue
     case "$cmd" in *uninstall.sh*) continue ;; esac
     case "$cmd" in
-      *crosvm*"${XR_DATA}"*|*"${XR_DATA}/images"*|*"${MODDIR}/scripts/daemon.sh"*|*"${MODDIR}/scripts/net.sh"*)
+      *crosvm*"${XR_DATA}"*|*"${XR_DATA}/images"*|*"${MODDIR}/scripts/daemon.sh"*|*"${MODDIR}/scripts/watchdog.sh"*|*"${MODDIR}/scripts/net.sh"*)
         kill "$sig" "$pid" 2>/dev/null
         ;;
     esac
@@ -77,9 +77,11 @@ ip -6 route flush table 97 dev xr0 2>/dev/null
 ip -6 route flush table 233 2>/dev/null
 ip link del xr0 2>/dev/null
 
-# 4. 通知与唤醒锁
+# 4. 通知、保活应用与唤醒锁
+am stopservice -n com.xrouter.keepalive/.KeepAliveService >/dev/null 2>&1
 cmd notification cancel xrouter >/dev/null 2>&1
 cmd notification cancel tag xrouter >/dev/null 2>&1
+pm uninstall com.xrouter.keepalive >/dev/null 2>&1
 { echo xrouter > /sys/power/wake_unlock; } 2>/dev/null
 { echo x-route > /sys/power/wake_unlock; } 2>/dev/null
 

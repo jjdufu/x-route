@@ -120,6 +120,7 @@ vm_start_exec() {
   ( fuse_watch ) >/dev/null 2>&1 &
   echo $! > "${RUN}/fuse_watch.pid"
   echo "${share_mode}" > "${RUN}/share.mode"
+  type cgroup_escape_tree >/dev/null 2>&1 && cgroup_escape_tree
   log_info vm "已启动 pid=$(cat "${PID_F}") mem=${mem}MB cpus=${VM_CPUS} share=${share_mode}"
 }
 

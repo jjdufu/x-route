@@ -13,11 +13,13 @@ if [ -f "${FUSE}" ]; then
 fi
 
 load_config
-# 无论是否自启（含熔断后），都拉起独立守护进程，供 WebUI 随后启动虚拟机
+# 无论是否自启（含熔断后），都拉起独立守护进程与看门狗（开机上下文，不依附管理器）
 if [ -f "${MODDIR}/scripts/daemon.sh" ]; then
   # shellcheck disable=SC1091
   . "${MODDIR}/scripts/daemon.sh"
+  doze_whitelist
   ensure_daemon || log_err service "守护进程未能启动"
+  ensure_watchdog || log_err service "看门狗未能启动"
 fi
 [ "${AUTOSTART}" = 1 ] || { log_info service "AUTOSTART=0，不自启"; exit 0; }
 [ -f "${TRIPPED}" ] && { log_info service "存在未确认的熔断，不自启"; exit 0; }

@@ -11,14 +11,17 @@ printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_avail
 chmod +x "$T/bin/getprop"
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
 export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
-# 本测试走真实守护进程路径，不要前台模式
+# 本测试走真实守护进程路径，不要前台模式；看门狗拉长间隔以免测试中把进程拉起来
 unset XR_DAEMON_FOREGROUND
+export XR_WATCHDOG_INTERVAL=300
 XR="sh $T/mod/scripts/xr"
 cleanup() {
   if [ -d "${XR_DATA:-$T/data}" ]; then
     $XR stop >/dev/null 2>&1
-    p="$(cat "${XR_DATA}/run/daemon.pid" 2>/dev/null)"
-    [ -n "$p" ] && kill "$p" 2>/dev/null
+    for f in daemon.pid watchdog.pid; do
+      p="$(cat "${XR_DATA}/run/$f" 2>/dev/null)"
+      [ -n "$p" ] && kill "$p" 2>/dev/null
+    done
     MODDIR="$T/mod" sh "$T/mod/uninstall.sh" >/dev/null 2>&1
   fi
   rm -rf "$T"
@@ -53,7 +56,18 @@ $XR stop
 chk '! $XR running && [ ! -f "$RUN/crosvm.pid" ]'
 chk 'kill -0 "$dpid" 2>/dev/null'
 
-# 4. 卸载结束守护进程并取消通知（mock 中 cmd 可能不存在）
+# 4. 看门狗已在开机/ensure 路径拉起；再启动后模拟 crosvm 意外退出，须立刻撤路由并记原因
+chk '[ -f "$RUN/watchdog.pid" ] && kill -0 "$(cat "$RUN/watchdog.pid")" 2>/dev/null'
+chk '$XR start'
+: > "$T/net.calls"
+cpid="$(cat "$RUN/crosvm.pid")"
+kill "$cpid" 2>/dev/null
+# 等待守护进程 5 秒循环扫到
+w=0; while [ "$w" -lt 12 ]; do grep -q "异常退出" "$LOG" && break; sleep 1; w=$((w+1)); done
+chk 'grep -q "异常退出" "$LOG" && grep -q "net down" "$T/net.calls"'
+chk '[ -f "$RUN/last_error" ]'
+
+# 5. 卸载结束守护进程并取消通知（mock 中 cmd 可能不存在）
 echo still > "$T/data/log/module.log"
 MODDIR="$T/mod" sh "$T/mod/uninstall.sh"
 chk '[ ! -d "$XR_DATA" ]'
