@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# XRouter: 虚拟机运行期调优（每次开机）
+#   - 少写盘：根文件系统 noatime（读文件不再写访问时间）、commit=30；开机 10 分钟后及此后每天 fstrim 一次，
+#     把已删除的块还给手机（系统盘镜像随之变稀疏，crosvm virtio-blk 支持 discard 时生效）；日志只在内存（10-xrouter）。
+#   - virtio-net（eth0 / eth1）打开 TSO / GSO / GRO 等卸载（驱动支持多少开多少，不支持的忽略）。
+#   - 拥塞控制 BBR：内核内建并设为默认（CONFIG_DEFAULT_TCP_CONG="bbr"），这里只做兜底检查。
+#   软件流量卸载（flow offloading）保持关闭：自编内核未内建 nf_flow_table，且与 OpenClash 透明代理冲突。
+# shellcheck disable=SC2034
+START=12
+PIDF=/var/run/xrouter-trim.pid
+
+boot() { start; }
+
+start() {
+  mount -o remount,noatime,commit=30 / 2>/dev/null
+  for d in eth0 eth1; do
+    [ -d "/sys/class/net/$d" ] || continue
+    for f in tso gso gro sg tx rx; do ethtool -K "$d" "$f" on >/dev/null 2>&1; done
+  done
+  if [ "$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)" != bbr ]; then
+    echo bbr > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null \
+      || logger -t xrouter "拥塞控制 BBR 不可用（$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)）"
+  fi
+  if command -v fstrim >/dev/null 2>&1; then
+    stop
+    (
+      sleep 600
+      while :; do
+        fstrim / >/dev/null 2>&1
+        sleep 86400
+      done
+    ) </dev/null >/dev/null 2>&1 &
+    echo $! > "$PIDF"
+  fi
+  return 0
+}
+
+stop() {
+  p="$(cat "$PIDF" 2>/dev/null)"
+  [ -n "$p" ] && kill "$p" 2>/dev/null
+  rm -f "$PIDF"
+  return 0
+}

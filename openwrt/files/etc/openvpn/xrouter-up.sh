@@ -1,29 +1,28 @@
 #!/bin/sh
-# XRouter: OpenVPN up / route-up。只记录实际生效的路由，不解析 ovpn 文件。
-ST="/var/run/xrouter/guest"
-if [ ! -d /var/run/xrouter ]; then
-  ST="/tmp/xrouter-guest"
-fi
-mkdir -p "$ST"
+# XRouter: OpenVPN up / route-up（所有实例共用，不写死 tun0）。不解析 ovpn 文件：
+#   记下本隧道的外层协议与实例名，按上游 MTU 重算全部隧道的 MTU / MSS（xrouter-tunmtu），再上报实际状态（xrouter-vpnstat）。
 dev="${dev:-tun0}"
-echo up > "$ST/openvpn.status"
-echo "${ifconfig_local:-}" > "$ST/openvpn.addr"
-echo "${dev}" > "$ST/openvpn.if"
-: > "$ST/openvpn.routes"
-# 上报实际生效的路由（含裸主机地址、IPv6）；主机侧再规范化并过滤默认路由
-for fam in -4 -6; do
-  ip $fam route show dev "$dev" 2>/dev/null | awk '{print $1}' | while read -r c; do
-    case "$c" in
-      ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
-      *) echo "$c" >> "$ST/openvpn.routes" ;;
-    esac
-  done
-done
+case "${proto_1:-udp}" in
+  tcp*) p=tcp ;;
+  *) p=udp ;;
+esac
+fam=4
+[ -n "${trusted_ip6:-}" ] && fam=6
+case "${proto_1:-}" in *6*) fam=6 ;; esac
+p="${p}${fam}"
+mkdir -p /tmp/xrouter-tun
+n="${config:-}"; n="${n##*/}"; n="${n%.conf}"; n="${n%.ovpn}"
+[ -n "$n" ] && echo "$n" > "/tmp/xrouter-tun/${dev}.name"
+/usr/libexec/xrouter-tunmtu proto "$dev" "$p"
+/usr/libexec/xrouter-tunmtu apply
+/usr/libexec/xrouter-vpnstat
 if [ ! -d /var/run/xrouter ]; then
-  routes="$(tr '\n' ' ' < "$ST/openvpn.routes")"
+  ST=/tmp/xrouter-guest
+  routes="$(tr '\n' ' ' < "$ST/openvpn.routes" 2>/dev/null)"
   msg="XR_VPN_STATUS up XR_VPN_ADDR ${ifconfig_local:-} XR_VPN_ROUTES ${routes}"
   for d in /dev/hvc0 /dev/ttyS0; do
     [ -c "$d" ] || continue
     echo "$msg" > "$d" 2>/dev/null && break
   done
 fi
+exit 0

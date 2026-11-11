@@ -48,9 +48,18 @@ SED
   s ubus call dhcp ipv6leases
   s ps w
   echo "## OpenVPN"
-  cat /var/run/xrouter/guest/openvpn.status /var/run/xrouter/guest/openvpn.addr 2>/dev/null
-  ip -br addr show dev tun0 2>&1
-  ip route show dev tun0 2>&1
+  cat /var/run/xrouter/guest/openvpn.status /var/run/xrouter/guest/openvpn.tunnels 2>/dev/null
+  for d in /sys/class/net/tun*; do
+    [ -d "$d" ] || continue
+    ip -br addr show dev "${d##*/}" 2>&1
+    ip route show dev "${d##*/}" 2>&1
+  done
+  echo "## 隧道 MTU / MSS（DEV MTU MSS4 MSS6，上游 $(cat /var/run/xrouter/host/mtu 2>/dev/null)）"
+  /usr/libexec/xrouter-tunmtu show
+  logread 2>/dev/null | grep -E 'Data Channel: (cipher|using)' | tail -n 4
+  echo "CPU 特性：$(grep -m1 -o -wE 'aes|pmull|sha2' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+  echo "拥塞控制：$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)（可用 $(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)）"
+  echo "根文件系统：$(awk '$2=="/"{print $1, $3, $4}' /proc/mounts | tail -n 1)"
   echo
   if [ -x /etc/init.d/openclash ]; then
     echo "## OpenClash"

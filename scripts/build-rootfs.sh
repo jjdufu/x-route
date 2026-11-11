@@ -128,17 +128,17 @@ for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/
          /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash \
          /usr/lib/xrouter/luci-app-openclash-0.48.002.apk /usr/lib/xrouter/clash_meta.gz \
          /bin/bash /usr/bin/ruby /usr/bin/unzip \
-         /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
+         /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/sysctl.d/12-xrouter.conf /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
 done
 for f in /usr/bin/htop /usr/bin/owut /usr/lib/opkg /bin/opkg /usr/bin/easyrsa; do
   if debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:"; then echo "forbidden ${f}"; exit 1; fi
 done
-for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S13xrouter-bootlog /etc/rc.d/S99xrouter-ready; do
+for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S12xrouter-tune /etc/rc.d/S13xrouter-bootlog /etc/rc.d/S99xrouter-ready; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "${f} not enabled"; exit 1; }
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
+for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 
@@ -149,6 +149,7 @@ fi
 cp "bin/targets/armsr/armv8/immortalwrt-${IMM}-armsr-armv8-generic.manifest" "${DIST}/openwrt.manifest" 2>/dev/null || true
 if [ -f "${DIST}/openwrt.manifest" ]; then
   grep -q 'luci-i18n-package-manager-zh-cn' "${DIST}/openwrt.manifest" || { echo "missing luci-i18n-package-manager-zh-cn"; exit 1; }
+  grep -q '^fstrim ' "${DIST}/openwrt.manifest" || { echo "missing fstrim"; exit 1; }
 fi
 rm -f "${RAW}"
 echo "[+] ${DIST}/openwrt-rootfs.img.gz ($(du -h "${DIST}/openwrt-rootfs.img.gz" | cut -f1))"

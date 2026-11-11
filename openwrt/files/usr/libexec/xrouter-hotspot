@@ -6,6 +6,8 @@
 #                                                 「+旧网关」：固定网段时保留安卓原网关为第二地址，已连设备续租前照常上网
 #   xrouter-hotspot off                           释放 eth1（热点交还安卓）
 #   xrouter-hotspot ipv6                          按当前 IPv6 开关刷新热点侧 IPv6（xrouter-ipv6 调用）
+#   xrouter-hotspot mtu                           按上游 MTU（eth0）给热点设备下发 MTU：小于 1500 时 DHCP option 26 与 RA MTU
+#                                                 都设为该值（UDP / QUIC 大包不再被上游丢弃），1500 时撤掉（xrouter-vpn 调用）
 #   xrouter-hotspot status                        输出当前状态：on <CIDR> 或 off
 # eth1 是虚拟机第二块网卡，手机侧 xr1 与热点网卡同在网桥 xrbr1 中。
 DEV=eth1
@@ -43,6 +45,34 @@ set dhcp.hotspot.dhcpv6='disabled'
 U
     echo 1 > "/proc/sys/net/ipv6/conf/${DEV}/disable_ipv6" 2>/dev/null
   fi
+}
+
+# 热点设备 MTU：$1=1 时有改动立即 reload dnsmasq / odhcpd。有改动返回 0
+apply_mtu() {
+  uci -q get dhcp.hotspot >/dev/null || return 1
+  m="$(cat /sys/class/net/eth0/mtu 2>/dev/null)"
+  case "$m" in ''|*[!0-9]*) m=1500 ;; esac
+  chg=1
+  if [ "$m" -lt 1500 ] && [ "$m" -ge 1280 ]; then
+    if [ "$(uci -q get dhcp.hotspot.dhcp_option)" != "26,${m}" ] || [ "$(uci -q get dhcp.hotspot.ra_mtu)" != "$m" ]; then
+      uci -q delete dhcp.hotspot.dhcp_option
+      uci -q add_list dhcp.hotspot.dhcp_option="26,${m}"
+      uci -q set dhcp.hotspot.ra_mtu="$m"
+      chg=0
+    fi
+  elif uci -q get dhcp.hotspot.dhcp_option >/dev/null || uci -q get dhcp.hotspot.ra_mtu >/dev/null; then
+    uci -q delete dhcp.hotspot.dhcp_option
+    uci -q delete dhcp.hotspot.ra_mtu
+    chg=0
+  fi
+  [ "$chg" = 0 ] || return 1
+  uci -q commit dhcp
+  if [ "$1" = 1 ] && [ "$(status | cut -d' ' -f1)" = on ]; then
+    /etc/init.d/dnsmasq reload >/dev/null 2>&1
+    /etc/init.d/odhcpd reload >/dev/null 2>&1
+  fi
+  logger -t xrouter "热点设备 MTU：${m}"
+  return 0
 }
 
 okcidr() { # 合法的 a.b.c.d/16~30
@@ -109,6 +139,7 @@ set dhcp.@dnsmasq[0].authoritative='1'
 U
   for o in $olds; do uci -q add_list network.hotspot.ipaddr="$o"; done
   apply_v6
+  apply_mtu 0
   fwchg=0
   uci -q get firewall.lan.network | grep -qw hotspot || { uci -q add_list firewall.lan.network='hotspot'; fwchg=1; }
   # 热点设备不走 VPN 的流量（直连 / VPN 未连）从 eth0 出去时伪装成 VM 地址：
@@ -165,6 +196,7 @@ case "$1" in
     apply_v6; uci -q commit network; uci -q commit dhcp
     case "$(status)" in on*) ifup hotspot >/dev/null 2>&1; /etc/init.d/odhcpd reload >/dev/null 2>&1 ;; esac
     ;;
+  mtu) apply_mtu 1; exit 0 ;;
   status) status ;;
-  *) echo "usage: xrouter-hotspot on CIDR [IP…]|off|ipv6|status"; exit 2 ;;
+  *) echo "usage: xrouter-hotspot on CIDR [IP…]|off|ipv6|mtu|status"; exit 2 ;;
 esac

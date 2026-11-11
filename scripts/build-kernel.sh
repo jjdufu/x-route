@@ -24,7 +24,7 @@ assert_config() {
   # Gunyah pVM 启动必需：必须内建
   for k in DMA_RESTRICTED_POOL SWIOTLB VIRTIO_PCI VIRTIO_BLK VIRTIO_NET VIRTIO_CONSOLE HVC_DRIVER \
            SERIAL_8250_CONSOLE VIRTIO_FS FUSE_FS EXT4_FS DEVTMPFS PACKET \
-           IPV6 IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES IPV6_MULTIPLE_TABLES IPV6_SUBTREES; do
+           IPV6 IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES IPV6_MULTIPLE_TABLES IPV6_SUBTREES TCP_CONG_BBR DEFAULT_BBR; do
     grep -qx "CONFIG_${k}=y" "$cfg" || { echo "MISSING CONFIG_${k}=y"; bad=1; }
   done
   # 路由器 / OpenVPN / Clash（OpenClash、nikki 等）全功能所需：内建或模块均可
@@ -40,6 +40,7 @@ assert_config() {
     if grep -qE "^CONFIG_${k}=(y|m)" "$cfg"; then echo "FORBIDDEN CONFIG_${k}"; bad=1; fi
   done
   grep -q '^CONFIG_LOCALVERSION=""' "$cfg" || { echo "LOCALVERSION must be empty"; bad=1; }
+  grep -qx 'CONFIG_DEFAULT_TCP_CONG="bbr"' "$cfg" || { echo "DEFAULT_TCP_CONG must be bbr"; bad=1; }
   # 与官方内核保持一致：官方为 =m 的网络模块不得改成内建（否则官方 kmod 因依赖缺失无法 modprobe）
   if [ -n "$off" ] && [ -f "$off" ]; then
     # shellcheck disable=SC2013  # 选项名不含空白，按词读取即可

@@ -1,0 +1,98 @@
+#!/bin/sh
+# XRouter: 所有 OpenVPN 隧道（tun*，不写死 tun0，多份配置 / 多条隧道各自计算）跟随手机上游 MTU 自适应
+#   xrouter-tunmtu            按当前上游 MTU 重算全部 tun*（xrouter-vpn 在上游 MTU 变化、隧道增减时调用）
+#   xrouter-tunmtu proto DEV P  记录隧道 DEV 的外层协议（udp4|udp6|tcp4|tcp6，OpenVPN up 脚本调用）
+#   xrouter-tunmtu show        每条隧道一行：DEV MTU MSS4 MSS6
+# 上游 MTU：手机侧下发的 host/mtu（5G 常见 1410，Wi-Fi 1500），读不到时用 eth0 的 MTU。
+# 隧道 MTU = 上游 MTU − 封装开销：外层 IPv4 20 / IPv6 40，UDP 8 / TCP 20+2（长度前缀），
+#   OpenVPN 数据通道按 AEAD（AES-GCM / ChaCha20-Poly1305：opcode+peer-id 4、packet-id 4、tag 16）再留余量共 40。
+#   udp4 68、udp6 88、tcp4 82、tcp6 102；外层协议未知时按 udp6 保守计算。下限 1280（IPv6 最小 MTU）。
+# 只改内核里 tun 网卡的 MTU（不重启 OpenVPN、不断线）：发往隧道的包按新 MTU 分片 / PMTU 探测，
+# 再由独立的 nft 表 inet xrouter_tun 把进出每条隧道的 TCP SYN 的 MSS 钳到「隧道 MTU − 40（IPv6 − 60）」，
+# 不依赖 fw4 按网卡宣传值钳制，firewall reload 也不会冲掉这张表。
+# 路径可由环境覆盖（仅测试用）
+CTL="${XRG_CTL:-/var/run/xrouter}"
+ST="${XRG_TUN:-/tmp/xrouter-tun}"
+SYS="${XRG_SYSNET:-/sys/class/net}"
+mkdir -p "$ST"
+
+upstream() {
+  m="$({ tr -dc '0-9' < "${CTL}/host/mtu"; } 2>/dev/null)"
+  [ -n "$m" ] || m="$(cat "${SYS}/eth0/mtu" 2>/dev/null)"
+  case "$m" in ''|*[!0-9]*) m=1500 ;; esac
+  [ "$m" -ge 1280 ] && [ "$m" -le 1500 ] || m=1500
+  echo "$m"
+}
+
+overhead() { # $1=外层协议
+  case "$1" in
+    udp4) echo 68 ;; udp6) echo 88 ;; tcp4) echo 82 ;; tcp6) echo 102 ;; *) echo 88 ;;
+  esac
+}
+
+tun_list() {
+  for d in "${SYS}"/tun*; do [ -d "$d" ] && echo "${d##*/}"; done
+}
+
+calc() { # $1=DEV -> 隧道 MTU
+  up="$(upstream)"
+  m=$(( up - $(overhead "$(cat "${ST}/$1.proto" 2>/dev/null)") ))
+  [ "$m" -lt 1280 ] && m=1280
+  echo "$m"
+}
+
+nft_apply() {
+  f="${ST}/mss.nft"
+  {
+    echo "table inet xrouter_tun"
+    echo "delete table inet xrouter_tun"
+    echo "table inet xrouter_tun {"
+    for c in "forward hook forward" "output hook output"; do
+      echo "  chain ${c% hook*} {"
+      echo "    type filter ${c#* } priority mangle; policy accept;"
+      for d in $(tun_list); do
+        m="$(calc "$d")"; m4=$(( m - 40 )); m6=$(( m - 60 ))
+        for dir in oifname iifname; do
+          [ "${c% hook*}" = output ] && [ "$dir" = iifname ] && continue
+          echo "    $dir \"$d\" meta nfproto ipv4 tcp flags & (syn|rst) == syn tcp option maxseg size > $m4 tcp option maxseg size set $m4"
+          echo "    $dir \"$d\" meta nfproto ipv6 tcp flags & (syn|rst) == syn tcp option maxseg size > $m6 tcp option maxseg size set $m6"
+        done
+      done
+      echo "  }"
+    done
+    echo "}"
+  } > "$f"
+  cmp -s "$f" "${ST}/mss.applied" 2>/dev/null && nft list table inet xrouter_tun >/dev/null 2>&1 && return 0
+  if nft -f "$f" 2>"${ST}/nft.err"; then
+    cp -f "$f" "${ST}/mss.applied"
+  else
+    logger -t xrouter "隧道 MSS 规则加载失败：$(head -n 3 "${ST}/nft.err" | tr '\n' ' ')"
+  fi
+}
+
+apply() {
+  for d in $(tun_list); do
+    m="$(calc "$d")"
+    cur="$(cat "${SYS}/$d/mtu" 2>/dev/null)"
+    if [ "$cur" != "$m" ]; then
+      ip link set dev "$d" mtu "$m" 2>/dev/null && logger -t xrouter "${d} MTU ${cur:-?} -> ${m}（上游 $(upstream)，外层 $(cat "${ST}/$d.proto" 2>/dev/null || echo 未知)）"
+    fi
+  done
+  # 已消失的隧道：清掉记录
+  for p in "$ST"/*.proto; do
+    [ -f "$p" ] || continue
+    d="${p##*/}"; d="${d%.proto}"
+    [ -d "${SYS}/$d" ] || rm -f "$p"
+  done
+  nft_apply
+}
+
+case "$1" in
+  proto)
+    case "$3" in udp4|udp6|tcp4|tcp6) echo "$3" > "${ST}/$2.proto" ;; *) rm -f "${ST}/$2.proto" ;; esac ;;
+  show)
+    for d in $(tun_list); do m="$(calc "$d")"; echo "$d $(cat "${SYS}/$d/mtu" 2>/dev/null) $(( m - 40 )) $(( m - 60 ))"; done ;;
+  ''|apply) apply ;;
+  *) echo "usage: xrouter-tunmtu [apply]|proto DEV udp4|udp6|tcp4|tcp6|show"; exit 2 ;;
+esac
+exit 0

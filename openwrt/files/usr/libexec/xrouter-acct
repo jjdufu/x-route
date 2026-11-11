@@ -1,0 +1,69 @@
+#!/bin/sh
+# XRouter: 分来源累计流量（经 OpenWrt 转发的字节数，本次开机以来）。只计数、不改包。
+#   xrouter-acct show    输出 8 个计数：ph_wan_up ph_wan_dn ph_lan_up ph_lan_dn hs_wan_up hs_wan_dn hs_lan_up hs_lan_dn
+#   xrouter-acct reset   清零
+# 手机 = 来自 / 发往手机 xr0 地址（lan 网关，如 172.29.233.1 / fd7a:7872:e9::1）的转发流量；
+# 热点 = 经 eth1（热点网桥）进出的转发流量。
+# 内网 = 走 OpenVPN 隧道（tun*）或对端是私有 / CGNAT / 链路本地 / ULA 地址；其余为公网（与保活通知同一口径）。
+# 独立表 inet xrouter_acct，fw4 reload 不会冲掉；表不存在时 show 自动建。
+
+NAMES="ph_wan_up ph_wan_dn ph_lan_up ph_lan_dn hs_wan_up hs_wan_dn hs_lan_up hs_lan_dn"
+LAN4="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 224.0.0.0/4"
+LAN6="fc00::/7, fe80::/10, ff00::/8"
+
+create() {
+  ph="$(uci -q get network.lan.gateway)"; [ -n "$ph" ] || ph=172.29.233.1
+  ph6="$(uci -q get network.lan.ip6gw)"; [ -n "$ph6" ] || ph6="fd7a:7872:e9::1"
+  f=/tmp/xrouter-acct.nft
+  {
+    echo "table inet xrouter_acct {"
+    for n in $NAMES; do echo "  counter $n { }"; done
+    echo "  set lan4 { type ipv4_addr; flags interval; elements = { $LAN4 } }"
+    echo "  set lan6 { type ipv6_addr; flags interval; elements = { $LAN6 } }"
+    echo "  chain count_fwd {"
+    echo "    type filter hook forward priority -5; policy accept;"
+    # 热点
+    echo "    iifname \"eth1\" oifname \"tun*\" counter name hs_lan_up return"
+    echo "    iifname \"eth1\" ip daddr @lan4 counter name hs_lan_up return"
+    echo "    iifname \"eth1\" ip6 daddr @lan6 counter name hs_lan_up return"
+    echo "    iifname \"eth1\" counter name hs_wan_up return"
+    echo "    oifname \"eth1\" iifname \"tun*\" counter name hs_lan_dn return"
+    echo "    oifname \"eth1\" ip saddr @lan4 counter name hs_lan_dn return"
+    echo "    oifname \"eth1\" ip6 saddr @lan6 counter name hs_lan_dn return"
+    echo "    oifname \"eth1\" counter name hs_wan_dn return"
+    # 手机本机
+    echo "    ip saddr $ph oifname \"tun*\" counter name ph_lan_up return"
+    echo "    ip saddr $ph ip daddr @lan4 counter name ph_lan_up return"
+    echo "    ip saddr $ph counter name ph_wan_up return"
+    echo "    ip6 saddr $ph6 oifname \"tun*\" counter name ph_lan_up return"
+    echo "    ip6 saddr $ph6 ip6 daddr @lan6 counter name ph_lan_up return"
+    echo "    ip6 saddr $ph6 counter name ph_wan_up return"
+    echo "    ip daddr $ph iifname \"tun*\" counter name ph_lan_dn return"
+    echo "    ip daddr $ph ip saddr @lan4 counter name ph_lan_dn return"
+    echo "    ip daddr $ph counter name ph_wan_dn return"
+    echo "    ip6 daddr $ph6 iifname \"tun*\" counter name ph_lan_dn return"
+    echo "    ip6 daddr $ph6 ip6 saddr @lan6 counter name ph_lan_dn return"
+    echo "    ip6 daddr $ph6 counter name ph_wan_dn return"
+    echo "  }"
+    echo "}"
+  } > "$f"
+  nft -f "$f" 2>/dev/null
+}
+
+case "$1" in
+  show)
+    nft list table inet xrouter_acct >/dev/null 2>&1 || create
+    out="$(nft list counters table inet xrouter_acct 2>/dev/null | awk '$1=="counter"{n=$2} $1=="packets"{for(i=1;i<NF;i++) if($i=="bytes") b[n]=$(i+1)} END{for(k in b) print k, b[k]}')"
+    line=""
+    for n in $NAMES; do
+      v="$(echo "$out" | awk -v k="$n" '$1==k{print $2; exit}')"
+      line="${line:+$line }${v:-0}"
+    done
+    echo "$line" ;;
+  reset)
+    if nft list table inet xrouter_acct >/dev/null 2>&1; then nft reset counters table inet xrouter_acct >/dev/null 2>&1; else create; fi ;;
+  init)
+    nft list table inet xrouter_acct >/dev/null 2>&1 || create ;;
+  *) echo "usage: xrouter-acct show|reset|init"; exit 2 ;;
+esac
+exit 0

@@ -12,6 +12,9 @@ boot() { start; }
 start() {
   ip="$(cmdval xr.ip)"; gw="$(cmdval xr.gw)"; dns="$(cmdval xr.dns | tr ',' ' ')"
   ip6="$(cmdval xr.ip6)"; gw6="$(cmdval xr.gw6)"
+  # 时钟跟手机对时：虚拟机没有 RTC，开机时间来自手机（xr.time，epoch 秒）；本机落后才往前拨
+  t="$(cmdval xr.time)"
+  case "$t" in ''|*[!0-9]*) ;; *) [ "$(date +%s)" -lt "$t" ] && date -s "@${t}" >/dev/null 2>&1 ;; esac
   # 每次开机执行；已撑满时为空操作，配合手机侧 xr expand
   resize2fs /dev/vda >/dev/null 2>&1
   [ -n "$ip" ] || return 0
@@ -30,9 +33,9 @@ U
     uci -q set network.lan.ip6gw="$gw6"
   fi
 
-  # 固定网点：本网段出隧道不 NAT，lan <-> vpn 双向转发
+  # lan <-> vpn 双向转发；出隧道一律伪装成隧道地址（含手机本机 xr0 网段 ${net}.0/24），
+  # 对端只需认识已经互通的隧道地址，手机本机也能直接访问组网网段，不必改服务端
   uci -q delete firewall.vpn.masq_src
-  uci -q add_list firewall.vpn.masq_src="!${net}.0/24"
   uci -q batch <<'U'
 set firewall.vpn.forward='ACCEPT'
 set firewall.lan_vpn=forwarding
@@ -46,7 +49,7 @@ U
   uci -q commit firewall
 
   # 单臂 NAT：发往默认网关、目的不是本网段的流量伪装成 .254，回程才能再进虚拟机。
-  # 只匹配 eth0，不影响 tun+ 上「本网段出隧道不 NAT」的网点约定。IPv6 同构（伪装成 ::254）。
+  # 只匹配 eth0（出隧道的伪装由 vpn 区 masq 负责）。IPv6 同构（伪装成 ::254）。
   net6=""; [ -n "$ip6" ] && net6="${ip6%%::*}::/64"
   mkdir -p /etc/nftables.d
   {

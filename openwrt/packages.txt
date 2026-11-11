@@ -28,6 +28,8 @@ bind-dig
 iperf3
 conntrack
 resize2fs
+# 少写盘：定期 fstrim 把已删除的块还给手机（init.d/xrouter-tune）
+fstrim
 # OpenVPN 客户端（显式列出依赖，ImageBuilder 也会自动解析）
 openvpn-openssl
 kmod-tun

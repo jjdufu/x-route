@@ -1,0 +1,52 @@
+#!/bin/sh
+# XRouter: 把所有 OpenVPN 隧道（tun*）的实际状态上报给手机侧（控制目录 guest/，见 xrouter-vpn）
+#   openvpn.tunnels  每条隧道一行：DEV|名称|地址|MTU|路由（逗号分隔）——WebUI 组网页按列表渲染
+#   openvpn.status / openvpn.addr / openvpn.if / openvpn.routes  汇总（兼容旧版：路由为全部隧道的并集）
+# 只记录实际生效的路由，不解析 ovpn；默认路由 / redirect-gateway 分半路由不上报。
+# 先在 /tmp 生成，内容有变化才替换控制目录里的文件：控制目录落在手机 /data 上，避免每 2 秒重写一遍刷闪存。
+# 路径可由环境覆盖（仅测试用）
+CTL="${XRG_CTL:-/var/run/xrouter}"
+SYS="${XRG_SYSNET:-/sys/class/net}"
+TMP="${XRG_TMP:-/tmp/xrouter-vpnstat}"
+TUN="${XRG_TUN:-/tmp/xrouter-tun}"
+ST="${CTL}/guest"
+[ -d "$CTL" ] || ST="${TMP}-guest"
+mkdir -p "$ST" "$TMP"
+
+routes_of() { # $1=DEV
+  for fam in -4 -6; do
+    ip $fam route show dev "$1" 2>/dev/null | awk '{print $1}' | while read -r c; do
+      case "$c" in
+        ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
+        *) echo "$c" ;;
+      esac
+    done
+  done
+}
+
+: > "$TMP/tunnels"; : > "$TMP/routes"; : > "$TMP/addr"; : > "$TMP/if"
+n=0
+for d in "${SYS}"/tun*; do
+  [ -d "$d" ] || continue
+  dev="${d##*/}"; n=$((n + 1))
+  addr="$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4; exit}')"
+  [ -n "$addr" ] || addr="$(ip -6 -o addr show dev "$dev" scope global 2>/dev/null | awk '{print $4; exit}')"
+  name="$(cat "${TUN}/${dev}.name" 2>/dev/null)"; [ -n "$name" ] || name="$dev"
+  r="$(routes_of "$dev")"
+  [ -n "$r" ] && echo "$r" >> "$TMP/routes"
+  echo "${dev}|${name}|${addr}|$(cat "$d/mtu" 2>/dev/null)|$(echo "$r" | tr '\n' ',' | sed 's/,*$//')" >> "$TMP/tunnels"
+  [ "$n" = 1 ] && { echo "$addr" > "$TMP/addr"; echo "$dev" > "$TMP/if"; }
+done
+if [ "$n" -gt 0 ]; then
+  echo up > "$TMP/status"
+elif pidof openvpn >/dev/null 2>&1; then
+  echo connecting > "$TMP/status"
+else
+  echo down > "$TMP/status"
+fi
+
+for f in status addr if routes tunnels; do
+  cmp -s "$TMP/$f" "$ST/openvpn.$f" 2>/dev/null && continue
+  cp -f "$TMP/$f" "$ST/openvpn.$f.tmp" && mv -f "$ST/openvpn.$f.tmp" "$ST/openvpn.$f"
+done
+exit 0

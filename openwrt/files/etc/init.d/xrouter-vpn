@@ -3,34 +3,28 @@
 #          执行 IPv6 开关（host/ipv6.cmd）并上报实际状态（guest/ipv6）；
 #          按 host/diag.cmd 生成网络快照（guest/diag.txt，已脱敏）；
 #          按 host/hotspot.cmd 接管 / 交还热点网段（guest/hotspot 上报状态）；
-#          按 host/mtu 让 eth0 跟随手机上游 MTU（guest/mtu 上报实际值）。
+#          按 host/mtu 让 eth0 跟随手机上游 MTU（guest/mtu 上报实际值），全部 tun* 按上游 MTU 扣封装开销；
+#          按 host/time 跟手机对时；按 host/acct.cmd 输出手机 / 热点分来源流量（guest/acct）。
 # shellcheck disable=SC2034
 START=21
 STOP=15
 
 CTL=/var/run/xrouter
 
-refresh_routes() {
-  ST="${CTL}/guest"
-  mkdir -p "$ST"
-  if [ ! -d /sys/class/net/tun0 ]; then
-    echo down > "$ST/openvpn.status"
-    : > "$ST/openvpn.routes"
-    : > "$ST/openvpn.addr"
-    return 0
+refresh_routes() { /usr/libexec/xrouter-vpnstat; }
+
+# 隧道增减（新连上 / 断开 / 多份配置各自起停）时按上游 MTU 重算全部 tun* 的 MTU 与 MSS
+tun_sig() { for d in /sys/class/net/tun*; do [ -d "$d" ] && printf '%s ' "${d##*/}"; done; }
+
+# 虚拟机时钟跟手机对时：手机侧经 host/time 下发当前时间（开机时还有 cmdline xr.time）。
+# 文件写下到这里读到有几秒延迟：本机落后才往前拨，超前 30 秒以上（时钟跑飞）才往回拨。
+sync_time() {
+  t="$({ tr -dc '0-9' < "${CTL}/host/time"; } 2>/dev/null)"
+  [ -n "$t" ] || return 0
+  now="$(date +%s)"
+  if [ "$now" -lt "$((t - 1))" ] || [ "$now" -gt "$((t + 30))" ]; then
+    date -s "@${t}" >/dev/null 2>&1 && logger -t xrouter "时钟跟随手机：${now} -> ${t}"
   fi
-  echo up > "$ST/openvpn.status"
-  ip -4 -o addr show dev tun0 2>/dev/null | awk '{print $4}' | head -1 > "$ST/openvpn.addr"
-  echo tun0 > "$ST/openvpn.if"
-  : > "$ST/openvpn.routes"
-  for fam in -4 -6; do
-    ip $fam route show dev tun0 2>/dev/null | awk '{print $1}' | while read -r c; do
-      case "$c" in
-        ""|default|0.0.0.0/0|0.0.0.0/1|128.0.0.0/1|::/0|::/1|8000::/1) continue ;;
-        *) echo "$c" >> "$ST/openvpn.routes" ;;
-      esac
-    done
-  done
 }
 
 install_ovpn() {
@@ -45,6 +39,14 @@ up /etc/openvpn/xrouter-up.sh
 down /etc/openvpn/xrouter-down.sh
 route-up /etc/openvpn/xrouter-up.sh
 C
+  # 性能（写在用户配置之后，同名选项以此为准；不改加密协商，不影响单文件无密码 .ovpn）：
+  #   OpenVPN 2.6 默认协商 AES-256-GCM / AES-128-GCM / ChaCha20，OpenSSL 走 ARMv8 AES 指令（硬件加速）；
+  #   收发缓冲 512KB（sysctl 已放宽 rmem_max / wmem_max），UDP 下 fast-io 少一次 poll，tun 发送队列 500。
+  #   MTU / MSS 不写死：由 xrouter-tunmtu 按上游 MTU 动态设置内核 tun 网卡与 nft MSS 钳制。
+  grep -qE '^[[:space:]]*sndbuf[[:space:]]' "$src" || echo "sndbuf 524288" >> /etc/openvpn/xrouter.conf
+  grep -qE '^[[:space:]]*rcvbuf[[:space:]]' "$src" || echo "rcvbuf 524288" >> /etc/openvpn/xrouter.conf
+  grep -qE '^[[:space:]]*txqueuelen[[:space:]]' "$src" || echo "txqueuelen 500" >> /etc/openvpn/xrouter.conf
+  grep -qiE '^[[:space:]]*(proto[[:space:]]+tcp|remote[[:space:]].*[[:space:]]tcp)' "$src" || echo "fast-io" >> /etc/openvpn/xrouter.conf
   uci -q set openvpn.xrouter=openvpn
   uci -q set openvpn.xrouter.enabled=1
   uci -q set openvpn.xrouter.config='/etc/openvpn/xrouter.conf'
@@ -66,7 +68,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""
+  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""; lasttun=""; lasttime=""; lastacct=""
   # 上报热点接管能力与状态（手机侧据此判断系统盘是否支持）
   /usr/libexec/xrouter-hotspot status > "${CTL}/guest/hotspot.tmp" && mv -f "${CTL}/guest/hotspot.tmp" "${CTL}/guest/hotspot"
   while :; do
@@ -101,6 +103,26 @@ watch() {
       lastmtu="$mt"
       /usr/libexec/xrouter-mtu "$mt"
       cat /sys/class/net/eth0/mtu > "${CTL}/guest/mtu" 2>/dev/null
+      /usr/libexec/xrouter-tunmtu apply
+      [ -x /usr/libexec/xrouter-hotspot ] && /usr/libexec/xrouter-hotspot mtu
+    fi
+    ts="$(tun_sig)"
+    if [ "$ts" != "$lasttun" ]; then
+      lasttun="$ts"
+      /usr/libexec/xrouter-tunmtu apply
+    fi
+    tm="$(cat "${CTL}/host/time" 2>/dev/null)"
+    if [ -n "$tm" ] && [ "$tm" != "$lasttime" ]; then
+      lasttime="$tm"
+      sync_time
+    fi
+    # 分来源流量：手机侧写 host/acct.cmd="snap|reset <ts>"，这里输出计数到 guest/acct（首行回显 ts）
+    ac="$(cat "${CTL}/host/acct.cmd" 2>/dev/null)"
+    if [ -n "$ac" ] && [ "$ac" != "$lastacct" ]; then
+      lastacct="$ac"
+      [ "${ac%% *}" = reset ] && /usr/libexec/xrouter-acct reset
+      { echo "ts=${ac#* }"; /usr/libexec/xrouter-acct show; } > "${CTL}/guest/acct.tmp" 2>/dev/null
+      mv -f "${CTL}/guest/acct.tmp" "${CTL}/guest/acct"
     fi
     # 调试快照：手机侧写 host/diag.cmd="snap <ts>"，这里生成后整体替换 guest/diag.txt（首行回显 ts）
     dc="$(cat "${CTL}/host/diag.cmd" 2>/dev/null)"
@@ -124,6 +146,8 @@ start() {
   mkdir -p "${CTL}/host" "${CTL}/guest"
   chmod 0755 /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh 2>/dev/null || true
   /usr/libexec/xrouter-ipv6 boot
+  /usr/libexec/xrouter-acct init
+  sync_time
   watch &
   echo $! > /var/run/xrouter-vpn.pid
 }
