@@ -45,7 +45,7 @@ public class TrafficCheck {
 }
 EOJ
   if javac -encoding UTF-8 -d "$T/cls" "$T/src/com/xrouter/keepalive/"*.java 2>"$T/javac.err"; then
-    java -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -cp "$T/cls" com.xrouter.keepalive.TrafficCheck > "$T/out.txt"
+    java -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dstdout.encoding=UTF-8 -cp "$T/cls" com.xrouter.keepalive.TrafficCheck > "$T/out.txt"
     printf '%s\n' "0 B" "1023 B" "1.5 KB" "1.2 GB" "5.0 TB" "↑1.2 GB ↓8.6 GB" "公网 ↑1.0 KB ↓2.0 KB" "内网 ↑3.0 KB ↓0 B" "↑1.0 KB ↓1.0 KB" \
       "公网 ↑1.0 KB ↓2.0 KB" "内网 ↑3.0 KB ↓4.0 KB" > "$T/want.txt"
     printf '\n' >> "$T/out.txt"
