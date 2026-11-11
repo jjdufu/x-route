@@ -1,6 +1,9 @@
 #!/bin/sh
 # XRouter: 热点交给 OpenWrt 分配地址（手机侧经控制目录 host/hotspot.cmd 下发，见 xrouter-vpn）
-#   xrouter-hotspot on <网关CIDR> [已连设备IP…]  eth1 接管安卓热点的网关地址，起 DHCP（IPv6 开时再起 RA / DHCPv6）
+#   xrouter-hotspot on <网关CIDR> [+旧网关CIDR…] [已连设备IP…]
+#                                                 eth1 用该网关地址起 DHCP（IPv6 开时再起 RA / DHCPv6）；
+#                                                 网关是安卓热点原网关（跟随模式）或手机侧设定的固定网段；
+#                                                 「+旧网关」：固定网段时保留安卓原网关为第二地址，已连设备续租前照常上网
 #   xrouter-hotspot off                           释放 eth1（热点交还安卓）
 #   xrouter-hotspot ipv6                          按当前 IPv6 开关刷新热点侧 IPv6（xrouter-ipv6 调用）
 #   xrouter-hotspot status                        输出当前状态：on <CIDR> 或 off
@@ -10,14 +13,6 @@ ST=/tmp/xrouter.hotspot
 ULA6="fd7a:7872:ea::1/64"
 
 status() { cat "$ST" 2>/dev/null || echo off; }
-
-len2mask() {
-  l="$1"; m=0; i=0
-  while [ "$i" -lt 32 ]; do
-    m=$(( m * 2 )); [ "$i" -lt "$l" ] && m=$(( m + 1 )); i=$((i + 1))
-  done
-  echo "$(( (m >> 24) & 255 )).$(( (m >> 16) & 255 )).$(( (m >> 8) & 255 )).$(( m & 255 ))"
-}
 
 # 网段地址：$1=IP $2=掩码长度
 net_of() {
@@ -50,20 +45,59 @@ U
   fi
 }
 
+okcidr() { # 合法的 a.b.c.d/16~30
+  case "$1" in *[!0-9./]*|*/*/*) return 1 ;; */*) ;; *) return 1 ;; esac
+  l="${1#*/}"; case "$l" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$l" -ge 16 ] && [ "$l" -le 30 ] || return 1
+  o="${1%/*}."; n=0
+  while [ -n "$o" ]; do
+    v="${o%%.*}"; o="${o#*.}"; n=$((n + 1))
+    case "$v" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$v" -le 255 ] || return 1
+  done
+  [ "$n" = 4 ]
+}
+
+# fw4 伪装规则：$1=section $2=名称 $3=源网段（空则删除）。有改动返回 0
+masq() {
+  if [ -z "$3" ]; then
+    uci -q get "firewall.$1" >/dev/null || return 1
+    uci -q delete "firewall.$1"; return 0
+  fi
+  [ "$(uci -q get "firewall.$1.src_ip")" = "$3" ] && return 1
+  uci -q batch <<U
+set firewall.$1=nat
+set firewall.$1.name='$2'
+set firewall.$1.family='ipv4'
+set firewall.$1.proto='all'
+set firewall.$1.src='lan'
+set firewall.$1.src_ip='$3'
+set firewall.$1.device='eth0'
+set firewall.$1.target='MASQUERADE'
+U
+  return 0
+}
+
 on() {
   cidr="$1"; shift
   [ -d "/sys/class/net/${DEV}" ] || { echo "err 无 ${DEV}" > "$ST"; return 1; }
+  okcidr "$cidr" || { echo "err 网段无效" > "$ST"; return 1; }
   ip="${cidr%/*}"; len="${cidr#*/}"
-  case "$len" in ''|*[!0-9]*) echo "err 网段无效" > "$ST"; return 1 ;; esac
-  if [ "$len" -lt 16 ] || [ "$len" -gt 30 ]; then echo "err 网段无效" > "$ST"; return 1; fi
+  # 固定网段时手机侧附带的安卓原网关（+前缀），其余参数是已连设备 IP
+  olds=""; clients=""
+  for a in "$@"; do
+    case "$a" in +*) okcidr "${a#+}" && olds="${olds} ${a#+}" ;; *) clients="${clients} $a" ;; esac
+  done
   limit=$(( (1 << (32 - len)) - 3 )); [ "$limit" -gt 250 ] && limit=250
+  # 第一个地址决定 DHCP 网段（dnsmasq 只为它发地址），旧网关只做第二地址
   uci -q batch <<U
 set network.hotspot=interface
 set network.hotspot.proto='static'
 set network.hotspot.device='${DEV}'
 set network.hotspot.auto='0'
-set network.hotspot.ipaddr='${ip}'
-set network.hotspot.netmask='$(len2mask "$len")'
+delete network.hotspot.ipaddr
+delete network.hotspot.netmask
+add_list network.hotspot.ipaddr='${cidr}'
 set dhcp.hotspot=dhcp
 set dhcp.hotspot.interface='hotspot'
 set dhcp.hotspot.start='2'
@@ -73,25 +107,16 @@ set dhcp.hotspot.force='1'
 set dhcp.hotspot.dhcpv4='server'
 set dhcp.@dnsmasq[0].authoritative='1'
 U
+  for o in $olds; do uci -q add_list network.hotspot.ipaddr="$o"; done
   apply_v6
   fwchg=0
   uci -q get firewall.lan.network | grep -qw hotspot || { uci -q add_list firewall.lan.network='hotspot'; fwchg=1; }
   # 热点设备不走 VPN 的流量（直连 / VPN 未连）从 eth0 出去时伪装成 VM 地址：
   # 手机侧只认 VM 网段（XR_NAT / XR_FWD），回包也就自然回到 OpenWrt，不会被安卓从热点网卡直接送回
-  sub="$(net_of "$ip" "$len")"
-  if [ "$(uci -q get firewall.xr_hs_masq.src_ip)" != "$sub" ]; then
-    uci -q batch <<U
-set firewall.xr_hs_masq=nat
-set firewall.xr_hs_masq.name='xrouter-hotspot-masq'
-set firewall.xr_hs_masq.family='ipv4'
-set firewall.xr_hs_masq.proto='all'
-set firewall.xr_hs_masq.src='lan'
-set firewall.xr_hs_masq.src_ip='${sub}'
-set firewall.xr_hs_masq.device='eth0'
-set firewall.xr_hs_masq.target='MASQUERADE'
-U
-    fwchg=1
-  fi
+  # 固定网段时，续租前仍用安卓原网段地址的设备同样伪装（第二条规则；跟随模式时删除）
+  masq xr_hs_masq xrouter-hotspot-masq "$(net_of "$ip" "$len")" && fwchg=1
+  osub=""; for o in $olds; do osub="$(net_of "${o%/*}" "${o#*/}")"; break; done
+  masq xr_hs_masq_old xrouter-hotspot-masq-old "$osub" && fwchg=1
   uci -q commit network; uci -q commit dhcp; uci -q commit firewall
   ip link set "$DEV" up
   ifup hotspot >/dev/null 2>&1
@@ -105,19 +130,25 @@ U
   /etc/init.d/dnsmasq reload >/dev/null 2>&1
   /etc/init.d/odhcpd reload >/dev/null 2>&1
   echo "on ${cidr}" > "$ST"
-  logger -t xrouter "热点网段 ${cidr} 由 OpenWrt 接管"
+  logger -t xrouter "热点网段 ${cidr} 由 OpenWrt 接管${olds:+（保留旧网关${olds}）}"
   # 已连设备：主动 ARP 一次，设备随即把网关 MAC 更新为 eth1（地址不变，无需重连）
   (
-    command -v arping >/dev/null 2>&1 && arping -U -c 2 -I "$DEV" "$ip" >/dev/null 2>&1
-    for c in "$@"; do ping -c 1 -W 1 -I "$DEV" "$c" >/dev/null 2>&1 & done
+    if command -v arping >/dev/null 2>&1; then
+      arping -U -c 2 -I "$DEV" "$ip" >/dev/null 2>&1
+      for o in $olds; do arping -U -c 2 -I "$DEV" -s "${o%/*}" "${o%/*}" >/dev/null 2>&1; done
+    fi
+    for c in $clients; do ping -c 1 -W 1 -I "$DEV" "$c" >/dev/null 2>&1 & done
     wait
   ) &
   return 0
 }
 
 off() {
-  if uci -q get firewall.xr_hs_masq >/dev/null; then
-    uci -q delete firewall.xr_hs_masq; uci -q commit firewall
+  fwchg=0
+  masq xr_hs_masq "" "" && fwchg=1
+  masq xr_hs_masq_old "" "" && fwchg=1
+  if [ "$fwchg" = 1 ]; then
+    uci -q commit firewall
     /etc/init.d/firewall reload >/dev/null 2>&1
   fi
   ifdown hotspot >/dev/null 2>&1

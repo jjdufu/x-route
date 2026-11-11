@@ -138,6 +138,9 @@ const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启�
 eq([bt.rc, bt.mod.size, bt.con.size], [1, 120, 30], "parseBootTail");
 eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
 eq(L.parseBootTail("garbage"), null, "parseBootTail 非法");
+// 固定热点网段前端预检（与手机侧 hs_subnet_valid 一致）
+for (const v of ["", "10.233.0.1/24", "192.168.77.254/24", "172.20.0.1/16", "10.9.9.1/30"]) eq(L.hsSubnetCheck(v).ok, true, `hsSubnetCheck ${v}`);
+for (const v of ["10.233.0.0/24", "10.233.0.255/24", "10.233.0.1/15", "10.233.0.1/31", "8.8.8.1/24", "100.64.0.1/24", "10.233.0.1", "10.233.0.300/24", "x"]) eq(L.hsSubnetCheck(v).ok, false, `hsSubnetCheck ${v}`);
 eq((({ rc, st, mod, con }) => [rc, st, mod.size, con.size, con.text])(L.parseBootTail("R-\x1fSbooting\x1f5\x1fabc\x1f9\x1fx\x1fy")), [null, "booting", 5, 9, "xy"], "parseBootTail 带虚拟机状态");
 const bb = L.newBootBuf();
 eq(L.feedBoot(bb, "mod", bt.mod.text), true, "feedBoot 有新行");

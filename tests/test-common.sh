@@ -37,6 +37,34 @@ ok cidr_aligned 192.168.50.0/24; no cidr_aligned 192.168.50.1/24; ok cidr_aligne
 ok cidr_overlap 192.168.0.0/16 192.168.50.0/24; no cidr_overlap 192.168.50.0/24 192.168.51.0/24
 ok cidr_overlap 172.29.233.0/24 172.16.0.0/12; no cidr_overlap 10.0.0.0/8 172.29.233.0/24
 
+# 固定热点网段：私网网关/16~30，网关不能是网络 / 广播地址，不与 xr0 网段和手机现有网卡冲突（下游热点网卡除外）
+mkdir -p "$T/sb"
+cat > "$T/sb/ip" <<'IPM'
+#!/bin/sh
+case "$*" in
+  "-4 -o addr show") printf '%s\n' "1: lo    inet 127.0.0.1/8 scope host lo" "20: wlan0    inet 192.168.31.88/24 brd 192.168.31.255 scope global wlan0" \
+      "21: rmnet_data1    inet 10.120.5.6/30 scope global rmnet_data1" "30: wlan2    inet 10.233.0.47/24 scope global wlan2" "40: xr0    inet 172.29.233.1/24 scope global xr0" ;;
+  "route show table local_network") echo "10.233.0.0/24 dev wlan2 proto static scope link" ;;
+esac
+IPM
+chmod +x "$T/sb/ip"
+OLD_SB="${XR_SYSBIN:-}"; XR_SYSBIN="$T/sb"
+ok valid_kv XR_HOTSPOT_SUBNET ""; ok valid_kv XR_HOTSPOT_SUBNET 10.234.0.1/24; ok valid_kv XR_HOTSPOT_SUBNET 192.168.77.254/24
+ok valid_kv XR_HOTSPOT_SUBNET 172.20.0.1/16; ok valid_kv XR_HOTSPOT_SUBNET 10.9.9.1/30
+no valid_kv XR_HOTSPOT_SUBNET 10.234.0.0/24; no valid_kv XR_HOTSPOT_SUBNET 10.234.0.255/24; no valid_kv XR_HOTSPOT_SUBNET 10.234.0.1/15
+no valid_kv XR_HOTSPOT_SUBNET 10.234.0.1/31; no valid_kv XR_HOTSPOT_SUBNET 8.8.8.1/24; no valid_kv XR_HOTSPOT_SUBNET 100.64.0.1/24
+no valid_kv XR_HOTSPOT_SUBNET 10.234.0.1; no valid_kv XR_HOTSPOT_SUBNET "10.234.0.1/24 x"; no valid_kv XR_HOTSPOT_SUBNET 10.234.0.300/24
+no valid_kv XR_HOTSPOT_SUBNET 172.29.233.9/24          # xr0 网段
+no valid_kv XR_HOTSPOT_SUBNET 172.29.0.1/16            # 包含 xr0 网段
+no valid_kv XR_HOTSPOT_SUBNET 192.168.31.1/24          # 上游 Wi-Fi
+no valid_kv XR_HOTSPOT_SUBNET 10.120.5.5/24            # 蜂窝
+ok valid_kv XR_HOTSPOT_SUBNET 10.233.0.1/24            # 安卓热点当前网段（下游网卡）不算冲突
+[ "$(hs_subnet_clash 192.168.31.1/24)" = "wlan0 192.168.31.88/24" ] || { echo "FAIL: hs_subnet_clash 输出"; fail=1; }
+no hs_subnet_clash 10.233.0.1/24 wlan2
+XR_SYSBIN="$OLD_SB"
+ok [ "$(cidr_net 10.233.0.1/24)" = 10.233.0.0/24 ]; ok [ "$(cidr_net 172.20.200.9/16)" = 172.20.0.0/16 ]
+ok [ "$(cidr_net 192.168.250.254/30)" = 192.168.250.252/30 ]
+
 # OpenVPN 路由规范化：裸主机、点分掩码、IPv6；非法项拒绝
 ok valid_cidr 10.58.88.2; ok valid_cidr 10.58.88.2/32; ok valid_cidr 10.8.0.0/24
 ok valid_cidr 8.8.8.0/24; ok valid_cidr 10.1.2.3/255.255.255.255

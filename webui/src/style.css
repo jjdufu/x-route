@@ -273,3 +273,14 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .snack.bad { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .sub { display: block; font-size: 12px; color: var(--md-sys-color-on-surface-variant); }
 .sub:empty { display: none; }
+/* 热点网段对话框：原生输入框（不引入额外组件） */
+.hsnet { display: flex; flex-direction: column; gap: 10px; min-width: 260px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.field input {
+  font: 16px ui-monospace, monospace; color: var(--md-sys-color-on-surface); background: transparent;
+  border: 1px solid var(--md-sys-color-outline); border-radius: 8px; padding: 12px; outline: none;
+}
+.field input:focus { border-color: var(--md-sys-color-primary); border-width: 2px; padding: 11px; }
+.hint { font-size: 12px; line-height: 1.5; color: var(--md-sys-color-on-surface-variant); }
+.hint.bad { color: var(--md-sys-color-error); }
+.hint:empty { display: none; }

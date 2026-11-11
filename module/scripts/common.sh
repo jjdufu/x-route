@@ -51,7 +51,7 @@ ROOTFS="${IMG}/openwrt-rootfs.img"
 FUSE="${XR_DATA}/config/vm_booting.fuse"
 TRIPPED="${XR_DATA}/config/tripped"
 LAST_GOOD="${XR_DATA}/config/last_good"
-KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC XR_NOTIFY_TRAFFIC XR_DEBUG XR_DEBUG_HOURS XR_HOTSPOT_BRIDGE"
+KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC XR_NOTIFY_TRAFFIC XR_DEBUG XR_DEBUG_HOURS XR_HOTSPOT_BRIDGE XR_HOTSPOT_SUBNET"
 # 影响 VM 稳定性的键：只要这些键变化，last_good 就失效
 HASH_KEYS="XR_NET_PREFIX VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE"
 # rw 共享的属主映射参数（crosvm --shared-dir 选项）。需先在真机上确认 crosvm 支持的写法（见 docs/TESTING.md 第 0 节）；
@@ -293,6 +293,8 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
       case "$2" in 0|1) ;; *) return 1;; esac ;;
     XR_DEBUG_HOURS)
       case "$2" in 0|1|6|24|72) ;; *) return 1;; esac ;;
+    XR_HOTSPOT_SUBNET)   # 空 = 跟随安卓热点网段；否则「网关/前缀」，如 10.233.0.1/24
+      [ -z "$2" ] || { hs_subnet_valid "$2" && ! hs_subnet_clash "$2" >/dev/null; } ;;
     *) return 1 ;;
   esac
 }
@@ -376,4 +378,33 @@ cidr_overlap() { # $1 $2 两个 CIDR 是否重叠（不同协议视为不重叠�
     if [ "$_pa" -lt "$_pb" ]; then _p="$_pa"; else _p="$_pb"; fi
     [ "$(ip6_mask "$_x" "$_p")" = "$(ip6_mask "$_y" "$_p")" ]
   fi
+}
+cidr_net() { # 网关 CIDR -> 网段（主机位清零），如 10.233.0.1/24 -> 10.233.0.0/24
+  _x="$(ip2int "${1%/*}")"; _m="$(prefix_mask "${1#*/}")"; _x=$(( _x & _m ))
+  echo "$(( (_x >> 24) & 255 )).$(( (_x >> 16) & 255 )).$(( (_x >> 8) & 255 )).$(( _x & 255 ))/${1#*/}"
+}
+
+# 固定热点网段格式：私网 IPv4 网关地址/16~30，网关不能是网络地址或广播地址（不含 100.64/10 运营商地址段）
+hs_subnet_valid() {
+  echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/(1[6-9]|2[0-9]|30)$' && valid_ip4 "${1%/*}" || return 1
+  [ "${1%%.*}" != 100 ] && cidr_private "$1" || return 1
+  _x="$(ip2int "${1%/*}")"; _m="$(prefix_mask "${1#*/}")"
+  _h=$(( _x & ~_m & 0xFFFFFFFF )); _b=$(( ~_m & 0xFFFFFFFF ))
+  [ "$_h" -ne 0 ] && [ "$_h" -ne "$_b" ]
+}
+
+# 固定热点网段是否与 xr0 链路网段、手机现有网卡地址（上游 Wi-Fi / 蜂窝 / VPN 等）冲突
+# $1=网关 CIDR $2=要跳过的网卡（当前热点网卡）。冲突时输出冲突对象并返回 0
+hs_subnet_clash() {
+  _xn="${XR_NET_PREFIX:-172.29.233}.0/24"
+  cidr_overlap "$1" "$_xn" && { echo "xr0 ${_xn}"; return 0; }
+  _sb="${XR_SYSBIN:-/system/bin}"
+  # 热点 / USB 共享等下游网卡（local_network 表）的地址由安卓随机分配、桥接后不再使用，不算冲突
+  _sk=" lo xr0 xr1 xrbr1 ${2:-} $("${_sb}/ip" route show table local_network 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") printf "%s ", $(i+1)}') "
+  for _l in $("${_sb}/ip" -4 -o addr show 2>/dev/null | awk '{print $2 "=" $4}'); do
+    _d="${_l%%=*}"; _d="${_d%%@*}"; _a="${_l#*=}"
+    case "$_sk" in *" $_d "*) continue ;; esac
+    cidr_overlap "$1" "$_a" && { echo "${_d} ${_a}"; return 0; }
+  done
+  return 1
 }

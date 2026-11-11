@@ -46,6 +46,7 @@ WAN 仍是手机上游，默认不信任：放行出站和回包，丢弃主动�
 
 | 对象 | 值 | 作用 |
 |---|---|---|
+| 规则 pref 4790 + 表 234（IPv4） | `to <固定热点网段> lookup 234`：`<网段> via 172.29.233.254 dev xr0` | 设了 XR_HOTSPOT_SUBNET 且热点已桥接时，手机自身访问热点设备 |
 | 规则 pref 4800 | `to 172.29.233.0/24 lookup <local_network 或 97>` | 访问 VM 网段 |
 | 规则 pref 4801 | `to <已同步对端网段> lookup …` | VPN 网段（第 5 步） |
 | 规则 pref 18900 | `iif xr0 lookup <上游表>` | **VM 出网走真实 WAN，绝不再进 VM** |

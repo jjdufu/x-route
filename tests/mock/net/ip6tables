@@ -42,6 +42,9 @@ case "$t:$*" in
   "filter:-X XR_FWD6") rm -f "$MOCK/XR_FWD6" ;;
   "nat:-X XR_NAT6") rm -f "$MOCK/XR_NAT6" ;;
   "filter:-A XR_FWD6 "*) shift 2; echo "$*" >> "$MOCK/XR_FWD6" ;;
+  "filter:-I XR_FWD6 1 "*) shift 3; { echo "$*"; cat "$MOCK/XR_FWD6" 2>/dev/null; } > "$MOCK/XR_FWD6.t"; mv "$MOCK/XR_FWD6.t" "$MOCK/XR_FWD6" ;;
+  "filter:-D XR_FWD6 "*) shift 2; grep -qxF -- "$*" "$MOCK/XR_FWD6" 2>/dev/null || exit 1
+    awk -v r="$*" 'd || $0 != r { print; next } { d = 1 }' "$MOCK/XR_FWD6" > "$MOCK/XR_FWD6.t"; mv "$MOCK/XR_FWD6.t" "$MOCK/XR_FWD6" ;;
   "nat:-A XR_NAT6 "*) shift 2; echo "$*" >> "$MOCK/XR_NAT6" ;;
 esac
 exit 0

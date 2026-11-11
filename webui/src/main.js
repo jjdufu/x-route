@@ -20,7 +20,7 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  parseBootTail, newBootBuf, feedBoot, trafficLine,
+  parseBootTail, newBootBuf, feedBoot, trafficLine, hsSubnetCheck,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -194,6 +194,9 @@ function render(d) {
   txt($("btn-export-text"), cfg.XR_DEBUG === "1" ? "诊断导出" : "日志导出");
   prop($("sw-hotspot"), "selected", cfg.XR_HOTSPOT_BRIDGE !== "0");
   txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "");
+  txt($("v-hs-net"), cfg.XR_HOTSPOT_SUBNET || "跟随安卓");
+  txt($("v-hs-net-cur"), net.hotspot && net.hotspot_net ? `当前 ${net.hotspot_net}` : "");
+  tog($("row-hs-net"), "disabled", cfg.XR_HOTSPOT_BRIDGE === "0");
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
@@ -383,6 +386,22 @@ async function pickSharePath() {
   if (path) setKey("VM_SHARE_PATH", path);
 }
 
+// 固定热点网段：前端先做格式预检，冲突（上游 / xr0 网段）由手机侧校验后返回原因
+async function editHotspotNet() {
+  if (status && status.config && status.config.XR_HOTSPOT_BRIDGE === "0") return;
+  const input = $("in-hsnet"); const err = $("hsnet-err");
+  const cur = (status && status.config && status.config.XR_HOTSPOT_SUBNET) || "";
+  input.value = cur; err.textContent = "";
+  for (;;) {
+    if (!await dialogResult($("dlg-hsnet"))) return;
+    const c = hsSubnetCheck(input.value);
+    if (!c.ok) { err.textContent = c.error; continue; }
+    if (c.value === cur) return;
+    setKey("XR_HOTSPOT_SUBNET", c.value);
+    return;
+  }
+}
+
 async function expandDisk() {
   const cur = Number(status && status.config && status.config.VM_DISK_SIZE_MB) || 1024;
   const sizes = expandSizes(cur);
@@ -490,6 +509,8 @@ function bind() {
   bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
   $("btn-export").addEventListener("click", exportLogs);
+  $("row-hs-net").addEventListener("click", editHotspotNet);
+  $("hsnet-clear").addEventListener("click", () => { $("in-hsnet").value = ""; $("hsnet-err").textContent = ""; });
   $("btn-luci").addEventListener("click", () => xr("luci"));
   $("btn-import").addEventListener("click", importVpn);
   $("btn-share-path").addEventListener("click", pickSharePath);

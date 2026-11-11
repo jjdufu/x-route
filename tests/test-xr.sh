@@ -26,7 +26,7 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
-chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 23 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 24 ]'
 cp "$CONF" "$T/conf.bak"
 # 通知显示：取值校验，改后不需重启，并请求守护进程立即刷新通知
 rm -f "$RUN/notify.force"
@@ -36,6 +36,11 @@ $XR set XR_NOTIFY_TRAFFIC total >/dev/null
 cp "$CONF" "$T/conf.bak"
 out="$($XR set VM_MEM_MB 99999)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "\"ok\":false" && cmp -s "$CONF" "$T/conf.bak"'
 out="$($XR set 'X;rm' 1)"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
+# 固定热点网段：格式与冲突在设置时校验，返回具体原因；空值恢复跟随安卓
+chk '$XR set XR_HOTSPOT_SUBNET 10.233.0.1/24 | grep -q "\"ok\":true" && grep -qx "XR_HOTSPOT_SUBNET=\"10.233.0.1/24\"" "$CONF"'
+out="$($XR set XR_HOTSPOT_SUBNET 172.29.233.9/24)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "冲突" && grep -qx "XR_HOTSPOT_SUBNET=\"10.233.0.1/24\"" "$CONF"'
+out="$($XR set XR_HOTSPOT_SUBNET 8.8.8.1/24)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "私网网关" && grep -qx "XR_HOTSPOT_SUBNET=\"10.233.0.1/24\"" "$CONF"'
+chk '$XR set XR_HOTSPOT_SUBNET "" | grep -q "\"ok\":true" && grep -qx "XR_HOTSPOT_SUBNET=\"\"" "$CONF"'
 out="$($XR set VPN_ROUTES "8.8.8.0/24")"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
 # 未知键应被拒绝（已删除手工网段）
 out="$($XR set VM_MEM_MB)"; chk '[ $? -eq 2 ]'

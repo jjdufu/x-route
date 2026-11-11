@@ -89,6 +89,7 @@
           <div class="item"><md-icon data-icon="admin_panel_settings"></md-icon><span class="grow">管理访问</span>
             <md-outlined-select id="sel-access" class="sel"></md-outlined-select></div>
           <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">热点 DHCP<span id="v-hotspot" class="sub"></span></span><md-switch id="sw-hotspot" icons></md-switch></div>
+          <div id="row-hs-net" class="item item-btn"><md-ripple></md-ripple><md-icon data-icon="lan"></md-icon><span class="grow">热点网段<span id="v-hs-net-cur" class="sub"></span></span><span id="v-hs-net" class="val">跟随安卓</span></div>
           <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><md-switch id="sw-ipv6" icons></md-switch></div>
         </div>
 
@@ -142,6 +143,22 @@
     <div slot="actions">
       <md-text-button form="dlg-confirm-form" value="cancel">取消</md-text-button>
       <md-filled-button id="dlg-confirm-ok" form="dlg-confirm-form" value="ok">确认</md-filled-button>
+    </div>
+  </md-dialog>
+
+  <!-- 固定热点网段 -->
+  <md-dialog id="dlg-hsnet" class="dlg">
+    <div slot="headline">热点网段</div>
+    <form slot="content" id="dlg-hsnet-form" method="dialog" class="hsnet">
+      <label class="field"><span>网关地址 / 前缀</span>
+        <input id="in-hsnet" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="10.233.0.1/24"></label>
+      <div class="hint">留空 = 跟随安卓（每次开热点网段随机）。私网地址，前缀 16–30，不能与上游网络或 XRouter 内部网段冲突；改后立即生效，不重启虚拟机。</div>
+      <div id="hsnet-err" class="hint bad"></div>
+    </form>
+    <div slot="actions">
+      <md-text-button id="hsnet-clear" type="button">跟随安卓</md-text-button>
+      <md-text-button form="dlg-hsnet-form" value="cancel">取消</md-text-button>
+      <md-filled-button form="dlg-hsnet-form" value="ok">保存</md-filled-button>
     </div>
   </md-dialog>
 

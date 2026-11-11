@@ -2,7 +2,7 @@
 export const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 export const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
-  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS", "XR_HOTSPOT_BRIDGE",
+  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS", "XR_HOTSPOT_BRIDGE", "XR_HOTSPOT_SUBNET",
 ];
 const ARG_RE = /^[A-Za-z0-9_-]+$/;
 export const MEDIA_ROOT = "/storage/emulated/0";
@@ -191,4 +191,21 @@ export function trafficLine(d, mode) {
   const t = d && d[mode === "wan" || mode === "lan" ? mode : "total"];
   if (!t) return "—";
   return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
+}
+
+// 固定热点网段（与手机侧 hs_subnet_valid 一致的前端预检；冲突检查以手机侧为准）
+export function hsSubnetCheck(v) {
+  v = String(v || "").trim();
+  if (!v) return { ok: true, value: "" };
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(v);
+  if (!m) return { ok: false, error: "格式：网关地址/前缀，如 10.233.0.1/24" };
+  const o = m.slice(1, 5).map(Number); const len = Number(m[5]);
+  if (o.some((x) => x > 255)) return { ok: false, error: "地址无效" };
+  if (len < 16 || len > 30) return { ok: false, error: "前缀需在 16–30 之间" };
+  const priv = o[0] === 10 || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168 && len >= 16);
+  if (!priv) return { ok: false, error: "需为私网地址（10/8、172.16/12、192.168/16）" };
+  const ip = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
+  const host = ip & ((2 ** (32 - len)) - 1);
+  if (host === 0 || host === 2 ** (32 - len) - 1) return { ok: false, error: "网关不能是网络地址或广播地址" };
+  return { ok: true, value: v };
 }

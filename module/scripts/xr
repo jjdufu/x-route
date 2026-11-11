@@ -52,7 +52,7 @@ needs_restart() {
 # 返回非 0 时把原因写到 stdout（单行）
 after_set() {
   case "$1" in
-    XR_EXPOSE|XR_MODE|XR_HOTSPOT_BRIDGE)
+    XR_EXPOSE|XR_MODE|XR_HOTSPOT_BRIDGE|XR_HOTSPOT_SUBNET)
       vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
     XR_NOTIFY_TRAFFIC)
       : > "${RUN}/notify.force" ;;
@@ -285,6 +285,11 @@ case "$cmd" in
   get)         load_config; for k in ${KEYS}; do eval "printf '%s=%s\n' $k \"\${$k}\""; done ;;
   set)
     [ $# -eq 2 ] || { echo '{"ok":false,"error":"用法：xr set KEY VALUE"}'; exit 2; }
+    load_config
+    if [ "$1" = XR_HOTSPOT_SUBNET ] && [ -n "$2" ]; then
+      hs_subnet_valid "$2" || { printf '{"ok":false,"error":%s}\n' "$(jstr "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24")"; exit 1; }
+      if _hc="$(hs_subnet_clash "$2")"; then printf '{"ok":false,"error":%s}\n' "$(jstr "与 ${_hc} 冲突")"; exit 1; fi
+    fi
     set_kv "$1" "$2" || { printf '{"ok":false,"error":%s}\n' "$(jstr "取值不合法：$1")"; exit 1; }
     if ! msg="$(after_set "$1")"; then printf '{"ok":false,"error":%s}\n' "$(jstr "$msg")"; exit 1; fi
     echo "{\"ok\":true,\"restart\":$(needs_restart "$1")}" ;;

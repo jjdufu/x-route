@@ -523,10 +523,10 @@ net_down() {
 net_status() { # JSON 片段
   ex="$(cat "${RUN}/net.expose_if" 2>/dev/null)"; exj=""
   for i in $ex; do exj="${exj:+${exj},}\"$i\""; done
-  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1","gw":"%s","hotspot":"%s"}' \
+  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1","gw":"%s","hotspot":"%s","hotspot_net":"%s"}' \
     "$(cat "${RUN}/net.mode" 2>/dev/null || echo down)" "$(cat "${RUN}/net.up_if" 2>/dev/null)" \
     "${XR_EXPOSE}" "$exj" "${XR_NET_PREFIX}" "${XR_NET_PREFIX}" "$(cat "${RUN}/net.gw" 2>/dev/null || echo off)" \
-    "$(cat "${RUN}/net.hs_if" 2>/dev/null)"
+    "$(cat "${RUN}/net.hs_if" 2>/dev/null)" "$(cat "${RUN}/net.hs_gw" 2>/dev/null)"
 }
 
 if [ "${0##*/}" = net.sh ]; then
