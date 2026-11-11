@@ -18,9 +18,9 @@ import { exec, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import { ICONS } from "./icons.js";
 import {
-  SET_KEYS, MODE_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
+  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  parseBootTail, newBootBuf, feedBoot,
+  parseBootTail, newBootBuf, feedBoot, trafficLine,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -180,6 +180,8 @@ function render(d) {
   seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (v) => setKey("VM_SHARE_MODE", v), sh.rw_supported ? [] : ["rw"]);
   $("v-share-path").textContent = displayPath(cfg.VM_SHARE_PATH);
 
+  seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
+
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
   fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "512");
   $("v-disk").textContent = fmtSize(cfg.VM_DISK_SIZE_MB);
@@ -204,7 +206,7 @@ function schedule() {
   const v = status ? vmView(status, pending) : { phase: "stopped" };
   const fast = v.phase === "starting" || v.phase === "stopping";
   timer = setTimeout(async () => {
-    if (!document.hidden) { await refresh(); if (page === 2) loadLog(true); }
+    if (!document.hidden) { await refresh(); if (page === 2) loadLog(true); if (page === 3) loadTraffic(); }
     schedule();
   }, fast ? 1500 : 5000);
 }
@@ -336,6 +338,19 @@ async function resetDisk() {
   await refresh();
 }
 
+// ---- 累计流量：只在设置页可见时读取 ----
+async function loadTraffic() {
+  const r = await xr("traffic");
+  $("v-traffic").textContent = trafficLine(lastJson(r.stdout), "total");
+}
+async function resetTraffic() {
+  if (!await confirmDlg("清零流量统计", "通知与此处的累计流量将从 0 重新计算", "清零", true)) return;
+  const r = await xr("traffic-reset");
+  const res = lastJson(r.stdout);
+  snack(res && res.ok ? "已清零" : "清零失败", !(res && res.ok));
+  loadTraffic();
+}
+
 // ---- 日志 ----
 async function loadLog(keepScroll) {
   const box = $("log-box");
@@ -373,6 +388,7 @@ function goPage(i) {
   if (page === i) return;
   page = i;
   if (i === 2) loadLog();
+  if (i === 3) loadTraffic();
 }
 
 function bindPager() {
@@ -423,6 +439,7 @@ function bind() {
   $("sel-mem").addEventListener("change", (e) => setKey("VM_MEM_MB", e.target.value));
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
+  $("btn-traffic-reset").addEventListener("click", resetTraffic);
   $("btn-export-one").addEventListener("click", () => exportLog(logKind));
   $("btn-export-all").addEventListener("click", () => exportLog("all"));
   $("btn-log-clear").addEventListener("click", clearLog);

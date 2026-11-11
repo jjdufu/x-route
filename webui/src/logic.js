@@ -2,7 +2,7 @@
 export const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 export const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
-  "AUTOSTART", "VM_CPUS", "VM_MEM_MB",
+  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC",
 ];
 const ARG_RE = /^[A-Za-z0-9_-]+$/;
 export const MEDIA_ROOT = "/storage/emulated/0";
@@ -28,6 +28,11 @@ export const LOG_KINDS = [
   { value: "console", label: "串口" },
   { value: "ctl", label: "控制服务" },
   { value: "vmm", label: "虚拟机" },
+];
+export const NOTIFY_OPTS = [
+  { value: "total", label: "总流量" },
+  { value: "wan", label: "公网" },
+  { value: "lan", label: "内网" },
 ];
 export const VPN_TXT = { down: "未连接", connecting: "连接中", up: "已连接" };
 export const STEPS = ["启动虚拟机", "网络就绪", "运行中"];
@@ -165,4 +170,19 @@ export function feedBoot(buf, src, text, cap = BOOT_LINES) {
   }
   if (buf.lines.length > cap) buf.lines.splice(0, buf.lines.length - cap);
   return changed;
+}
+
+// 累计流量：与通知、traffic.sh 一致（1024 进制、一位小数）
+const UNITS = ["B", "KB", "MB", "GB", "TB"];
+export function fmtBytes(n) {
+  let v = Math.max(0, Number(n) || 0);
+  let i = 0;
+  while (v >= 1024 && i < UNITS.length - 1) { v /= 1024; i++; }
+  return i === 0 ? `${Math.floor(v)} B` : `${v.toFixed(1)} ${UNITS[i]}`;
+}
+// d = xr traffic 的 JSON；mode = total | wan | lan
+export function trafficLine(d, mode) {
+  const t = d && d[mode === "wan" || mode === "lan" ? mode : "total"];
+  if (!t) return "—";
+  return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
 }

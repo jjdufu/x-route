@@ -28,6 +28,8 @@ after_set() {
   case "$1" in
     XR_EXPOSE|XR_MODE)
       vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
+    XR_NOTIFY_TRAFFIC)
+      : > "${RUN}/notify.force" ;;   # 守护进程一秒内按新设置刷新通知，不重启虚拟机
     AUTOSTART)
       load_config
       if [ "${AUTOSTART}" = 1 ]; then

@@ -186,6 +186,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .seg-btn:disabled { opacity: .38; cursor: default; }
 .seg-wide { display: flex; width: 100%; }
 .seg-wide .seg-btn { flex: 1; padding: 0 6px; }
+.seg-tight .seg-btn { padding: 0 10px; }
 
 /* 下拉（md-outlined-select） */
 .sel {

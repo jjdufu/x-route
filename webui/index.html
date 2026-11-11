@@ -100,6 +100,15 @@
           <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><md-switch id="sw-ipv6" icons></md-switch></div>
         </div>
 
+        <div class="group-title">通知</div>
+        <div class="card list">
+          <div class="item"><md-icon data-icon="public"></md-icon><span class="grow">通知显示</span><div id="seg-notify" class="seg seg-tight"></div></div>
+          <div class="item"><md-icon data-icon="description"></md-icon><span class="grow">累计流量</span><span id="v-traffic" class="val">—</span></div>
+          <div class="actions">
+            <md-outlined-button id="btn-traffic-reset" class="danger"><md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零</md-outlined-button>
+          </div>
+        </div>
+
         <div class="group-title">存储共享</div>
         <div class="card list">
           <div id="row-share" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="folder_shared"></md-icon><span class="grow">存储共享</span><md-switch id="sw-share" icons></md-switch></div>

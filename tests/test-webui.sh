@@ -35,7 +35,7 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "set", "ipv6", "vpn-import", "ls", "log", "log-export", "log-clear", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log", "log-export", "log-clear", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
@@ -66,6 +66,18 @@ if (/XR_|VM_|AUTOSTART|hotspot|bypass|global|ovpn|SWIOTLB/.test(visible)) fail("
 eq(L.MODE_OPTS.map((o) => o.label), ["全局接管", "旁路网关"], "运行模式");
 eq(L.ACCESS_OPTS.map((o) => o.label), ["本机", "内网", "所有"], "管理访问");
 eq(L.SHARE_OPTS.map((o) => o.label), ["只读", "读写"], "权限");
+eq(L.NOTIFY_OPTS.map((o) => o.label), ["总流量", "公网", "内网"], "通知显示");
+const notifyVals = common.match(/XR_NOTIFY_TRAFFIC\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
+eq(L.NOTIFY_OPTS.map((o) => o.value), notifyVals, "通知显示取值与 valid_kv 一致");
+if (!/XR_NOTIFY_TRAFFIC="total"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("通知显示默认应为总流量");
+for (const t of ["通知显示", "累计流量", "清零"]) if (!html.includes(t)) fail(`缺少文案 ${t}`);
+eq([L.fmtBytes(0), L.fmtBytes(1023), L.fmtBytes(1536), L.fmtBytes(1288490189), L.fmtBytes(9234179686), L.fmtBytes(5497558138880)],
+  ["0 B", "1023 B", "1.5 KB", "1.2 GB", "8.6 GB", "5.0 TB"], "fmtBytes");
+const tj = { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 1024 }, total: { up: 1024, down: 3072 } };
+eq([L.trafficLine(tj, "total"), L.trafficLine(tj, "wan"), L.trafficLine(tj, "lan"), L.trafficLine(null, "total")],
+  ["↑1.0 KB ↓3.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB", "—"], "trafficLine");
+// 累计流量只在设置页读取，不在主页轮询
+if (!/page === 3\) loadTraffic\(\)/.test(main)) fail("累计流量应只在设置页读取");
 eq(L.LOG_KINDS.map((o) => o.label), ["模块", "串口", "控制服务", "虚拟机"], "日志分类");
 const exposeVals = common.match(/XR_EXPOSE\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
 eq(L.ACCESS_OPTS.map((o) => o.value), exposeVals, "管理访问取值与 valid_kv 一致");
@@ -75,7 +87,7 @@ for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(common)) fail(`SE
 
 // 确认弹窗只用于：运行模式、停止、重置 / 扩容系统盘、清空日志
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);
-eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清空${label}日志", "重置系统盘"].sort(), "确认弹窗范围");
+eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清空${label}日志", "清零流量统计", "重置系统盘"].sort(), "确认弹窗范围");
 if (!main.includes('dialogResult($("dlg-expand"))')) fail("扩容需确认");
 
 // 纯函数
