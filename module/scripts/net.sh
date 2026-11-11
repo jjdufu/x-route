@@ -12,6 +12,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/vpnroutes.sh"
 . "${MODDIR}/scripts/v6.sh"
+. "${MODDIR}/scripts/traffic.sh"
 load_config
 
 XR_IF=xr0
@@ -258,7 +259,9 @@ sync_all() {
 
   ex="$(expose_ifaces | tr '\n' ' ')"; echo "$ex" > "${RUN}/net.expose_if"
   routes_sync      # 08：必须在 XR_FWD 重建前执行（XR_FWD 读取 routes.active）
+  acct_setup "$([ -f "${RUN}/net.fwd6" ] && echo 1)"   # 流量统计：内网列表同样取自 routes.active
   ${IPT} -F XR_FWD
+  acct_present && ${IPT} -A XR_FWD -j XR_ACCT   # 只计数后 RETURN，不影响后续放行 / 丢弃
   ${IPT} -A XR_FWD -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   ${IPT} -A XR_FWD -i "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   for o in $outs; do ${IPT} -A XR_FWD -i "${XR_IF}" -o "$o" -j ACCEPT; done
@@ -292,6 +295,7 @@ sync_all() {
 sync_v6() {
   echo "$outs6" > "${RUN}/net.up_out6"; { vm_v6 && echo 1; } > "${RUN}/net.v6"
   ${IP6T} -F XR_FWD6
+  acct_present6 && ${IP6T} -A XR_FWD6 -j XR_ACCT6
   ${IP6T} -A XR_FWD6 -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   ${IP6T} -A XR_FWD6 -i "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   if vm_v6; then   # 虚拟机自身 IPv6 出网（旁路模式同样可用）
@@ -334,7 +338,7 @@ net_watch() {
        || [ "$(vm_v6 && echo 1)" != "$(cat "${RUN}/net.v6" 2>/dev/null)" ] \
        || [ "$(v6_src_fingerprint)" != "$(cat "${RUN}/net.v6src" 2>/dev/null)" ] \
        || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
-    fwd_first; nat_first; fwd6_first; nat6_first
+    fwd_first; nat_first; fwd6_first; nat6_first; acct_hooks
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
     for f in ip ip6; do
@@ -364,6 +368,7 @@ net_down() {
   ${IP6T} -F XR_FWD6 2>/dev/null; ${IP6T} -X XR_FWD6 2>/dev/null
   while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
   ${IP6T} -t nat -F XR_NAT6 2>/dev/null; ${IP6T} -t nat -X XR_NAT6 2>/dev/null
+  acct_teardown    # XR_FWD / XR_FWD6 已删，计数折算保存后再删统计链
   for f in ip ip6; do
     for p in 18800 18900 4800; do while $f rule del pref "$p" 2>/dev/null; do :; done; done
   done

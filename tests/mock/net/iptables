@@ -3,6 +3,24 @@
 [ "$1" = -w ] && shift
 echo "iptables $*" >> "$MOCK/calls"
 t=filter; [ "$1" = -t ] && { t=$2; shift 2; }
+# 流量统计链（XR_ACCT*）与 INPUT/OUTPUT 钩子：通用实现，计数从 $MOCK/cnt.<链> 逐行读取（缺省 0）
+case "$t:$*" in
+  "filter:-N XR_ACCT"*) [ -n "${ACCT_FAIL:-}" ] && exit 1; [ -f "$MOCK/chain.$2" ] && exit 1; : > "$MOCK/chain.$2"; exit 0 ;;
+  "filter:-S XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; echo "-N $2"; sed "s/^/-A $2 /" "$MOCK/chain.$2"; exit 0 ;;
+  "filter:-F XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; : > "$MOCK/chain.$2"; rm -f "$MOCK/cnt.$2"; exit 0 ;;
+  "filter:-X XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; rm -f "$MOCK/chain.$2" "$MOCK/cnt.$2"; exit 0 ;;
+  "filter:-Z XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; rm -f "$MOCK/cnt.$2"; exit 0 ;;
+  "filter:-A XR_ACCT"*) _c="$2"; shift 2; [ -f "$MOCK/chain.$_c" ] || exit 1; echo "$*" >> "$MOCK/chain.$_c"; exit 0 ;;
+  "filter:-nvxL XR_ACCT"*)
+    [ -f "$MOCK/chain.$2" ] || exit 1
+    echo "Chain $2 (1 references)"; echo "    pkts      bytes target     prot opt in     out     source               destination"
+    n=0; while IFS= read -r r; do n=$((n+1)); b="$(sed -n "${n}p" "$MOCK/cnt.$2" 2>/dev/null)"; echo "       1 ${b:-0} RETURN all -- * * 0.0.0.0/0 0.0.0.0/0 # $r"; done < "$MOCK/chain.$2"
+    exit 0 ;;
+  "filter:-C INPUT "*|"filter:-C OUTPUT "*) _h="$MOCK/hook.$2"; shift 2; grep -qxF -- "$*" "$_h" 2>/dev/null; exit ;;
+  "filter:-I INPUT 1 "*|"filter:-I OUTPUT 1 "*) _h="$MOCK/hook.$2"; shift 3; echo "$*" >> "$_h"; exit 0 ;;
+  "filter:-D INPUT "*|"filter:-D OUTPUT "*) _h="$MOCK/hook.$2"; shift 2; grep -qxF -- "$*" "$_h" 2>/dev/null || exit 1
+    grep -vxF -- "$*" "$_h" > "$_h.t"; mv "$_h.t" "$_h"; exit 0 ;;
+esac
 case "$t:$*" in
   "filter:-S FORWARD") echo "-P FORWARD ACCEPT"; [ -f "$MOCK/fwd_hook" ] && echo "-A FORWARD -j XR_FWD"; exit 0 ;;
   "filter:-D FORWARD -j XR_FWD") [ -f "$MOCK/fwd_hook" ] && rm -f "$MOCK/fwd_hook" && exit 0; exit 1 ;;

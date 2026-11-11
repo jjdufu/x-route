@@ -64,6 +64,15 @@ ${IP6T} -X XR_FWD6 2>/dev/null
 while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
 ${IP6T} -t nat -F XR_NAT6 2>/dev/null
 ${IP6T} -t nat -X XR_NAT6 2>/dev/null
+# 流量统计链（只计数）：先摘 INPUT/OUTPUT 钩子，再清空删除
+for t in "${IPT}" "${IP6T}"; do
+  for c in XR_ACCT XR_ACCT6; do
+    while ${t} -D INPUT -i xr0 -j "$c" 2>/dev/null; do :; done
+    while ${t} -D OUTPUT -o xr0 -j "$c" 2>/dev/null; do :; done
+    for s in "$c" "${c}_UP" "${c}_DN"; do ${t} -F "$s" 2>/dev/null; done
+    for s in "$c" "${c}_UP" "${c}_DN"; do ${t} -X "$s" 2>/dev/null; done
+  done
+done
 ndc ipfwd disable xrouter >/dev/null 2>&1
 ndc ipfwd disable xroute >/dev/null 2>&1
 # pref：访问 VM 网段、VPN 网段、VM 出网、全局接管（见 docs/xrouter-plan/04）

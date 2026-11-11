@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
-# 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
+# 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
 #       vpn-import PATH|ls PATH [dir|ovpn]|log [KIND] [N]|log-export [all|KIND]|log-clear all|KIND
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
@@ -9,6 +9,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 ensure_dirs
 . "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
 . "${MODDIR}/scripts/daemon.sh"
+. "${MODDIR}/scripts/traffic.sh"
 
 RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH"
 
@@ -289,6 +290,9 @@ case "$cmd" in
   start-bg)    bg_run start ;;
   stop-bg)     bg_run stop ;;
   boot-tail)   boot_tail "${1:--1}" "${2:--1}" ;;
+  traffic)     acct_json ;;
+  traffic-reset)
+    acct_reset; : > "${RUN}/notify.force"; log_info xr "流量统计已清零"; echo '{"ok":true}' ;;
   running)     vm_running ;;
   status-json) status_json ;;
   status-line) status_line ;;
@@ -319,5 +323,5 @@ case "$cmd" in
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
 esac

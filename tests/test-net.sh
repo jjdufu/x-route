@@ -44,8 +44,10 @@ chk 'grep -q "192.168.43.0/25 与 192.168.43.1/24 重叠" "$LOG"'
 # 蜂窝上游 = WAN：出站放行、回包放行、入站丢弃（与 Wi-Fi 上游规则相同）
 chk 'grep -qx -- "-i xr0 -o rmnet_data2 -j ACCEPT" "$FWD" && grep -qx -- "-i rmnet_data2 -o xr0 -j DROP" "$FWD"'
 chk '! grep -q -- "-i rmnet+" "$FWD"'
-chk '[ "$(sed -n 1p "$FWD")" = "-o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ] && [ "$(sed -n 2p "$FWD")" = "-i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ]'
-chk '[ "$(sed -n 3p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
+# 第一条是流量统计（只计数后 RETURN），其后才是回包放行
+chk '[ "$(sed -n 1p "$FWD")" = "-j XR_ACCT" ]'
+chk '[ "$(sed -n 2p "$FWD")" = "-o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ] && [ "$(sed -n 3p "$FWD")" = "-i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" ]'
+chk '[ "$(sed -n 4p "$FWD")" = "-i xr0 -o rmnet_data2 -j ACCEPT" ]'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.8.0.0/24 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 8.8.8.0/24 -j ACCEPT" "$FWD"'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 10.58.88.2/32 -j ACCEPT" "$FWD" && grep -qx -- "-i wlan1 -o xr0 -d 10.1.2.3/32 -j ACCEPT" "$FWD"'
 chk 'grep -qx -- "-i wlan1 -o xr0 -d 2001:db8:10::/64 -j ACCEPT" "$MOCK/XR_FWD6" && grep -qx -- "-i wlan1 -o xr0 -d 2001:db8::5/128 -j ACCEPT" "$MOCK/XR_FWD6"'
