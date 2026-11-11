@@ -5,6 +5,31 @@
 #       vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
+
+# ---- 开机日志增量读取（WebUI 开机时每 ~200ms 调一次）：走快速路径，不加载其余脚本、不建目录，
+# 只 stat 文件大小并从上次的字节偏移读新增部分，尽量少占 CPU，开机期间界面不卡 ----
+# 输出：R<退出码或 -> \037 S<虚拟机状态> \037 模块日志大小 \037 内容 \037 串口日志大小 \037 内容
+if [ "${1:-}" = boot-tail ]; then
+  _run="${XR_DATA:-/data/adb/xrouter}/run"
+  tail_from() {   # $1=文件 $2=上次的字节偏移（-1 表示只取当前大小）；新增内容最多 6KB，去掉控制字符
+    _f="$1"; _o="$2"; _max=6144
+    _sz="$(stat -c %s "$_f" 2>/dev/null)"
+    case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
+    printf '%s\037' "$_sz"
+    case "$_o" in -1) return 0 ;; ''|*[!0-9]*) _o=0 ;; esac
+    [ "$_o" -gt "$_sz" ] && _o=0          # 被截断或轮转
+    [ $((_sz - _o)) -gt "$_max" ] && _o=$((_sz - _max))
+    [ "$_o" -lt "$_sz" ] || return 0
+    tail -c "+$((_o + 1))" "$_f" 2>/dev/null | head -c "$((_sz - _o))" | tr -d '\000-\010\013-\037\177'
+  }
+  _st="$(cat "${_run}/state" 2>/dev/null)"
+  [ -n "$_st" ] || { [ -f "${_run}/crosvm.pid" ] && _st=booting; }
+  printf 'R%s\037S%s\037' "$(cat "${_run}/bg.rc" 2>/dev/null || echo -)" "${_st:-stopped}"
+  tail_from "${XR_DATA:-/data/adb/xrouter}/log/module.log" "${2:--1}"; printf '\037'
+  tail_from "${_run}/console.log" "${3:--1}"
+  exit 0
+fi
+
 . "${MODDIR}/scripts/common.sh"
 ensure_dirs
 . "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
@@ -245,36 +270,12 @@ bg_run() {
   echo '{"ok":true}'
 }
 
-# 增量读取一段日志：$1=文件 $2=上次的字节偏移（-1 表示只取当前大小）
-# 输出：大小 \037 新增内容（去掉控制字符，最多 6KB）
-tail_from() {
-  _f="$1"; _o="$2"; _max=6144
-  _sz="$(wc -c < "$_f" 2>/dev/null | tr -d ' ')"
-  case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
-  printf '%s\037' "$_sz"
-  case "$_o" in -1) return 0 ;; esac
-  case "$_o" in ''|*[!0-9]*) _o=0 ;; esac
-  [ "$_o" -gt "$_sz" ] && _o=0          # 被截断或轮转
-  [ $((_sz - _o)) -gt "$_max" ] && _o=$((_sz - _max))
-  [ "$_o" -lt "$_sz" ] || return 0
-  tail -c "+$((_o + 1))" "$_f" 2>/dev/null | head -c "$((_sz - _o))" | tr -d '\000-\010\013-\037\177'
-}
-
-# WebUI 启动动画的实时日志：$1=模块日志偏移 $2=串口日志偏移
-# 输出：R<退出码或 -> \037 模块日志大小 \037 内容 \037 串口日志大小 \037 内容
-boot_tail() {
-  printf 'R%s\037' "$(cat "${RUN}/bg.rc" 2>/dev/null || echo -)"
-  tail_from "${LOG}" "${1:--1}"; printf '\037'
-  tail_from "${CON_LOG}" "${2:--1}"
-}
-
 cmd="$1"; [ $# -gt 0 ] && shift
 case "$cmd" in
   start)       vm_start ;;
   stop)        vm_stop ;;
   start-bg)    bg_run start ;;
   stop-bg)     bg_run stop ;;
-  boot-tail)   boot_tail "${1:--1}" "${2:--1}" ;;
   traffic)     acct_json ;;
   traffic-reset)
     acct_reset; : > "${RUN}/notify.force"; log_info xr "流量统计已清零"; echo '{"ok":true}' ;;

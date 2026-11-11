@@ -34,7 +34,7 @@ for (const src of [main, fb]) for (const m of src.matchAll(/\$\("([\w-]+)"\)/g))
 for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
-for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh)) fail(`xr 不支持子命令 ${s}`);
+for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh) && !xrsh.includes(`if [ "\${1:-}" = ${s} ]`)) fail(`xr 不支持子命令 ${s}`);
 for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log-export", "diag-export", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
@@ -60,7 +60,7 @@ if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得�
 if (/behavior:\s*["']smooth|behavior:\s*smooth/.test(main)) fail("页面切换不得使用 smooth 滚动");
 if (!/Tab\.prototype\[ANIMATE_INDICATOR\]\s*=/.test(main)) fail("未关闭 Tab 指示条动画");
 if (!/\.page:not\(\.on\)/.test(css) || !html.includes('class="page on" id="page-home"')) fail("页面应按 .on 直接显隐");
-if (/\.page[^{]*\{[^}]*(transition|animation)/.test(css)) fail("页面不得带过渡动画");
+if (/\.page[^{]*\{[^}]*(transition|animation(?!-play-state))/.test(css)) fail("页面不得带过渡动画");
 const visible = html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ");
 if (/XR_|VM_|AUTOSTART|hotspot|bypass|global|ovpn|SWIOTLB/.test(visible)) fail("页面可见文案含内部变量名或取值");
 eq(L.MODE_OPTS.map((o) => o.label), ["全局接管", "旁路网关"], "运行模式");
@@ -123,7 +123,11 @@ if (/await\s+xr\(\s*kind/.test(main)) fail("按钮不得等待后台启停");
 // 开机日志：真实增量日志、轮询节流、固定行池、只用 transform 平滑上移、无模糊/发光动画
 if (!html.includes('id="boot-log"') || html.includes('id="power-log"')) fail("开机日志应在舞台里而不是按钮里");
 if (html.indexOf('id="boot"') > html.indexOf('id="row-autostart"')) fail("开机日志应在「开机自启」上方");
-if (!/setTimeout\(\(\) => bootTick\(b\), (3|4|5)\d\d\)/.test(main)) fail("启动日志应 300-500ms 轮询");
+{ const m = main.match(/const BOOT_POLL = (\d+);/); if (!m || +m[1] < 150 || +m[1] > 250 || !/setTimeout\(\(\) => bootTick\(b\), BOOT_POLL\)/.test(main)) fail("开机日志应 150-250ms 轮询"); }
+// 单次在途：先 await 本次 exec，再排下一次；开机期间暂停常规状态轮询
+{ const bt = main.slice(main.indexOf("async function bootTick"), main.indexOf("// ---- 操作 ----"));
+  if (bt.indexOf('await xr("boot-tail"') < 0 || bt.indexOf('await xr("boot-tail"') > bt.indexOf("setTimeout(() => bootTick(b), BOOT_POLL)")) fail("boot-tail 必须单次在途");
+  if (!/!document\.hidden && !boot\) \{ await refresh\(\)/.test(main)) fail("开机期间应暂停常规状态轮询"); }
 const blk = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
 const plog = blk(".boot-log");
 if (/blur|box-shadow|animation|filter/.test(plog + blk(".boot"))) fail("开机日志不得用模糊/阴影/动画");
@@ -134,6 +138,7 @@ const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启�
 eq([bt.rc, bt.mod.size, bt.con.size], [1, 120, 30], "parseBootTail");
 eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
 eq(L.parseBootTail("garbage"), null, "parseBootTail 非法");
+eq((({ rc, st, mod, con }) => [rc, st, mod.size, con.size, con.text])(L.parseBootTail("R-\x1fSbooting\x1f5\x1fabc\x1f9\x1fx\x1fy")), [null, "booting", 5, 9, "xy"], "parseBootTail 带虚拟机状态");
 const bb = L.newBootBuf();
 eq(L.feedBoot(bb, "mod", bt.mod.text), true, "feedBoot 有新行");
 L.feedBoot(bb, "con", bt.con.text);
@@ -144,12 +149,20 @@ for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
 eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
 eq(bb.total, 54, "feedBoot 累计行数");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
-// 启动中：电源按钮整个隐藏、没有转圈；舞台有静态电路板底纹
+// 启动中：电源按钮整个隐藏、没有转圈。舞台三态：未启动红色断电电路板（静态）、开机中只有日志、运行中绿色电路板 + 电流
 if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
 const stg = blk(".stage"); const stgRun = blk(".stage.running");
-if (/url\(/.test(stg) || !/url\("data:image\/svg\+xml/.test(stgRun) || /animation|transition/.test(stg + stgRun)) fail("舞台：停止时普通底色，运行中才是静态电路板底纹");
-if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台底色应随启动阶段切换");
+if (!/%23ffb4ab/.test(stg) || !/stroke-dasharray/.test(stg) || /animation|transition/.test(stg)) fail("未启动：红色、断开的静态电路板");
+if (!/%237bd88f/.test(stgRun)) fail("运行中：绿色电路板");
+if (!/\.stage\.starting \{[^}]*background-image: none/.test(css) || !/\.starting \.traces \{ display: none; \}/.test(css)) fail("开机中只显示日志");
+if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随启动阶段切换");
+// 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜
+const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
+for (const n of ["flowX", "flowY"]) { const k = kf(n); if (!k || /opacity|left|top|width|height|stroke|filter|shadow/.test(k.replace(/@keyframes \w+/, ""))) fail(`${n} 只能改 transform`); }
+if (!/\.running \.tr i \{[^}]*animation: flowX/.test(css) || /(^|\n)\.tr i \{[^}]*animation/.test(css)) fail("电流只在运行中流动");
+if (!/\.page:not\(\.on\) \.tr i, \.hid \.tr i \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
+if ((html.match(/class="tr /g) || []).length > 12) fail("电流走线过多");
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
 if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");

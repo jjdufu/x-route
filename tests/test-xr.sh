@@ -142,14 +142,18 @@ chk '[ "$(cat "$RUN/bg.rc")" = 0 ]'
 # boot-tail：按字节偏移增量读取、截断后从头读、去掉控制字符、超长只给末尾 6KB
 BT() { $XR boot-tail "$@" | python3 -c "import sys; f=sys.stdin.buffer.read().split(b'\x1f'); print(\"|\".join(x.decode().replace(chr(10), \"/\") for x in f))"; }
 printf 'l1\nl2\n' > "$RUN/console.log"; : > "$LOG"
-chk '[ "$(BT -1 -1)" = "R0|0||6|" ]'
-chk '[ "$(BT 0 0)" = "R0|0||6|l1/l2/" ]'
+chk '[ "$(BT -1 -1)" = "R0|Sstopped|0||6|" ]'
+chk '[ "$(BT 0 0)" = "R0|Sstopped|0||6|l1/l2/" ]'
 printf 'l3\033[0m\r\n' >> "$RUN/console.log"
-chk '[ "$(BT 0 6)" = "R0|0||14|l3[0m/" ]'
-chk '[ "$(BT 0 12345678)" = "R0|0||14|l1/l2/l3[0m/" ]'
+chk '[ "$(BT 0 6)" = "R0|Sstopped|0||14|l3[0m/" ]'
+chk '[ "$(BT 0 12345678)" = "R0|Sstopped|0||14|l1/l2/l3[0m/" ]'
 head -c 10000 /dev/zero | tr '\0' a > "$RUN/console.log"
-chk '[ "$($XR boot-tail -1 0 | python3 -c "import sys; print(len(sys.stdin.buffer.read().split(b\"\x1f\")[4]))")" = 6144 ]'
+chk '[ "$($XR boot-tail -1 0 | python3 -c "import sys; print(len(sys.stdin.buffer.read().split(b\"\x1f\")[5]))")" = 6144 ]'
 rm -f "$RUN/bg.rc"; chk '$XR boot-tail -1 -1 | grep -q "^R-"'
+echo ready > "$RUN/state"; chk '[ "$(BT -1 -1 | cut -d"|" -f2)" = Sready ]'; rm -f "$RUN/state"
+# 快速路径：boot-tail 不加载其余脚本（不 source common.sh），开机期间每 ~200ms 调用也很轻
+chk '[ "$(sed -n "/^if \[ \"\${1:-}\" = boot-tail \]/,/^fi/p" "$ROOT/module/scripts/xr" | grep -c "^\. ")" = 0 ]'
+chk '[ "$(grep -n "= boot-tail \]" "$ROOT/module/scripts/xr" | cut -d: -f1)" -lt "$(grep -n "scripts/common.sh\"$" "$ROOT/module/scripts/xr" | head -1 | cut -d: -f1)" ]'
 # 用法错误
 out="$($XR bogus)"; chk '[ $? -eq 2 ]'
 out="$($XR expand abc)"; chk '[ $? -eq 2 ]'

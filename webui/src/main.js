@@ -218,9 +218,10 @@ async function refresh() {
 function schedule() {
   clearTimeout(timer);
   const v = status ? vmView(status, pending) : { phase: "stopped" };
-  const fast = v.phase === "starting" || v.phase === "stopping";
+  const fast = v.phase === "stopping";
   timer = setTimeout(async () => {
-    if (!document.hidden) { await refresh(); if (page === 2) loadTraffic(); }
+    // 开机中由 bootTick 驱动状态刷新，这里不再并行拉 status-json
+    if (!document.hidden && !boot) { await refresh(); if (page === 2) loadTraffic(); }
     schedule();
   }, fast ? 1500 : 5000);
 }
@@ -244,7 +245,7 @@ function bootOn() {
   if (boot) return;
   // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
   // 打开页面时已在开机：直接给出串口日志末尾一段
-  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, total: 0 };
+  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, st: undefined, at: Date.now() };
   bootPool().forEach((r) => { r.textContent = ""; });
   const box = $("boot-log");
   box.classList.remove("glide"); box.style.transform = "";
@@ -287,9 +288,13 @@ function bootPaint(b) {
   });
 }
 
+// 开机期间的唯一轮询：约 200ms 一次，上一次 exec 返回后才排下一次（永不重叠）；
+// boot-tail 在手机侧走快速路径，只读新增字节。状态（status-json）只在虚拟机状态变化或每 5 秒拉一次，
+// 其他定时刷新在开机期间全部暂停，WebView 主线程基本空闲
+const BOOT_POLL = 200;
 async function bootTick(b) {
   if (boot !== b) return;
-  if (!document.hidden && page === 0) {
+  if (!document.hidden) {
     const r = await xr("boot-tail", String(b.m), String(b.c));
     if (boot !== b) return;
     const t = parseBootTail(r.stdout);
@@ -297,18 +302,24 @@ async function bootTick(b) {
       b.m = t.mod.size; b.c = t.con.size;
       const a = feedBoot(b.buf, "mod", t.mod.text);
       const c = feedBoot(b.buf, "con", t.con.text);
-      if (a || c) bootPaint(b);
+      if ((a || c) && page === 0) bootPaint(b);
       if (pending === "start" && bgArmed && t.rc !== null && t.rc !== 0) {
-        // 后台 xr start 已失败退出：立刻结束转圈，显示原因
+        // 后台 xr start 已失败退出：立刻结束，显示原因
         pending = null;
         await refresh();
         if (!(status && status.vm && (status.vm.running || status.vm.error))) snack("启动失败", true);
         schedule();
         return;
       }
+      const now = Date.now();
+      if (t.st !== b.st || now - b.at > 5000) {
+        b.st = t.st; b.at = now;
+        await refresh();          // 可能结束开机阶段（bootOff）
+        if (boot !== b) { schedule(); return; }
+      }
     }
   }
-  if (boot === b) b.timer = setTimeout(() => bootTick(b), 400);
+  if (boot === b) b.timer = setTimeout(() => bootTick(b), BOOT_POLL);
 }
 
 // ---- 操作 ----
@@ -488,7 +499,10 @@ function bind() {
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
   $("btn-traffic-reset").addEventListener("click", resetTraffic);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
+  document.addEventListener("visibilitychange", () => {
+    document.documentElement.classList.toggle("hid", document.hidden);   // 不可见时暂停电流动画
+    if (!document.hidden && !boot) { refresh(); schedule(); }
+  });
 }
 
 // ---- 全屏：SukiSU WebUI 默认给页面四周留出系统栏（灰色 #303030 条）。

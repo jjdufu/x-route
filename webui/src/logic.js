@@ -137,13 +137,18 @@ export const BOOT_LINES = 20;
 export const BOOT_COLS = 64;
 const SEP = "\x1f";
 
-// 输出格式：R<退出码|-> SEP 模块日志大小 SEP 新增 SEP 串口日志大小 SEP 新增
+// 输出格式：R<退出码|-> SEP S<虚拟机状态> SEP 模块日志大小 SEP 新增 SEP 串口日志大小 SEP 新增
+// （S 段可省略：旧格式直接是模块日志大小）
 export function parseBootTail(text) {
   const f = String(text || "").split(SEP);
   if (f.length < 5 || f[0][0] !== "R") return null;
   const rc = f[0].slice(1).trim();
+  let st = null;
+  if (f[1][0] === "S") { st = f[1].slice(1).trim() || null; f.splice(1, 1); }
+  if (f.length < 5) return null;
   return {
     rc: rc === "" || rc === "-" || isNaN(Number(rc)) ? null : Number(rc),
+    st,
     mod: { size: Number(f[1]) || 0, text: f[2] },
     con: { size: Number(f[3]) || 0, text: f.slice(4).join("") },
   };

@@ -134,23 +134,48 @@ md-icon { --md-icon-size: 22px; flex: none; }
 
 .alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
-/* 首页舞台：开机自启上方的方形区域。运行中铺一张大的电路板底纹（静态 SVG + 渐变，无动画、无发光） */
+/* 首页舞台：开机自启上方的方形区域，三种状态：
+   - 未启动 / 失败 / 停止中：红色电路板，走线断开（「断电」），全静态；
+   - 开机中：深色底，只显示瀑布式开机日志；
+   - 运行中：绿色电路板，主走线上有电流脉冲流向中间的芯片（电源按钮）。
+   脉冲只做 transform 动画（合成层，不重绘），页面不可见或切到其他页时暂停；没有发光、模糊、滤镜。 */
 .power-area { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0 0 8px; }
 .stage {
+  --c: rgba(255, 180, 171, .30);
   position: relative; width: 100%; height: 252px; border-radius: var(--xr-radius); overflow: hidden;
   display: grid; place-items: center; contain: strict;
-  background-color: var(--md-sys-color-surface-container);
-}
-/* 三种状态：已停止 / 失败为普通卡片底色；启动中为深色底只显示开机日志；运行中换成电路板底纹 */
-.stage.starting { background-color: var(--md-sys-color-surface-container-lowest); }
-.stage.running {
-  background-color: var(--md-sys-color-surface-container-lowest);
+  background-color: #150f10;
   background-image:
     radial-gradient(ellipse at 50% 50%, transparent 0 34%, rgba(12, 14, 19, .82) 78%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%23a8c8ff' stroke-opacity='.16' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M0 40h52l18 18h56l14-14h100'/%3E%3Cpath d='M0 120h34l22-22h42l20 20h50l18-18h54'/%3E%3Cpath d='M0 200h70l16-16h44l26 26h84'/%3E%3Cpath d='M40 0v24l16 16M120 0v44M200 0v30l-18 18v34'/%3E%3Cpath d='M86 240v-40l18-18v-26M160 240v-30l20-20h60M30 240v-58l18-18h20'/%3E%3Cpath d='M182 82v40l-16 16h-36M70 58v28M126 58v36l-14 14'/%3E%3C/g%3E%3Cg fill='%23a8c8ff' fill-opacity='.22'%3E%3Ccircle cx='52' cy='40' r='3'/%3E%3Ccircle cx='126' cy='58' r='3'/%3E%3Ccircle cx='98' cy='98' r='3'/%3E%3Ccircle cx='168' cy='118' r='3'/%3E%3Ccircle cx='86' cy='200' r='3'/%3E%3Ccircle cx='156' cy='184' r='3'/%3E%3Ccircle cx='182' cy='82' r='3'/%3E%3Ccircle cx='70' cy='86' r='3'/%3E%3Ccircle cx='68' cy='164' r='3'/%3E%3Ccircle cx='200' cy='30' r='3'/%3E%3C/g%3E%3Cg fill='none' stroke='%23a8c8ff' stroke-opacity='.12' stroke-width='1.5'%3E%3Crect x='100' y='130' width='40' height='26' rx='3'/%3E%3Crect x='190' y='150' width='26' height='18' rx='2'/%3E%3C/g%3E%3C/svg%3E");
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%23ffb4ab' stroke-opacity='.10' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' stroke-dasharray='34 10 60 14'%3E%3Cpath d='M0 40h52l18 18h56l14-14h100'/%3E%3Cpath d='M0 120h34l22-22h42l20 20h50l18-18h54'/%3E%3Cpath d='M0 200h70l16-16h44l26 26h84'/%3E%3Cpath d='M40 0v24l16 16M120 0v44M200 0v30l-18 18v34'/%3E%3Cpath d='M86 240v-40l18-18v-26M160 240v-30l20-20h60M30 240v-58l18-18h20'/%3E%3Cpath d='M182 82v40l-16 16h-36M70 58v28M126 58v36l-14 14'/%3E%3C/g%3E%3Cg fill='%23ffb4ab' fill-opacity='.14'%3E%3Ccircle cx='52' cy='40' r='3'/%3E%3Ccircle cx='126' cy='58' r='3'/%3E%3Ccircle cx='98' cy='98' r='3'/%3E%3Ccircle cx='168' cy='118' r='3'/%3E%3Ccircle cx='86' cy='200' r='3'/%3E%3Ccircle cx='156' cy='184' r='3'/%3E%3Ccircle cx='182' cy='82' r='3'/%3E%3Ccircle cx='70' cy='86' r='3'/%3E%3Ccircle cx='68' cy='164' r='3'/%3E%3Ccircle cx='200' cy='30' r='3'/%3E%3C/g%3E%3Cg fill='none' stroke='%23ffb4ab' stroke-opacity='.12' stroke-width='1.5'%3E%3Crect x='100' y='130' width='40' height='26' rx='3'/%3E%3Crect x='190' y='150' width='26' height='18' rx='2'/%3E%3C/g%3E%3C/svg%3E");
   background-size: 100% 100%, 240px 240px;
   background-position: center, center;
 }
+.stage.starting { background-color: var(--md-sys-color-surface-container-lowest); background-image: none; }
+.stage.running {
+  --c: rgba(123, 216, 143, .34);
+  background-color: #0c130f;
+  background-image:
+    radial-gradient(ellipse at 50% 50%, transparent 0 34%, rgba(12, 14, 19, .82) 78%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%237bd88f' stroke-opacity='.16' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M0 40h52l18 18h56l14-14h100'/%3E%3Cpath d='M0 120h34l22-22h42l20 20h50l18-18h54'/%3E%3Cpath d='M0 200h70l16-16h44l26 26h84'/%3E%3Cpath d='M40 0v24l16 16M120 0v44M200 0v30l-18 18v34'/%3E%3Cpath d='M86 240v-40l18-18v-26M160 240v-30l20-20h60M30 240v-58l18-18h20'/%3E%3Cpath d='M182 82v40l-16 16h-36M70 58v28M126 58v36l-14 14'/%3E%3C/g%3E%3Cg fill='%237bd88f' fill-opacity='.22'%3E%3Ccircle cx='52' cy='40' r='3'/%3E%3Ccircle cx='126' cy='58' r='3'/%3E%3Ccircle cx='98' cy='98' r='3'/%3E%3Ccircle cx='168' cy='118' r='3'/%3E%3Ccircle cx='86' cy='200' r='3'/%3E%3Ccircle cx='156' cy='184' r='3'/%3E%3Ccircle cx='182' cy='82' r='3'/%3E%3Ccircle cx='70' cy='86' r='3'/%3E%3Ccircle cx='68' cy='164' r='3'/%3E%3Ccircle cx='200' cy='30' r='3'/%3E%3C/g%3E%3Cg fill='none' stroke='%237bd88f' stroke-opacity='.12' stroke-width='1.5'%3E%3Crect x='100' y='130' width='40' height='26' rx='3'/%3E%3Crect x='190' y='150' width='26' height='18' rx='2'/%3E%3C/g%3E%3C/svg%3E");
+}
+.traces { position: absolute; inset: 0; pointer-events: none; }
+.starting .traces { display: none; }
+.tr { position: absolute; overflow: hidden; }
+.tr.h { height: 2px; width: 50%; top: calc(50% + var(--d) - 1px); background: linear-gradient(to right, var(--c) 0 36%, transparent 36% 50%, var(--c) 50%); }
+.tr.v { width: 2px; height: 50%; left: calc(50% + var(--d) - 1px); background: linear-gradient(to bottom, var(--c) 0 36%, transparent 36% 50%, var(--c) 50%); }
+.tr.l { left: 0; }
+.tr.r { right: 0; transform: scaleX(-1); }
+.tr.t { top: 0; }
+.tr.b { bottom: 0; transform: scaleY(-1); }
+.running .tr { background: var(--c); }           /* 通电：走线接通 */
+.tr i { display: none; position: absolute; }
+.running .tr i { display: block; will-change: transform; animation: flowX 1.6s linear infinite; animation-delay: var(--t, 0s); }
+.running .tr.h i { top: 0; left: 0; height: 100%; width: 28%; background: linear-gradient(to right, transparent, #7bd88f); }
+.running .tr.v i { top: 0; left: 0; width: 100%; height: 28%; background: linear-gradient(to bottom, transparent, #7bd88f); animation-name: flowY; }
+@keyframes flowX { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+@keyframes flowY { from { transform: translateY(-100%); } to { transform: translateY(360%); } }
+.page:not(.on) .tr i, .hid .tr i { animation-play-state: paused; }
 /* 电源按钮：按钮本身就是状态 */
 .power-wrap { position: relative; width: 148px; height: 148px; display: grid; place-items: center; }
 .power {
