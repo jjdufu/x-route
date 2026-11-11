@@ -233,7 +233,7 @@ export_pack() {
     echo "调试模式 $([ "${XR_DEBUG:-0}" = 1 ] && echo 开 || echo 关)"
     status_json
   } > "$tmpd/raw/summary.txt" 2>&1
-  for f in "${LOG}" "${CON_LOG:-${RUN}/console.log}" "${CTL_LOG:-${RUN}/vm-ctl.log}" "${VMM_LOG:-${XR_DATA}/log/vmm.log}"; do
+  for f in "${LOG}" "${CON_LOG:-${RUN}/console.log}" "${CTL_LOG:-${RUN}/vm-ctl.log}" "${VMM_LOG:-${XR_DATA}/log/vmm.log}" "${XR_DATA}/log/console.prev.log"; do
     bn="${f##*/}"
     [ -f "${f}.1" ] && cp -f "${f}.1" "$tmpd/raw/${bn}.1"
     [ -f "$f" ] && cp -f "$f" "$tmpd/raw/${bn}"

@@ -70,6 +70,7 @@ vm_start_exec() {
   load_config
   vm_running && { log_info vm "已在运行"; return 0; }
   [ -f "${BOOT_LOG}" ] || : > "${BOOT_LOG}"
+  rm -f "${RUN}/teardown.last" "${RUN}/shutdown" "${RUN}/shutdown.noted"
   blog vm "准备启动：CPU ${VM_CPUS} 核 · 内存 ${VM_MEM_MB}MB · 系统盘 $([ "${VM_DISK_RW}" = 1 ] && echo 读写 || echo 只读)"
   rm -f "${RUN}/last_error"
   [ -f "${TRIPPED}" ] && { log_err vm "熔断未确认（xr ack-trip）"; return 1; }

@@ -55,8 +55,17 @@ echo "1 abc" > "$XR_DATA/config/vm_booting.fuse"
 MODDIR="$T/live" sh "$T/live/service.sh"
 chk '[ -f "$XR_DATA/config/tripped" ] && [ ! -f "$XR_DATA/config/vm_booting.fuse" ] && grep -q "AUTOSTART=\"0\"" "$XR_DATA/config/config.conf"'
 # AUTOSTART=1 但 last_good 不匹配 -> 跳过
+# 同时模拟重启前留下的运行时残留（关机时 crosvm 被杀、守护进程误记异常）：开机先清空 run/，不得再报异常退出
+for p in daemon.pid watchdog.pid; do kill "$(cat "$XR_DATA/run/$p" 2>/dev/null)" 2>/dev/null; done
+for f in state crosvm.pid net.gw last_error bg.rc daemon.cmd share.mode vpn.cksum shutdown; do echo old > "$XR_DATA/run/$f"; done
+mkdir -p "$XR_DATA/run/guest/host"; echo old > "$XR_DATA/run/guest/host/stale"; echo serial > "$XR_DATA/run/console.log"
+n0="$(grep -c "异常退出" "$XR_DATA/log/module.log")"
 rm -f "$XR_DATA/config/tripped"; sed -i 's/^AUTOSTART=.*/AUTOSTART="1"/' "$XR_DATA/config/config.conf"
 MODDIR="$T/live" sh "$T/live/service.sh"; chk 'grep -q "last_good 与当前配置不一致" "$XR_DATA/log/module.log"'
+# 新起的守护进程会重新写 daemon.cmd、guest/host/ipv6.wan 等；这里只核对上次留下的内容（写的是 old）都没了
+chk '! grep -rqx old "$XR_DATA/run"'
+chk '[ "$(cat "$XR_DATA/log/console.prev.log")" = serial ]'
+sleep 6; chk '[ "$(grep -c "异常退出" "$XR_DATA/log/module.log")" = "$n0" ] && [ ! -f "$XR_DATA/run/last_error" ]'
 # 卸载：停止残留进程、删除数据目录；不碰用户导出的日志包；容错已消失的规则
 install_pkg full
 cp -a "$T/mod" "$T/live"

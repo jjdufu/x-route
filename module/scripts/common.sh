@@ -63,12 +63,56 @@ RW_MAP_OPT="${RW_MAP_OPT:-}"
 ensure_dirs()  { mkdir -p "${XR_DATA}/config" "${RUN}" "${XR_DATA}/log" "${IMG}"; }
 load_config()  { [ -f "${CONF}" ] && . "${CONF}"; }
 
+# 日志时间戳：关机阶段 date 可能执行失败（曾出现整串无时间的日志行），依次退回 busybox date、开机秒数（只用内建 read）
+xr_now() {
+  _ts="$(date '+%F %T' 2>/dev/null)"
+  [ -n "${_ts}" ] || [ ! -x "${BB}" ] || _ts="$("${BB}" date '+%F %T' 2>/dev/null)"
+  if [ -z "${_ts}" ]; then
+    _up=""; read -r _up _up2 < "${XR_PROC_UPTIME:-/proc/uptime}" 2>/dev/null
+    _ts="uptime+${_up:-?}s"
+  fi
+  printf '%s' "${_ts}"
+}
 log_msg() { # $1=级别 $2=模块 $3...=消息
   lv="$1"; m="$2"; shift 2
   mkdir -p "${XR_DATA}/log"
   rotate_file "${LOG}" mv
-  echo "$(date '+%F %T') [${lv}] [${m}] $*" >> "${LOG}"
-  [ -f "${BOOT_LOG}" ] && echo "$(date +%T) [${m}] $*" >> "${BOOT_LOG}"
+  _lt="$(xr_now)"
+  echo "${_lt} [${lv}] [${m}] $*" >> "${LOG}"
+  [ -f "${BOOT_LOG}" ] && echo "${_lt#* } [${m}] $*" >> "${BOOT_LOG}"
+  return 0
+}
+
+# 系统正在关机 / 重启：ShutdownThread 一开始就设 sys.shutdown.requested，最后设 sys.powerctl 交给 init 杀进程。
+# 一旦确认就落一个标记，之后只看标记（关机末期 getprop 也可能失败）。标记在下次开机由 boot_clean_run 清掉。
+sys_shutting_down() {
+  [ -f "${RUN}/shutdown" ] && return 0
+  if [ -n "$(getprop sys.powerctl 2>/dev/null)" ] || [ -n "$(getprop sys.shutdown.requested 2>/dev/null)" ]; then
+    : > "${RUN}/shutdown" 2>/dev/null
+    return 0
+  fi
+  return 1
+}
+# 关机时虚拟机随系统一起被结束，不算异常：只记一行，不写 last_error，不重复
+shutdown_note() {
+  [ -f "${RUN}/shutdown.noted" ] && return 0
+  : > "${RUN}/shutdown.noted" 2>/dev/null
+  log_info "${1:-daemon}" "系统关机，虚拟机随之停止"
+}
+
+# 开机清理（service.sh 最先调用）：run/ 在 /data 上，重启后还留着上一次开机的全部运行时状态
+# （state、pid、net.gw、last_error、bg.rc、daemon.cmd、guest/ …），而这时不可能有任何东西在跑。
+# 全部清掉，只把上一次的串口日志挪到 log/console.prev.log 供排查；配置与日志不动。
+# 安全：run/ 下若有挂载点（理论上开机时不会有）则不删，只记一行。
+boot_clean_run() {
+  [ -d "${RUN}" ] || return 0
+  if grep -q " ${RUN}[/ ]" "${XR_PROC_MOUNTS:-/proc/mounts}" 2>/dev/null; then
+    log_err service "run/ 下存在挂载点，跳过开机清理"
+    return 1
+  fi
+  mkdir -p "${XR_DATA}/log"
+  [ -s "${RUN}/console.log" ] && mv -f "${RUN}/console.log" "${XR_DATA}/log/console.prev.log"
+  rm -rf "${RUN:?}"/* "${RUN:?}"/.[!.]* 2>/dev/null
   return 0
 }
 # 只写开机过程日志（不进 module.log）：细粒度的启动进度

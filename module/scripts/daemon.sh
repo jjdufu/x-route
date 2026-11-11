@@ -124,7 +124,13 @@ daemon_handle() {
 _daemon_on_signal() {
   [ "${DAEMON_QUITTING}" = 1 ] && return 0
   DAEMON_QUITTING=1
-  emergency_teardown "收到信号 $1"
+  if [ "$1" = TERM ] || sys_shutting_down; then
+    # TERM：关机时 init 群发，或卸载 / 人为结束。不算虚拟机崩溃：不写 last_error，虚拟机已不在时安静撤规则
+    if sys_shutting_down; then shutdown_note daemon; else log_info daemon "收到 TERM，守护进程退出"; fi
+    if ! xr_vm_alive; then rm -f "${RUN}/state" "${RUN}/crosvm.pid"; routes_emergency_down; fi
+  else
+    emergency_teardown "收到信号 $1"
+  fi
   rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
   exit 0
 }
@@ -154,6 +160,12 @@ daemon_loop() {
   echo ready > "${RUN}/daemon.ready"
   log_info daemon "已启动 pid=$$ cgroup=$(cgroup_path $$ 2>/dev/null)"
   while :; do
+    # 系统关机：不再巡检（init 正在结束所有进程，虚拟机退出是预期的），记一行后安静退出
+    if sys_shutting_down; then
+      DAEMON_QUITTING=1; shutdown_note daemon
+      rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+      exit 0
+    fi
     cgroup_escape_tree
     if [ -f "${RUN}/crosvm.pid" ] || [ -f "${RUN}/state" ]; then
       if ! vm_running 2>/dev/null; then

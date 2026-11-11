@@ -2,10 +2,12 @@
 # XRouter: 开机服务（熔断检查 + 可选自启）
 MODDIR="${0%/*}"
 . "${MODDIR}/scripts/common.sh"
+# 重启后 run/ 里只有上一次开机的残留（守护进程曾把关机误判为异常退出、last_error 一直挂在 WebUI 上）：
+# 守护进程 / 看门狗拉起之前先全部清掉
+boot_clean_run
 ensure_dirs
 wait_boot_completed
 is_module_disabled && exit 0
-rm -f "${RUN}"/*.pid "${RUN}/crosvm.sock" "${RUN}/routes.active" "${RUN}/state"
 
 if [ -f "${FUSE}" ]; then
   log_err service "上次启动 VM 后整机复位，熔断：关闭自启，需在 WebUI 确认"

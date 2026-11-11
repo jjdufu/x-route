@@ -67,6 +67,20 @@ w=0; while [ "$w" -lt 12 ]; do grep -q "异常退出" "$LOG" && break; sleep 1; 
 chk 'grep -q "异常退出" "$LOG" && grep -q "net down" "$T/net.calls"'
 chk '[ -f "$RUN/last_error" ]'
 
+# 4b. 系统关机：crosvm 被 init 一起结束不算崩溃——不写 last_error、不记「异常退出」、只记一行 INFO，守护进程安静退出
+rm -f "$RUN/last_error"
+chk '$XR start'
+dpid="$(cat "$RUN/daemon.pid")"
+n0="$(grep -c "异常退出" "$LOG")"
+printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; sys.powerctl) echo reboot,userrequested;; esac\n' > "$T/bin/getprop"
+kill "$(cat "$RUN/crosvm.pid")" 2>/dev/null
+w=0; while kill -0 "$dpid" 2>/dev/null && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
+chk '! kill -0 "$dpid" 2>/dev/null'
+chk '[ "$(grep -c "异常退出" "$LOG")" = "$n0" ] && [ ! -f "$RUN/last_error" ]'
+chk '[ "$(grep -c "系统关机，虚拟机随之停止" "$LOG")" = 1 ]'
+chk '! grep -v "^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9:]* \[" "$LOG" | grep -q .'
+printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"
+
 # 5. 卸载结束守护进程并取消通知（mock 中 cmd 可能不存在）
 echo still > "$T/data/log/module.log"
 MODDIR="$T/mod" sh "$T/mod/uninstall.sh"

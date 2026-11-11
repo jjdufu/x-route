@@ -245,8 +245,21 @@ routes_emergency_down() {
 # $1=原因  守护进程或虚拟机异常退出时调用
 emergency_teardown() {
   _why="${1:-未知原因}"
-  log_err daemon "异常退出：${_why}"
-  type diag_snap >/dev/null 2>&1 && diag_snap "异常：${_why}" 3
+  # 系统关机：虚拟机被 init 一起结束，不是崩溃。只撤规则、记一行 INFO，不写 last_error
+  if sys_shutting_down; then
+    shutdown_note daemon
+    xr_vm_alive && return 0
+    rm -f "${RUN}/state" "${RUN}/crosvm.pid"
+    routes_emergency_down
+    rm -f "${RUN}/net.gw"   # 关机中 net.sh down 可能失败；不再反复判定为残留规则
+    return 0
+  fi
+  # 同一原因只记一次（规则撤不掉时守护进程 / 看门狗每轮都会走到这里，不能刷屏）；下次启动虚拟机时重置
+  if [ "$(cat "${RUN}/teardown.last" 2>/dev/null)" != "${_why}" ]; then
+    printf '%s\n' "${_why}" > "${RUN}/teardown.last"
+    log_err daemon "异常退出：${_why}"
+    type diag_snap >/dev/null 2>&1 && diag_snap "异常：${_why}" 3
+  fi
   if xr_vm_alive; then
     # 虚拟机还在，只记原因，把路由留给仍在跑的 xr0；由看门狗拉起守护进程
     return 0

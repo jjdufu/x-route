@@ -15,6 +15,8 @@ watchdog_loop() {
   trap 'rm -f "${RUN}/watchdog.pid"; exit 0' TERM INT
   log_info watchdog "已启动 pid=$$"
   while :; do
+    # 系统关机：不撤规则、不拉起守护进程，直接安静退出（守护进程会记那一行 INFO）
+    sys_shutting_down && { rm -f "${RUN}/watchdog.pid"; exit 0; }
     is_module_disabled && { sleep 15; continue; }
     # 虚拟机已死或 xr0 无载波，但规则还在：立刻撤掉，避免银行/微信一直等到超时
     if stale_gateway; then

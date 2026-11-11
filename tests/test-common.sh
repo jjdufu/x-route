@@ -104,6 +104,23 @@ ok set_kv XR_MODE bypass; load_config; [ "$XR_MODE" = "bypass" ] || { echo "FAIL
 h="$(config_hash)"; [ "${#h}" -eq 16 ] || { echo "FAIL: config_hash"; fail=1; }
 set_kv VM_MEM_MB 1024; [ "$h" != "$(config_hash)" ] || { echo "FAIL: hash unchanged"; fail=1; }
 log_info test hello; grep -q "\[INFO\] \[test\] hello" "$LOG" || { echo "FAIL: log"; fail=1; }
+# 时间戳：date 失败（关机阶段）时退回 busybox date，再退回开机秒数；日志行永远带时间
+echo "123.45 99.0" > "$T/uptime"
+ok [ "$(BB=/nonexistent xr_now | grep -c '^[0-9]\{4\}-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$')" = 1 ]
+# 用同名函数模拟 date 失败（busybox sh 会直接调内建 applet，PATH 里的假 date 不生效）
+ok [ "$(date() { return 1; }; BB=/nonexistent; XR_PROC_UPTIME="$T/uptime"; xr_now)" = "uptime+123.45s" ]
+( date() { return 1; }; BB=/nonexistent; XR_PROC_UPTIME="$T/uptime"; log_info test nodate )
+ok grep -q '^uptime+123.45s \[INFO\] \[test\] nodate$' "$LOG"
+# 开机清理：run/ 整个清空（含隐藏文件、子目录），上次串口日志挪到 log/console.prev.log；配置与日志不动
+mkdir -p "$RUN/guest/host"; for f in state crosvm.pid net.gw last_error bg.rc daemon.cmd .net.lock guest/host/x; do echo old > "$RUN/$f"; done
+echo serial > "$RUN/console.log"; echo keep > "$CONF.keep"
+: > "$T/mounts"
+XR_PROC_MOUNTS="$T/mounts" boot_clean_run
+ok [ -d "$RUN" ] && ok [ -z "$(ls -A "$RUN")" ] && ok [ "$(cat "$XR_DATA/log/console.prev.log")" = serial ] && ok [ -f "$CONF.keep" ]
+# run/ 下有挂载点时不删
+echo old > "$RUN/state"; echo "/dev/x $RUN/guest virtiofs rw 0 0" > "$T/mounts"
+XR_PROC_MOUNTS="$T/mounts" boot_clean_run; ok [ -f "$RUN/state" ]
+rm -f "$RUN/state" "$CONF.keep"
 # 开机过程日志：文件不存在时不写；存在时 log_msg / blog / 改动类 xr_exec 都追加进去，查询类命令不写
 mkdir -p "$RUN"; rm -f "$BOOT_LOG"
 blog vm nope; log_info vm nope2; ok [ ! -e "$BOOT_LOG" ]
