@@ -66,6 +66,7 @@ body { font: 15px/1.45 system-ui, "Noto Sans SC", sans-serif; overflow: hidden; 
 [unresolved] { opacity: 0; }
 .shell {
   height: 100dvh; min-height: 100dvh; display: flex; flex-direction: column;
+  padding-left: var(--window-inset-left, 0px); padding-right: var(--window-inset-right, 0px);
   background: var(--md-sys-color-surface);
   transition: opacity .12s;
 }

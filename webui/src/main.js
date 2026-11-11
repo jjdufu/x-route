@@ -465,7 +465,20 @@ function bind() {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
 }
 
+// ---- 全屏：SukiSU WebUI 默认给页面四周留出系统栏（灰色 #303030 条）。
+// 请求管理器内置的 /internal/insets.css 即开启边到边（SuFilePathHandler 据此置 isInsetsEnabled），
+// 该样式表给出 --window-inset-top / --window-inset-bottom 等安全区变量；再调用 ksu.enableEdgeToEdge(true) 兜底。
+// 普通浏览器里两者都不存在，CSS 回退到 env(safe-area-inset-*)。
+function edgeToEdge() {
+  if (!isKsuWebui()) return;
+  const l = document.createElement("link");
+  l.rel = "stylesheet"; l.href = "/internal/insets.css";
+  document.head.append(l);
+  try { if (window.ksu && typeof window.ksu.enableEdgeToEdge === "function") window.ksu.enableEdgeToEdge(true); } catch { /* 旧管理器 */ }
+}
+
 (async () => {
+  edgeToEdge();
   bind();
   await customElements.whenDefined("md-tabs");
   document.querySelector(".shell").removeAttribute("unresolved");
