@@ -1,6 +1,10 @@
 #!/bin/sh
 # XRouter: 虚拟机 IPv6 开关与 WAN 地址（由 xrouter-vpn 按手机侧 ipv6.cmd / ipv6.wan 调用）
-#   xrouter-ipv6 on|off   修改 network.xr_eth0.ipv6 并立即生效（不重启虚拟机）
+#   xrouter-ipv6 on|off   总开关，立即生效（不重启虚拟机）：
+#                         off：eth0 / eth1 / tun0 设备段 ipv6=0，所有网卡（lo 除外）与新建网卡 disable_ipv6=1，
+#                              lan / hotspot 不发 RA、不做 DHCPv6，停掉 odhcpd；内核层面不再有任何 IPv6 地址
+#                         on ：全部恢复
+#   xrouter-ipv6 boot     开机按已保存的开关落实到内核（xrouter-vpn 启动时调用）
 #   xrouter-ipv6 wan      按 host/ipv6.wan 给 eth0 加上游前缀中的地址，并把单臂 IPv6 改为 SNAT 到该地址
 #   xrouter-ipv6 state    输出实际状态 1/0（以内核 eth0 的 disable_ipv6 为准）
 DEV=eth0
@@ -53,19 +57,54 @@ apply_wan() {
   write_onelink_ip6 "${want%/*}"
 }
 
+# $1=1|0：内核层面的 IPv6（lo 保持开启，本机回环不受影响）
+kernel_v6() {
+  d=1; [ "$1" = 1 ] && d=0
+  echo "$d" > /proc/sys/net/ipv6/conf/default/disable_ipv6 2>/dev/null
+  for p in /proc/sys/net/ipv6/conf/*/disable_ipv6; do
+    n="${p%/disable_ipv6}"; n="${n##*/}"
+    case "$n" in lo|all|default) continue ;; esac
+    echo "$d" > "$p" 2>/dev/null
+  done
+}
+
 apply() {
   v="$1"
-  uci -q get network.xr_eth0 >/dev/null || { uci -q set network.xr_eth0=device; uci -q set network.xr_eth0.name="${DEV}"; }
-  uci -q set network.xr_eth0.ipv6="$v"
+  for d in eth0 eth1 tun0; do
+    sec="xr_${d}"
+    uci -q get "network.${sec}" >/dev/null || { uci -q set "network.${sec}=device"; uci -q set "network.${sec}.name=${d}"; }
+    uci -q set "network.${sec}.ipv6=${v}"
+  done
+  # lan（eth0，手机与虚拟机之间的链路）任何时候都不发 RA / DHCPv6；热点侧由 xrouter-hotspot 按开关处理
+  uci -q batch <<'U'
+set dhcp.lan.ra='disabled'
+set dhcp.lan.dhcpv6='disabled'
+set dhcp.lan.ndp='disabled'
+U
   uci -q commit network
+  uci -q commit dhcp
+  # 先落实内核开关：关闭时 netifd 重载期间也不会冒出 IPv6 地址
+  [ "$v" = 0 ] && kernel_v6 0
   /etc/init.d/network reload >/dev/null 2>&1
   # netifd 对已启用设备的 ipv6 变更不一定重新下发，这里直接写 sysctl 保证立即生效
-  if [ "$v" = 1 ]; then d=0; else d=1; fi
-  echo "$d" > "/proc/sys/net/ipv6/conf/${DEV}/disable_ipv6" 2>/dev/null
-  [ "$v" = 1 ] && ifup lan >/dev/null 2>&1
+  kernel_v6 "$v"
+  [ -x /usr/libexec/xrouter-hotspot ] && /usr/libexec/xrouter-hotspot ipv6
+  if [ "$v" = 1 ]; then
+    ifup lan >/dev/null 2>&1
+    /etc/init.d/odhcpd enabled && /etc/init.d/odhcpd start >/dev/null 2>&1
+  else
+    /etc/init.d/odhcpd stop >/dev/null 2>&1
+  fi
   apply_wan
   /etc/init.d/firewall reload >/dev/null 2>&1
+  logger -t xrouter "IPv6 总开关：$([ "$v" = 1 ] && echo 开 || echo 关)"
   return 0
+}
+
+boot() {
+  v="$(uci -q get network.xr_eth0.ipv6)"; [ "$v" = 1 ] || v=0
+  kernel_v6 "$v"
+  [ "$v" = 1 ] || /etc/init.d/odhcpd stop >/dev/null 2>&1
 }
 
 case "$1" in
@@ -73,5 +112,6 @@ case "$1" in
   off) apply 0 ;;
   wan) apply_wan ;;
   state) state ;;
-  *) echo "usage: xrouter-ipv6 on|off|wan|state"; exit 2 ;;
+  boot) boot ;;
+  *) echo "usage: xrouter-ipv6 on|off|wan|state|boot"; exit 2 ;;
 esac

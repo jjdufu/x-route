@@ -182,6 +182,9 @@ mkdir -p "$T/sysnet/xr0"; echo 1 > "$RUN/guest/guest/ipv6"; echo ready > "$RUN/s
 : > "$MOCK/calls"; $NET up
 chk '[ "$(cat "$RUN/net.gw")" = block ] && [ ! -f "$RUN/net.v6proxy" ] && grep -q "没有可共享的 IPv6 前缀" "$LOG"'
 chk 'grep -q "^ip -6 route replace unreachable default table 233" "$MOCK/calls"'
+# 拦截时下游 IPv6 立即拒绝：导向表 235，再由 XR_FWD6 回 TCP RST / 管理禁止（不靠限速的 unreachable）
+chk 'grep -q "^ip -6 rule add pref 19060 iif wlan1 lookup 235" "$MOCK/calls" && grep -q "^ip -6 route replace default dev xr0 table 235" "$MOCK/calls"'
+chk 'grep -qx -- "-i wlan1 -o xr0 -p tcp -j REJECT --reject-with tcp-reset" "$MOCK/XR_FWD6" && grep -qx -- "-i wlan1 -o xr0 -j REJECT --reject-with icmp6-adm-prohibited" "$MOCK/XR_FWD6"'
 # down 清理全部 IPv6 规则、链与表
 rmdir "$T/sysnet/xr0" 2>/dev/null; : > "$MOCK/calls"; $NET down
 chk 'grep -q "^ip -6 rule del pref 19100" "$MOCK/calls" && grep -q "^ip -6 route flush table 233" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18800" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18900" "$MOCK/calls" && grep -q "^ip -6 rule del pref 4800" "$MOCK/calls"'

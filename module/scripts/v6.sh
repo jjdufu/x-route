@@ -272,8 +272,12 @@ v6_nft_sync() {
       if [ "$1" = v6 ]; then
         nft add rule inet xr_v6 fwd iifname "$i" oifname "${XR_IF}" accept
         nft add rule inet xr_v6 fwd iifname "${XR_IF}" oifname "$i" accept
+      else
+        nft add rule inet xr_v6 fwd iifname "$i" oifname "${XR_IF}" meta l4proto tcp reject with tcp reset
+        nft add rule inet xr_v6 fwd iifname "$i" oifname "${XR_IF}" reject with icmpv6 admin-prohibited
       fi
       for o in $outs6; do
+        nft add rule inet xr_v6 fwd iifname "$i" oifname "$o" meta l4proto tcp reject with tcp reset
         nft add rule inet xr_v6 fwd iifname "$i" oifname "$o" reject with icmpv6 admin-prohibited
       done
     done

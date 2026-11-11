@@ -151,6 +151,11 @@ upstream_out6() {
 # VM 未就绪、已停止或切到旁路时立即撤掉，避免把手机自己的上网搞断。
 GW_PREF=19100
 GW_TABLE=233
+# IPv6 拦截（block）时热点等下游的 IPv6：先导向 xr0 方向（表 235），再由 XR_FWD6 立即回 TCP RST / ICMPv6 管理禁止。
+# 若沿用表 233 的 unreachable，转发包只能等内核限速的 ICMP，客户端要干等超时才回落 IPv4（打开网页明显变慢）。
+# 手机本机的 IPv6 仍查表 233 的 unreachable：本机 socket 在路由阶段就同步失败，不需要 ICMP。
+REJ6_PREF=19060
+REJ6_TABLE=235
 
 vm_alive() {
   p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
@@ -230,6 +235,15 @@ gw_install() {
   fi
   while ip6 rule del pref "${GW_PREF}" 2>/dev/null; do :; done
   ip6 rule add pref "${GW_PREF}" lookup "${GW_TABLE}"
+  while ip6 rule del pref "${REJ6_PREF}" 2>/dev/null; do :; done
+  ip6 route flush table "${REJ6_TABLE}" 2>/dev/null
+  if [ "$g" = block ]; then
+    ip6 route replace default dev "${XR_IF}" table "${REJ6_TABLE}"
+    for i in $(tether_ifaces); do
+      [ "$i" = "${HS_BR}" ] && continue
+      ip6 rule add pref "${REJ6_PREF}" iif "$i" lookup "${REJ6_TABLE}"
+    done
+  fi
   echo "$g" > "${RUN}/net.gw"
 }
 
@@ -238,6 +252,8 @@ gw_remove() {
   ip route flush table "${GW_TABLE}" 2>/dev/null
   while ip6 rule del pref "${GW_PREF}" 2>/dev/null; do :; done
   ip6 route flush table "${GW_TABLE}" 2>/dev/null
+  while ip6 rule del pref "${REJ6_PREF}" 2>/dev/null; do :; done
+  ip6 route flush table "${REJ6_TABLE}" 2>/dev/null
   rm -f "${RUN}/net.gw"
 }
 
@@ -337,8 +353,15 @@ sync_v6() {
       if [ "$1" = v6 ]; then
         ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -j ACCEPT
         ${IP6T} -A XR_FWD6 -i "${XR_IF}" -o "$i" -j ACCEPT
+      else
+        # 拦截：TCP 回 RST（不受 ICMP 限速），其余回管理禁止，客户端立即回落 IPv4
+        ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -p tcp -j REJECT --reject-with tcp-reset
+        ${IP6T} -A XR_FWD6 -i "$i" -o "${XR_IF}" -j REJECT --reject-with icmp6-adm-prohibited
       fi
-      for o in $outs6; do ${IP6T} -A XR_FWD6 -i "$i" -o "$o" -j REJECT --reject-with icmp6-adm-prohibited; done
+      for o in $outs6; do
+        ${IP6T} -A XR_FWD6 -i "$i" -o "$o" -p tcp -j REJECT --reject-with tcp-reset
+        ${IP6T} -A XR_FWD6 -i "$i" -o "$o" -j REJECT --reject-with icmp6-adm-prohibited
+      done
     done
   fi
   ${IP6T} -A XR_FWD6 -o "${XR_IF}" -j DROP

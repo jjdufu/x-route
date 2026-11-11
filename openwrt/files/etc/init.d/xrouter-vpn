@@ -116,6 +116,7 @@ start() {
   fi
   mkdir -p "${CTL}/host" "${CTL}/guest"
   chmod 0755 /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh 2>/dev/null || true
+  /usr/libexec/xrouter-ipv6 boot
   watch &
   echo $! > /var/run/xrouter-vpn.pid
 }
