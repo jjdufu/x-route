@@ -1,6 +1,6 @@
 # XRouter
 
-在骁龙手机的 Gunyah 受保护虚拟机里运行 ImmortalWrt，为手机本机和热点提供网关与 OpenVPN。SukiSU / KernelSU 模块，自带 WebUI。
+在骁龙手机的 Gunyah 受保护虚拟机里运行 ImmortalWrt，为手机本机和热点提供网关、OpenVPN 组网与 OpenClash。SukiSU / KernelSU 模块，自带 WebUI。默认内存 768MB、系统盘 1024MB。镜像预装 OpenClash（默认关闭）和 mihomo 内核，在 LuCI 中自行启用。
 
 ## 安装
 

@@ -42,10 +42,40 @@ DEF_KMODS="$( { echo "${INFO}" | sed -n 's/^Default Packages: //p'
 PKGS="$(grep -vE '^[[:space:]]*(#|$)' "${ROOT}/openwrt/packages.txt" | tr '\n' ' ')"
 echo "[*] excluded default kmods: ${DEF_KMODS}"
 
+# OpenClash：打入 GitHub 官方 apk + 固定版本 linux-arm64 mihomo，首次开机安装，默认不启用。
+# 版本与 sha256 写死在此，改动会改变镜像指纹，CI 会重建根文件系统。
+OC_VER=0.48.002
+OC_APK_SHA256=f7ebbd43f9be15c5e6df26e5d0c03d50d0bb8f7fa4cc0d2c2bf048b08c0b155b
+MIHOMO_VER=v1.19.34
+MIHOMO_SHA256=daaf78a6240a282cdfd75bcbf98fe321f6bd52765cc29e79f344191198f0b50f
+fetch_sha() {
+  dest="$1"; sha="$2"; shift 2
+  url=""
+  for url in "$@"; do
+    echo "[*] fetching ${url}"
+    if wget -q -O "${dest}" "${url}" && echo "${sha}  ${dest}" | sha256sum -c -; then
+      return 0
+    fi
+    rm -f "${dest}"
+  done
+  echo "failed to fetch $(basename "${dest}")"
+  exit 1
+}
+FILES_STAGE="${WORK}/files-stage"
+rm -rf "${FILES_STAGE}"
+mkdir -p "${FILES_STAGE}/usr/lib/xrouter"
+cp -a "${ROOT}/openwrt/files/." "${FILES_STAGE}/"
+fetch_sha "${FILES_STAGE}/usr/lib/xrouter/luci-app-openclash-${OC_VER}.apk" "${OC_APK_SHA256}" \
+  "https://github.com/vernesong/OpenClash/releases/download/v${OC_VER}/luci-app-openclash-${OC_VER}.apk" \
+  "https://dl.openclash.org/releases/latest/luci-app-openclash-${OC_VER}.apk"
+fetch_sha "${WORK}/mihomo-linux-arm64-${MIHOMO_VER}.gz" "${MIHOMO_SHA256}" \
+  "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VER}/mihomo-linux-arm64-${MIHOMO_VER}.gz"
+cp "${WORK}/mihomo-linux-arm64-${MIHOMO_VER}.gz" "${FILES_STAGE}/usr/lib/xrouter/clash_meta.gz"
+
 make image PROFILE=generic \
   PACKAGES="${DEF_KMODS} ${PKGS}" \
-  FILES="${ROOT}/openwrt/files" \
-  ROOTFS_PARTSIZE=256
+  FILES="${FILES_STAGE}" \
+  ROOTFS_PARTSIZE=512
 
 # ImageBuilder 生成的原始 ext4 根文件系统（大小 = ROOTFS_PARTSIZE）
 OUT="build_dir/target-aarch64_generic_musl/linux-armsr_armv8/root.ext4"
@@ -95,7 +125,10 @@ e2fsck -fy "${RAW}" >/dev/null 2>&1 || [ $? -le 1 ]
 
 # 检查：关键文件存在，禁止的文件不存在，只有 apk 没有 opkg
 for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/bin/apk /lib/apk/db/installed \
-         /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
+         /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash \
+         /usr/lib/xrouter/luci-app-openclash-0.48.002.apk /usr/lib/xrouter/clash_meta.gz \
+         /bin/bash /usr/bin/ruby /usr/bin/unzip \
+         /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
 done
 for f in /usr/bin/htop /usr/bin/owut /usr/lib/opkg /bin/opkg /usr/bin/easyrsa; do
@@ -105,7 +138,7 @@ for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S13xrouter-bootlog /etc/rc.d/S99xrou
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "${f} not enabled"; exit 1; }
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-xrouter /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
+for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 

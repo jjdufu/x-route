@@ -53,3 +53,9 @@ kmod-nft-tproxy
 kmod-nft-socket
 kmod-nft-fullcone
 kmod-inet-diag
+
+# OpenClash 依赖（插件与 mihomo 内核由 build-rootfs.sh 注入，首次开机安装，默认不启用）
+bash
+ruby
+ruby-yaml
+unzip

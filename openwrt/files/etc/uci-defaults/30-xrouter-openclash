@@ -1,0 +1,34 @@
+#!/bin/sh
+# XRouter: 首次开机安装预置的 OpenClash（GitHub apk）与 mihomo 内核，默认不启用。
+# 构建脚本会把 apk 和内核压缩包放到 /usr/lib/xrouter/。
+
+APK=/usr/lib/xrouter/luci-app-openclash-0.48.002.apk
+CORE_GZ=/usr/lib/xrouter/clash_meta.gz
+
+if [ -f "$APK" ]; then
+	apk add --allow-untrusted --force-overwrite "$APK" || exit 1
+	rm -f "$APK"
+fi
+
+mkdir -p /etc/openclash/core
+if [ -f "$CORE_GZ" ]; then
+	gzip -dc "$CORE_GZ" > /etc/openclash/core/clash_meta || exit 1
+	chmod 0755 /etc/openclash/core/clash_meta
+	rm -f "$CORE_GZ"
+fi
+
+# 软件包自带的 uci-defaults 若尚未在本次 apk add 中跑完，这里补跑一次
+if [ -x /etc/uci-defaults/luci-openclash ]; then
+	/etc/uci-defaults/luci-openclash || exit 1
+	rm -f /etc/uci-defaults/luci-openclash
+fi
+
+# 预装但不启动：关闭开机自启，并保持主开关关闭
+[ -x /etc/init.d/openclash ] && /etc/init.d/openclash disable
+if [ -f /etc/config/openclash ]; then
+	uci -q set openclash.config.enable=0
+	uci -q commit openclash
+fi
+
+rmdir /usr/lib/xrouter 2>/dev/null || true
+exit 0

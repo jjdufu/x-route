@@ -234,7 +234,7 @@ function render(d) {
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
-  fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "512");
+  fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "768");
   txt($("v-disk"), fmtSize(cfg.VM_DISK_SIZE_MB));
   prop($("btn-expand"), "disabled", !!vm.running);
   prop($("btn-reset"), "disabled", !!vm.running);
