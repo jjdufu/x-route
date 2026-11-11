@@ -134,6 +134,10 @@ eq(bb.lines.slice(-2), ["[ 0.1] half line", "ok"], "feedBoot 拼接半行并去�
 for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
 eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
+// 启动中：电源图标完全隐藏，日志在按钮背景内居中，只渲染放得下的行
+if (!/\.starting \.power md-icon \{ display: none; \}/.test(css)) fail("启动中应完全隐藏电源图标");
+if (!/justify-content: center/.test(plog)) fail("启动日志应在按钮内垂直居中");
+if (!/slice\(-BOOT_SHOW\)/.test(main)) fail("启动日志只渲染放得下的行");
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
 if (!/key === logShown\) return/.test(main)) fail("日志未变时不应重写");

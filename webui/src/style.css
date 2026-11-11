@@ -146,17 +146,18 @@ md-icon { --md-icon-size: 22px; flex: none; }
 }
 .power:active { transform: scale(.96); }
 .power md-icon { --md-icon-size: 56px; position: relative; z-index: 1; }
-/* 启动中：按钮里滚动真实启动日志，终端风格；圆形裁切，上下渐隐（静态遮罩，不做模糊和发光） */
+/* 启动中：电源图标完全隐藏，按钮圆形背景里居中滚动真实开机日志（瀑布式，最新在下）；
+   只渲染能放下的最后几行，块整体垂直居中；圆形裁切 + 上下静态渐隐，不做模糊、发光或动画 */
 .power { overflow: hidden; isolation: isolate; }
 .power-log {
-  position: absolute; inset: 0; margin: 0; padding: 0 18px 20px; z-index: 0;
-  display: flex; flex-direction: column; justify-content: flex-end;
+  position: absolute; inset: 0; margin: 0; padding: 0 16px; z-index: 0;
+  display: flex; flex-direction: column; justify-content: center;
   font: 8px/10px ui-monospace, "JetBrains Mono", monospace; color: #3dff8a; text-align: left;
-  white-space: pre; overflow: hidden; opacity: .55; pointer-events: none; contain: strict;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 8%, #000 42%, #000 78%, transparent 96%);
-  mask-image: linear-gradient(to bottom, transparent 8%, #000 42%, #000 78%, transparent 96%);
+  white-space: pre; overflow: hidden; opacity: .8; pointer-events: none; contain: strict;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 76%, transparent 92%);
+  mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 76%, transparent 92%);
 }
-.starting .power md-icon { opacity: .45; }
+.starting .power md-icon { display: none; }
 .power:disabled { cursor: default; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .ring circle { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }

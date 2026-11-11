@@ -223,7 +223,8 @@ function schedule() {
   }, fast ? 1500 : 5000);
 }
 
-// ---- 启动日志：增量读取（按字节偏移），约 400ms 一次，最多 20 行，单个文本节点整体替换 ----
+// ---- 启动日志：增量读取（按字节偏移），约 400ms 一次；点击启动后电源图标隐藏，日志居中显示在按钮背景里，
+// 启动完成或失败（阶段不再是 starting）即撤掉日志、恢复图标 ----
 function bootOn() {
   if (boot) return;
   // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
@@ -245,12 +246,14 @@ function bootOff() {
   el.textContent = "";
 }
 
+// 圆形按钮（120px）里 10px 行高能完整放下的行数；块整体居中，超出的旧行不进 DOM
+const BOOT_SHOW = 9;
 // 同一帧内只写一次：单个文本节点整体替换，日志层 contain: strict，不影响页面其余部分排版
 function bootPaint(b) {
   if (b.raf) return;
   b.raf = requestAnimationFrame(() => {
     b.raf = 0;
-    if (boot === b) txt($("power-log"), b.buf.lines.join("\n"));
+    if (boot === b) txt($("power-log"), b.buf.lines.slice(-BOOT_SHOW).join("\n"));
   });
 }
 
