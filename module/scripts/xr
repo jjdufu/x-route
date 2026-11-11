@@ -85,7 +85,7 @@ status_line() {
   if vm_running; then
     r="运行中"
     case "$(cat "${RUN}/state" 2>/dev/null)" in
-      stable) s="已稳定" ;; ready) s="已就绪" ;; *) s="启动中" ;;
+      stable) s="运行中" ;; ready) s="已就绪" ;; *) s="启动中" ;;
     esac
   else r="已停止"; s="-"; fi
   n="$(grep -c . "${RUN}/routes.active" 2>/dev/null)"

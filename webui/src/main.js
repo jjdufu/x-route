@@ -208,7 +208,11 @@ async function power() {
     pending = null;
     if (r.errno !== 0) snack("停止失败", true);
   } else {
-    pending = "start"; renderPower(status || {}); schedule();
+    pending = "start";
+    renderPower(status || {});
+    schedule();
+    // 先画出启动中转圈，再等 kernelsu exec，避免空等数秒才出现动画
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const r = await xr("start");
     await refresh();
     pending = null;

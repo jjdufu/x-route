@@ -39,9 +39,15 @@ for (const s of ["status-json", "start", "stop", "set", "ipv6", "vpn-import", "l
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
-eq(tabs, ["概览", "组网", "日志", "设置"], "顶部 Tab");
+eq(tabs, ["主页", "组网", "日志", "设置"], "顶部 Tab");
 if (/bottom|tabbar|nav class/.test(html)) fail("不应有底部导航");
 if (html.indexOf('class="appbar"') > html.indexOf('id="pager"')) fail("标题栏必须在内容区之外");
+const css = fs.readFileSync(W + "/src/style.css", "utf8");
+if (!html.includes("viewport-fit=cover")) fail("缺少 viewport-fit=cover");
+if (!css.includes("safe-area-inset-top") || !css.includes("safe-area-inset-bottom")) fail("缺少 safe-area 变量");
+if (css.includes("breathe") || /animation:\s*breathe/.test(css) || css.includes("@keyframes breathe")) fail("不得保留呼吸光动画");
+if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得使用大面积模糊");
+if (html.includes("概览") || main.includes("概览") || css.includes("概览")) fail("页签名应为「主页」");
 for (const t of ["开机自启", "运行时长", "上游网络", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
   "存储共享", "目录", "虚拟机资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "导出当前", "导出全部", "整机复位后自启已关闭"]) {
   if (!html.includes(t)) fail(`缺少文案 ${t}`);

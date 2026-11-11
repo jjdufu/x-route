@@ -46,7 +46,7 @@ $XR start; chk '[ $? -eq 0 ] && $XR running'
 chk '[ "$($XR set XR_DNS "1.1.1.1")" = "{\"ok\":true,\"restart\":true}" ]'
 $XR set XR_DNS "223.5.5.5 119.29.29.29" >/dev/null
 sleep 10
-chk '$XR status-line | grep -q "^运行中 / 已稳定 /"'
+chk '$XR status-line | grep -q "^运行中 / 运行中 /"'
 chk '[ "$($XR set AUTOSTART 1)" = "{\"ok\":true,\"restart\":false}" ] && grep -qx "AUTOSTART=\"1\"" "$CONF"'
 # 客侧上报路由：sync 后读入；被拒绝的网段出现在 routes_rejected
 : > "$T/net.calls"

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#111318" />
   <title>XRouter</title>
   <script type="module" src="./src/main.js"></script>
 </head>
@@ -15,14 +16,14 @@
     </header>
 
     <md-tabs id="tabs" class="tabs" aria-label="页面">
-      <md-primary-tab data-page="0"><md-icon slot="icon" data-icon="dashboard"></md-icon>概览</md-primary-tab>
+      <md-primary-tab data-page="0"><md-icon slot="icon" data-icon="dashboard"></md-icon>主页</md-primary-tab>
       <md-primary-tab data-page="1"><md-icon slot="icon" data-icon="hub"></md-icon>组网</md-primary-tab>
       <md-primary-tab data-page="2"><md-icon slot="icon" data-icon="receipt_long"></md-icon>日志</md-primary-tab>
       <md-primary-tab data-page="3"><md-icon slot="icon" data-icon="settings"></md-icon>设置</md-primary-tab>
     </md-tabs>
 
     <main id="pager" class="pager">
-      <!-- 概览 -->
+      <!-- 主页 -->
       <section class="page" id="page-home">
         <div id="trip" class="card alert" hidden>
           <md-icon data-icon="warning"></md-icon>
