@@ -75,17 +75,15 @@ jobs:
         run: |
           VER="$(awk -F= '/^version=/{print $2}' module/module.prop | tr -d '\r ')"
           NAME="$(awk -F= '/^name=/{print substr($0, index($0,$2))}' module/module.prop | tr -d '\r')"
-          AUTHOR="$(awk -F= '/^author=/{print $2}' module/module.prop | tr -d '\r ')"
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
-          echo "author=${AUTHOR}" >> "$GITHUB_OUTPUT"
 
       - name: Publish Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
-          name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }} (Build #${{ github.run_number }} by ${{ steps.meta.outputs.author }})"
+          name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}"
           prerelease: true
           body_path: dist/RELEASE_NOTES.md
           files: |

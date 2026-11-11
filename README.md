@@ -1,116 +1,29 @@
 # XRouter
 
-> 在骁龙手机的 Gunyah 受保护虚拟机（AVF pVM）里运行 **ImmortalWrt 25.12**，给手机本机和热点设备提供 OpenWrt 网关与 OpenVPN 客户端。SukiSU / KernelSU 模块，自带 WebUI。
+在骁龙手机的 Gunyah 受保护虚拟机里运行 ImmortalWrt，为手机本机和热点提供网关与 OpenVPN。SukiSU / KernelSU 模块，自带 WebUI。
 
-[![Platform](https://img.shields.io/badge/Platform-OnePlus%2013%20(SM8750)-red)](https://github.com/jjdufu/x-route)
-[![Root](https://img.shields.io/badge/Root-SukiSU%20%2F%20KernelSU-blue)](https://github.com/jjdufu/x-route)
-[![Firmware](https://img.shields.io/badge/ImmortalWrt-25.12.2-green)](https://github.com/jjdufu/x-route)
-[![Status](https://img.shields.io/badge/Status-v3%20Pre--release%20(未经真机验证)-orange)](./docs/TESTING.md)
+当前为预发布，请先按 [docs/TESTING.md](./docs/TESTING.md) 测试再日常使用。
 
-> **XRouter v3 是一次完整重写，目前只通过了本机单元测试与 QEMU 启动冒烟测试，尚未在真机上验证。** 请先按 [docs/TESTING.md](./docs/TESTING.md) 测试，再日常使用。
+## 安装
 
-## 1. 是什么
+只支持全新安装：先在管理器里卸载旧版并重启，再刷入 `xrouter-sukisu-full-<版本>.zip`。需要支持 AVF pVM 的骁龙机型、SukiSU / KernelSU，以及至少 1.5GB 的 `/data` 剩余空间。
 
-- VM：ImmortalWrt 25.12.2（armsr/armv8 ImageBuilder，包管理器 `apk`），内核 Linux 6.12.103（打上 ImmortalWrt generic/armsr 补丁，使用官方内核配置 + Gunyah pVM 片段），可直接 `apk add` 官方 25.12 的 `kmod-*`。
-- 预装：LuCI（简体中文）、ttyd、OpenVPN（`openvpn-openssl` + `luci-app-openvpn`）、tcpdump、dnsmasq-full，以及透明代理常用模块 `kmod-nft-tproxy`、`kmod-nft-socket`、`kmod-nft-fullcone`、`kmod-inet-diag`。
-- 内核的网络模块划分（netfilter / nftables / conntrack / tproxy / socket / TUN / inet_diag 等为 `=m`）与官方 25.12.2 内核一致，官方源里的 `kmod-*` 可以直接 `apk add` 并 `modprobe`。Clash 类插件（OpenClash、nikki 等）所需的 TUN、nft tproxy/socket、redirect/NAT/masquerade、fullcone、策略路由（多路由表、fwmark）都具备；fw4 默认关闭 fullcone 与 flow offloading，可在 LuCI 防火墙或插件中开启。
-- 手机侧：tap 网卡 `xr0` 接入 VM，登记为 netd 本地网络；手机当前上游（Wi-Fi 或蜂窝，插 5G 卡时蜂窝就是 WAN）作为 VM 的 WAN：放行出站与回包，丢弃上游主动入站；NAT 只针对 VM 网段。
+安装后默认不自启，在 WebUI 主页启动。LuCI 为 `http://172.29.233.254`，用户 `root`，空密码，请尽快设置。
 
-## 2. 要求
-
-- 支持 AVF pVM 的骁龙机型，存在 `/apex/com.android.virt/bin/crosvm`（开发机型：OnePlus 13）。
-- SukiSU / KernelSU。
-- `/data` 剩余空间至少 1.5GB。
-
-## 3. 安装
-
-- **只支持全新安装**：先在管理器里卸载旧版并重启，再刷入本包。旧配置不会迁移。
-- 发布文件：
-  - `xrouter-sukisu-full-<版本>.zip`：模块 + 内核 `Image` + 系统盘 `openwrt-rootfs.img.gz`，首次安装用它；
-  - `xrouter-sukisu-lite-<版本>.zip`：只含脚本和 WebUI，要求 `/data/adb/xrouter/images/` 下已有镜像；
-  - `Image`、`openwrt-rootfs.img.gz`、`openwrt.qcow2`、`sha256sums.txt`：单独的固件文件与校验和。
-- 安装后**默认不自启**，在 WebUI 点概览页的电源按钮启动。
-
-## 4. 首次使用
-
-- 模块 WebUI（Vite + Material Web）顶部是固定标题栏和概览、组网、日志、设置四个 Tab，可点击或左右滑动切换。概览页的圆形电源按钮即运行状态，下面是开机自启、运行时长、上游网络和打开 LuCI。
-- 浏览器打开 `http://172.29.233.254`（LuCI）。终端 `http://172.29.233.254:7681`（ttyd）和 SSH 的开关、端口都在 LuCI 里设置。
-- 用户 `root`，**空密码（上游默认）**。热点设备默认也能访问 VM，请尽快在 LuCI → 系统 → 管理权 中设置密码。
-
-## 5. 网络
-
-- 地址规划：`172.29.233.0/24`，手机 `xr0` 为 `.1`，VM `eth0` 为 `.254`（网关 `.1`）。前缀可通过 `XR_NET_PREFIX` 修改。
-- 运行模式（设置里切换，需确认后生效）：
-  - `全局接管`（默认）：手机本机和热点的上网都先进入 OpenWrt，处理后再从当时的 WAN（5G、4G 或 Wi-Fi）出去；
-  - `旁路网关`：不接管手机和热点上网，只有访问这台路由或已同步的对端网段时才进入虚拟机。
-  虚拟机未就绪或已停止时不会接管，避免把手机自己的上网搞断。
-- 管理访问（`XR_EXPOSE`，谁能访问 VM 网段；蜂窝网络进来的访问一律拒绝）：
-  - 本机（`local`）：只有手机本机；
-  - 内网（`lan`，默认）：再加热点 / USB 共享的设备；
-  - 所有（`all`）：再加所连 Wi-Fi 局域网，需要在上级路由器添加静态路由 `172.29.233.0/24 via <手机 IP>`。
-- WAN：VM 经手机当前默认上游（netd 选择的网络，Wi-Fi 或蜂窝均可；纯 IPv6 蜂窝的 464xlat `v4-*` 出口也已覆盖）上网。按标准路由器语义处理：放行 VM 出站和回包，丢弃上游主动发往 VM 的入站。
-- 手机侧不改写 VM 发出的包：不限制 UDP/QUIC、不限目标端口、不改 fwmark/DSCP；MASQUERADE 只匹配源 `172.29.233.0/24`。VM 内的 OpenVPN、Clash 插件看到的是普通 NAT 上行。
-- IPv6 默认关闭（固件组件保留）。在设置中打开后，全局模式下手机与热点的 IPv6 同样经虚拟机出网（NAT66）；关闭时本机与热点的 IPv6 直接被拒绝，应用立即回落 IPv4，不会绕过虚拟机。
-- netd 的 `ndc` 不可用时自动退回 table 97 + 策略规则。
-
-## 6. OpenVPN
-
-- 可在组网页「导入配置」从内部存储选择 `.ovpn` / `.conf`，或在 LuCI → VPN → OpenVPN 导入。只启用或重载 OpenVPN，不重启虚拟机。
-- 连上后，服务器 push 的实际路由会自动同步到手机；不从 ovpn 文件解析网段。默认路由（redirect-gateway）不同步。
-- 固定按网点方式：本网段 `172.29.233.0/24` 出隧道不做 NAT，对端可回访；热点网段出隧道仍做 NAT。vpn 区入站拒绝，转发与出站允许，lan 与 vpn 双向转发。
-
-## 7. 目录共享
-
-- 默认关闭。开启后手机目录经 virtiofs 挂载到 VM 的 `/mnt/sdcard`。
-- 路径只能是 `/data/media/0` 或其子目录（底层路径，不走 FUSE）；填写 `/sdcard` 或 `/storage/emulated/0` 时按同一处存储处理。手机未解锁时本次启动不共享。
-- `ro`（默认）：在 crosvm 自己的挂载命名空间里做只读绑定，手机侧内核强制只读，Android 侧看不到这次挂载。
-- `rw`：只有当前 crosvm 支持属主映射时才可用（否则 WebUI 置灰）。VM 写入的文件不经过 MediaStore，相册、文件管理器需要手动扫描或重启后才能看到；不要写入 `Android/data`、`Android/obb`。
-
-## 8. 安全措施
-
-- 启动熔断：启动 VM 时写入 `vm_booting.fuse`，若在就绪/稳定前整机复位，开机后自动关闭自启并在 WebUI 显示熔断条，确认后才能再启动。
-- 自启门槛：必须先用当前配置手动启动并运行到“已稳定”，才能打开开机自启；影响稳定性的配置一改，门槛重新生效。
-- 保守的 VM 参数：`--no-balloon`、swiotlb 64MB、内存 512MB、`ulimit -l unlimited`。
-- 就绪超时（默认 180 秒）内没有收到 VM 的 `XR_READY`，自动停止 VM。
-
-## 9. 命令行
+## 命令
 
 ```sh
 XR="sh /data/adb/modules/xrouter/scripts/xr"
-$XR start | stop | running          # 启动 / 停止 / 是否运行（返回码）
-$XR status-json | status-line       # 状态
-$XR get                             # 列出全部配置
-$XR set KEY VALUE                   # 修改配置（会校验，返回 {"ok":...,"restart":...}）
-$XR ack-trip                        # 确认熔断
-$XR expand MB | reset-disk          # 扩容 / 重置系统盘（需先停止 VM）
-$XR sync                            # 立即重建手机侧网络规则
-$XR log [xr|module|console|ctl|vmm] [N]   # 查看日志
-$XR log-export [all|module|console|ctl|vmm]  # 导出到 Download
+$XR start | stop | status-json
 ```
 
-## 10. 构建
-
-依赖与 CI（`.github/workflows/build-openwrt.yml`）相同：Debian/Ubuntu 上的 `build-essential bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu zstd e2fsprogs qemu-utils zip` 等。
+## 构建
 
 ```sh
-bash scripts/build-kernel.sh      # 内核 Image -> dist/openwrt/
-bash scripts/build-rootfs.sh      # ImageBuilder 系统盘 -> dist/openwrt/openwrt-rootfs.img.gz、openwrt.qcow2
-bash scripts/package-module.sh    # 模块 zip、sha256sums.txt、RELEASE_NOTES.md
-sh scripts/lint.sh                # shellcheck + 单元测试（mksh / busybox sh / dash）
-sh tests/e2e-qemu.sh              # 可选：用 QEMU 启动真实镜像做端到端冒烟
+bash scripts/build-kernel.sh
+bash scripts/build-rootfs.sh
+bash scripts/package-module.sh
+sh scripts/lint.sh
 ```
 
-推送到 `main` 后由 CI 构建并发布 Release（标签 `<版本>-build.<序号>`）。
-
-## 11. 日志与卸载
-
-- 日志写在 `/data/adb/xrouter` 下（`log/module.log`、`log/vmm.log`，以及 `run/console.log`、`run/vm-ctl.log`），会轮转，不写到 `/sdcard`。可在日志页一键导出到 Download，也可导出当前正在看的那一类。
-- 卸载：在管理器里卸载模块并重启，会清除进程、网络规则、通知、唤醒锁，并删除 `/data/adb/xrouter`（**包括日志和 VM 系统盘**），不留与模块有关的文件。导出到 Download 的压缩包不会删除。
-
-## 12. 已知限制
-
-- 尚未在真机上验证，见 [docs/TESTING.md](./docs/TESTING.md)。
-- v1 出现过的整机复位根因仍未确认；保留了上面全部安全措施，复位时按测试清单逐项二分。
-- 依赖 netd 的默认网络规则格式（`fwmark 0x0/0xffff iif lo lookup <iface>`），Android 大版本升级后需要重新检查。
-- virtiofs 共享在 pVM 上未经测试，可能较慢或不可用；rw 依赖 crosvm 的属主映射支持。
-- 只支持官方源中的 apk 包，不支持只有 ipk 的第三方包。
+推送到 `main` 后由 CI 构建并发布预发布（标签 `<版本>-build.<序号>`）。

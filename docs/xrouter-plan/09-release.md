@@ -14,8 +14,8 @@
 1. 发版前检查：
    - `git status` 干净，`git log origin/main..HEAD` 即为第 0–8 步（及修复）的全部提交；
    - `module.prop` 为 `v3.0.0` / `300` / `id=xrouter` / `name=XRouter`；
-   - `scripts/package-module.sh` 生成的 Release 说明为中文、标题体现 XRouter、写明预发布且尚未真机测试、包名为 `xrouter-sukisu-full/lite-v3.0.0.zip`、路径为 `/data/adb/xrouter`；
-   - README、TESTING 与最终行为一致（全局/旁路、OpenVPN 自动同步、四页 WebUI、彻底卸载）；
+   - `scripts/package-module.sh` 生成的 Release 说明保持简短：中文、版本号、预发布/全新安装/空密码提示和包名即可，不要长文；
+   - README 同样精简，TESTING 与最终行为一致；
    - 仓库中无密钥、ovpn 私钥、VPN 服务器公网地址。
 2. 快进推送：`git push origin main`。禁止 `--force`。禁止删除或移动已有标签 `v2.0.1-build.8` 等。
 3. 推送 `main` 且变更落在 `openwrt/**`、`module/**`、`scripts/**` 或工作流文件时，`.github/workflows/build-openwrt.yml` 会构建并创建：
