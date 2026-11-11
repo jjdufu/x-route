@@ -53,7 +53,12 @@ needs_restart() {
 after_set() {
   case "$1" in
     XR_EXPOSE|XR_MODE|XR_HOTSPOT_BRIDGE|XR_HOTSPOT_SUBNET)
-      vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
+      # 规则重建（热点拆桥重桥可能要十几秒）放到脱离会话的后台进程：xr set 立即返回，WebUI 不等它；
+      # net.sh 自带 net_lock，与常驻对账循环不会并发改规则
+      if vm_running && [ "${VM_NET:-1}" = 1 ]; then
+        _ss=""; command -v setsid >/dev/null 2>&1 && _ss=setsid
+        ${_ss} sh "${MODDIR}/scripts/net.sh" sync </dev/null >/dev/null 2>&1 &
+      fi ;;
     XR_NOTIFY_TRAFFIC)
       : > "${RUN}/notify.force" ;;
     XR_DEBUG|XR_DEBUG_HOURS)

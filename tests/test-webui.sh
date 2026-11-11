@@ -124,6 +124,14 @@ if (/await\s+xr\(\s*kind/.test(main)) fail("按钮不得等待后台启停");
 if (!html.includes('id="boot-log"') || html.includes('id="power-log"')) fail("开机日志应在舞台里而不是按钮里");
 if (html.indexOf('id="boot"') > html.indexOf('id="row-autostart"')) fail("开机日志应在「开机自启」上方");
 { const m = main.match(/const BOOT_POLL = (\d+);/); if (!m || +m[1] < 150 || +m[1] > 250 || !/setTimeout\(\(\) => bootTick\(b\), BOOT_POLL\)/.test(main)) fail("开机日志应 150-250ms 轮询"); }
+// 点击不卡：优先 ksu.spawn（命令在后台线程跑，不堵 WebView 主线程），没有时才退回同步的 ksu.exec
+if (!/canSpawn\(\) \? await runSpawn\(cmd\) : await exec\(cmd\)/.test(main)) fail("xr() 应优先用 spawn");
+// 状态刷新单飞；设置乐观更新（先改本地再后台保存），保存后合并刷新，不在点击路径上等 status-json
+if (!/if \(refreshing\) \{ refreshAgain = true; return refreshing; \}/.test(main)) fail("refresh 应单飞");
+{ const sk = main.slice(main.indexOf("async function setKey"), main.indexOf("// ---- 渲染 ----"));
+  if (sk.indexOf("render(status)") < 0 || sk.indexOf("render(status)") > sk.indexOf('await xr("set"') || /await refresh\(\)/.test(sk)) fail("setKey 应乐观更新、不等 refresh"); }
+if (!/for \(const \[k, e\] of edits\) if \(e\.doneAt !== null && t0 > e\.doneAt\) edits\.delete\(k\);/.test(main)) fail("保存前发出的刷新不能把开关弹回去");
+if (!/requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("切页后再读流量");
 // 单次在途：先 await 本次 exec，再排下一次；开机期间暂停常规状态轮询
 { const bt = main.slice(main.indexOf("async function bootTick"), main.indexOf("// ---- 操作 ----"));
   if (bt.indexOf('await xr("boot-tail"') < 0 || bt.indexOf('await xr("boot-tail"') > bt.indexOf("setTimeout(() => bootTick(b), BOOT_POLL)")) fail("boot-tail 必须单次在途");

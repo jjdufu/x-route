@@ -92,7 +92,8 @@ chk '$XR vpn-import /storage/emulated/0/Download/vpn/home.ovpn | grep -q "\"ok\"
 chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -q "^enable [0-9]*$" "$RUN/guest/host/openvpn.cmd" && [ -f "$XR_DATA/config/openvpn.ovpn" ]'
 chk '$XR vpn-import /storage/emulated/0/Download/vpn/bin.conf | grep -q "\"ok\":false" && ! $XR vpn-import /data/adb/x.ovpn >/dev/null'
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
-chk '$XR set XR_EXPOSE all >/dev/null && [ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'
+chk '$XR set XR_EXPOSE all >/dev/null'; i=0; while [ "$(grep -c "net sync" "$T/net.calls")" -lt 2 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done
+chk '[ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'   # 后台执行，稍等
 # 日志统一：不再有分类查看 / 清空命令
 out="$($XR log xr 5)"; chk '[ $? -eq 2 ]'; out="$($XR log-clear all)"; chk '[ $? -eq 2 ]'
 # 日志导出：普通日志 .tar.gz（文件名带日期时间，脱敏），调试开启时诊断导出另含快照与调试日志
@@ -159,6 +160,8 @@ echo ready > "$RUN/state"; chk '[ "$(BT -1 -1 | cut -d"|" -f2)" = Sready ]'; rm 
 # 快速路径：boot-tail 不加载其余脚本（不 source common.sh），开机期间每 ~200ms 调用也很轻
 chk '[ "$(sed -n "/^if \[ \"\${1:-}\" = boot-tail \]/,/^fi/p" "$ROOT/module/scripts/xr" | grep -c "^\. ")" = 0 ]'
 chk '[ "$(grep -n "= boot-tail \]" "$ROOT/module/scripts/xr" | cut -d: -f1)" -lt "$(grep -n "scripts/common.sh\"$" "$ROOT/module/scripts/xr" | head -1 | cut -d: -f1)" ]'
+# xr set 不在前台跑规则重建（WebUI 点击路径上不等 net.sh sync）
+chk 'sed -n "/^after_set()/,/^}/p" "$ROOT/module/scripts/xr" | grep -q "net.sh\" sync </dev/null >/dev/null 2>&1 &$"'
 # 用法错误
 out="$($XR bogus)"; chk '[ $? -eq 2 ]'
 out="$($XR expand abc)"; chk '[ $? -eq 2 ]'

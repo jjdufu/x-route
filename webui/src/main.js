@@ -14,7 +14,7 @@ import "@material/web/ripple/ripple.js";
 import "@material/web/focus/md-focus-ring.js";
 import "@material/web/select/outlined-select.js";
 import "@material/web/select/select-option.js";
-import { exec, isKsuWebui } from "kernelsu-alt";
+import { exec, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import { ICONS } from "./icons.js";
 import {
@@ -47,9 +47,27 @@ export function setIcon(el, name) {
   el.dataset.icon = name; icon(el);
 }
 
+// 卡顿根因：旧版管理器（SukiSU 2026-10 之前，含手机上的 v4.1.3）的 ksu.exec 是同步 JavascriptInterface：
+// 新建 root shell + 命令执行完才返回，期间 WebView 主线程（JS、样式、布局、输入）整个被堵住；
+// status-json 在手机上要 ~800ms，每 5 秒一次、每次点设置后再来一次，点击 / 切页 / 滑动自然一顿一顿。
+// ksu.spawn 只同步创建 shell（约 20ms），命令在后台线程跑、输出异步回调，所以优先用 spawn；没有时退回 exec。
+function runSpawn(cmd) {
+  return new Promise((resolve) => {
+    const out = []; const err = []; let done = false;
+    const end = (code) => { if (!done) { done = true; resolve({ errno: code, stdout: out.join("\n"), stderr: err.join("\n") }); } };
+    let c;
+    try { c = spawn(cmd); } catch (e) { end(1); err.push(String(e)); return; }
+    c.stdout.on("data", (d) => out.push(d));
+    c.stderr.on("data", (d) => err.push(d));
+    c.on("exit", (code) => end(Number(code) || 0));
+    c.on("error", (e) => { if (!done) { err.push(String(e && e.message || e)); end((e && e.exitCode) || 1); } });
+  });
+}
+const canSpawn = () => !!(globalThis.ksu && typeof globalThis.ksu.spawn === "function");
 export async function xr(sub, ...args) {
   if (!isKsuWebui()) return { errno: 1, stdout: "", stderr: "需在管理器中打开" };
-  try { return await exec(xrCmd(sub, ...args)); }
+  const cmd = xrCmd(sub, ...args);
+  try { return canSpawn() ? await runSpawn(cmd) : await exec(cmd); }
   catch (e) { return { errno: 1, stdout: "", stderr: String(e) }; }
 }
 
@@ -113,17 +131,30 @@ function fillSelect(sel, opts, value) {
   sel.updateComplete.then(() => { if (sel.value !== value) sel.select(value); });
 }
 
+// 乐观更新：先改本地状态并立即重绘（开关、文字当帧生效），xr set 在后台跑；失败再回滚并提示。
+// 保存后不立刻拉 status-json，而是合并到稍后的一次刷新（连点几个开关也只刷新一次）
+// 本地改动覆盖层：保存中、以及保存完成前就已发出的 status-json 返回的旧值，都不能把开关「弹回去」
+const edits = new Map();   // key -> { v, doneAt }（doneAt=null 表示 xr set 还在跑）
+function overlay(d) {
+  if (!d || !d.config) return;
+  for (const [k, e] of edits) d.config[k] = e.v;
+}
 async function setKey(key, value) {
   if (!SET_KEYS.includes(key)) return false;
+  const e = { v: value, doneAt: null };
+  edits.set(key, e);
+  if (status) { overlay(status); render(status); }
   const r = await xr("set", key, value);
   const res = lastJson(r.stdout);
   if (!res || !res.ok) {
+    if (edits.get(key) === e) edits.delete(key);
     snack((res && res.error) || r.stderr || "未保存", true);
-    await refresh();
+    refreshSoon(0);
     return false;
   }
+  e.doneAt = Date.now();
   if (res.restart) snack("重启虚拟机后生效");
-  await refresh();
+  refreshSoon();
   return true;
 }
 
@@ -206,7 +237,21 @@ function render(d) {
   prop($("btn-reset"), "disabled", !!vm.running);
 }
 
-async function refresh() {
+// 状态刷新单飞：同一时刻最多一个 status-json 在途，期间再要求刷新只记一次，结束后补一次
+let refreshing = null; let refreshAgain = false; let soonTimer = 0;
+function refresh() {
+  if (refreshing) { refreshAgain = true; return refreshing; }
+  refreshing = (async () => {
+    do { refreshAgain = false; await refreshOnce(); } while (refreshAgain);
+  })().finally(() => { refreshing = null; });
+  return refreshing;
+}
+function refreshSoon(ms = 1200) {
+  clearTimeout(soonTimer);
+  soonTimer = setTimeout(() => { refresh(); }, ms);
+}
+async function refreshOnce() {
+  const t0 = Date.now();
   const r = await xr("status-json");
   let d = null;
   try { d = JSON.parse(r.stdout); } catch { d = null; }
@@ -215,6 +260,9 @@ async function refresh() {
     txt($("chip-text"), "异常");
     return;
   }
+  // 保存完成之后才发出的刷新是权威结果，撤掉对应覆盖；更早的刷新仍套用本地值
+  for (const [k, e] of edits) if (e.doneAt !== null && t0 > e.doneAt) edits.delete(k);
+  overlay(d);
   render(d);
 }
 
@@ -462,7 +510,8 @@ function goPage(i) {
   if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
   if (page === i) return;
   page = i;
-  if (i === 2) loadTraffic();
+  // 先让切页这一帧画出来，再去读流量（不和切页抢同一帧）
+  if (i === 2) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }
 
 function bindPager() {
