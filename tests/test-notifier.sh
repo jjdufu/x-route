@@ -27,6 +27,11 @@ chk 'grep -q "IMPORTANCE_DEFAULT" "$N" && grep -q "setSound(null, null)" "$N"'
 chk 'grep -q "setOngoing(true)" "$N" && grep -q "FLAG_NO_CLEAR" "$N" && grep -q "BigTextStyle" "$N"'
 chk 'grep -q "FLAG_IMMUTABLE" "$N" && grep -q "ui.webui.WebUIActivity" "$N" && grep -q "ksu://webui?id=" "$N"'
 chk 'grep -q "com.sukisu.ultra" "$N"'
+# 保活通知只在通知栏、不上锁屏（渠道与通知都 SECRET；锁屏可见性只在建渠道时生效，所以换新渠道 ID 并删除旧渠道）
+chk 'grep -q "VISIBILITY_SECRET" "$N" && grep -q "setLockscreenVisibility" "$N" && grep -q "setVisibility(Notification.VISIBILITY_SECRET)" "$N"'
+chk 'grep -q "CHANNEL_ID = \"xrouter_status_v2\"" "$N" && grep -q "deleteNotificationChannel" "$N"'
+# 日志导出 zip（手机上没有 zip 命令时由 jar 打包）
+chk 'grep -q "\"zip\"" "$S/Main.java" && grep -q "ZipOutputStream" "$S/Zipper.java" && grep -q "com.xrouter.notify.Main zip" "$ROOT/module/scripts/xr"'
 # 进程与守护进程的约定：notify.req / notify.ack / cancel
 M="$S/Main.java"
 chk 'grep -q "systemMain" "$M" && grep -q "\"notify.req\"" "$M" && grep -q "\"notify.ack\"" "$M"'
@@ -68,6 +73,15 @@ EOJ
     chk 'diff -u "$T/want.txt" "$T/out.txt"'
   else
     cat "$T/javac.err"; echo "FAIL: Traffic.java 编译失败"; fail=1
+  fi
+  mkdir -p "$T/zsrc/com/xrouter/notify" "$T/zcls" "$T/zd/pack/sub"
+  cp "$S/Zipper.java" "$T/zsrc/com/xrouter/notify/"
+  printf 'package com.xrouter.notify;\npublic class ZipCheck { public static void main(String[] a) throws Exception { Zipper.zipDir(new java.io.File(a[0]), new java.io.File(a[1]), a[2]); } }\n' > "$T/zsrc/com/xrouter/notify/ZipCheck.java"
+  echo one > "$T/zd/pack/a.txt"; echo two > "$T/zd/pack/sub/b.log"
+  if javac -encoding UTF-8 -d "$T/zcls" "$T/zsrc/com/xrouter/notify/"*.java 2>"$T/zjavac.err" && java -cp "$T/zcls" com.xrouter.notify.ZipCheck "$T/out.zip" "$T/zd" pack; then
+    chk '[ "$(python3 -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(\" \".join(sorted(n for n in z.namelist() if not n.endswith(\"/\"))), z.read(\"pack/sub/b.log\").decode().strip(), z.testzip())" "$T/out.zip")" = "pack/a.txt pack/sub/b.log two None" ] && [ ! -e "$T/out.zip.part" ]'
+  else
+    cat "$T/zjavac.err"; echo "FAIL: Zipper"; fail=1
   fi
   chk 'grep -q "1024" "$ROOT/module/scripts/traffic.sh"'
 else

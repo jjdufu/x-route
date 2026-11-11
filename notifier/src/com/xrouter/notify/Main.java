@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
  * XRouter 常驻通知进程（无 APK）。由守护进程以 root 经 app_process 拉起：
  *   app_process -Djava.class.path=xrnotify.jar /system/bin --nice-name=xrnotify com.xrouter.notify.Main serve <run>
  *   ... com.xrouter.notify.Main cancel        一次性撤掉通知
+ *   ... com.xrouter.notify.Main zip <out.zip> <目录> <子目录名>   把日志目录打包成 zip（安卓没有 zip 命令，见 xr make_zip）
  * serve：每秒读一次 <run>/notify.req（守护进程原子写入的一行负载，或 "cancel"），
  * 内容变化才发通知；处理结果写 <run>/notify.ack（"ok <负载>" 或 "err <原因>"）。
  * 收到 cancel、<run> 被删除（卸载）时撤通知并退出。异常直接退出，由守护进程重新拉起。
@@ -59,8 +60,21 @@ public final class Main {
             System.exit(1);
         });
         String cmd = args.length > 0 ? args[0] : "";
+        if ("zip".equals(cmd)) {
+            // 只用 java.util.zip，不碰系统服务
+            if (args.length < 4) System.exit(2);
+            try {
+                Zipper.zipDir(new File(args[1]), new File(args[2]), args[3]);
+                System.exit(0);
+            } catch (Throwable t) {
+                log("打包失败：" + t);
+                new File(args[1]).delete();
+                System.exit(1);
+            }
+            return;
+        }
         if (!"serve".equals(cmd) && !"cancel".equals(cmd)) {
-            log("用法：Main serve <run 目录> | cancel");
+            log("用法：Main serve <run 目录> | cancel | zip <out> <目录> <子目录名>");
             System.exit(2);
         }
         Notifier n;

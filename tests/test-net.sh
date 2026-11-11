@@ -227,4 +227,12 @@ xr_exec sh -c 'kill -PIPE $$'; xr_exec sh -c 'exit 3'
 chk '! grep -q "rc=141" "$XR_DATA/log/debug.log" && grep -q "rc=3 sh -c exit 3" "$XR_DATA/log/debug.log"'
 set_kv XR_DEBUG 0
 
+# 对时：控制目录里的 host/time 过期（≥30 分钟）或在未来时才重写，平时不写盘
+eval "$(sed -n '/^time_push() {/,/^}/p' "$ROOT/module/scripts/net.sh")"
+mkdir -p "$RUN/guest/host"; rm -f "$RUN/guest/host/time"
+time_push; chk '[ "$(cat "$RUN/guest/host/time")" -ge "$(( $(date +%s) - 5 ))" ]'
+echo 123 > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" -gt 123 ]'
+t0="$(( $(date +%s) - 60 ))"; echo "$t0" > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" = "$t0" ]'
+tf="$(( $(date +%s) + 86400 ))"; echo "$tf" > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" -lt "$tf" ]'
+
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

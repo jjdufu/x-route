@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
-# 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
+# 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
 #       vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
@@ -99,6 +99,28 @@ vpn_rejected() {
   done
 }
 
+# 隧道列表（WebUI 组网页按列表渲染，将来多份配置时每条一项）：客侧 openvpn.tunnels 每行 DEV|名称|地址|MTU|路由；
+# 还没有隧道但已导入配置时给出一项（状态取汇总值），未导入时为空列表。
+# 实例名 xrouter 显示为导入时的文件名（config/openvpn.name）。$1=汇总状态
+vpn_tunnels() {
+  _vn="$(cat "${XR_DATA}/config/openvpn.name" 2>/dev/null)"
+  _o=""
+  if vm_running && [ -s "${RUN}/guest/guest/openvpn.tunnels" ]; then
+    while IFS='|' read -r _dev _nm _ad _mt _rt; do
+      [ -n "$_dev" ] || continue
+      [ "$_nm" = xrouter ] && [ -n "$_vn" ] && _nm="$_vn"
+      is_uint "$_mt" || _mt=0
+      _o="${_o:+${_o},}{\"dev\":$(jstr "$_dev"),\"name\":$(jstr "$_nm"),\"status\":\"up\",\"addr\":$(jstr "$_ad"),\"mtu\":${_mt},\"routes\":$(jarr "$(echo "$_rt" | tr ',' ' ')")}"
+    done < "${RUN}/guest/guest/openvpn.tunnels"
+  fi
+  if [ -z "$_o" ] && [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
+    _st="$1"; [ "$_st" = up ] && _st=connecting
+    vm_running || _st=down
+    _o="{\"dev\":\"\",\"name\":$(jstr "${_vn:-OpenVPN}"),\"status\":$(jstr "$_st"),\"addr\":\"\",\"mtu\":0,\"routes\":[]}"
+  fi
+  printf '[%s]' "$_o"
+}
+
 status_json() {
   load_config
   vmj="$(vm_status)"
@@ -114,12 +136,13 @@ status_json() {
   [ -f "${RUN}/guest/guest/openvpn.status" ] && vst="$(cat "${RUN}/guest/guest/openvpn.status" 2>/dev/null)"
   [ -n "$vst" ] || vst="down"
   [ -f "${RUN}/guest/guest/openvpn.addr" ] && vaddr="$(cat "${RUN}/guest/guest/openvpn.addr" 2>/dev/null)"
+  tun="$(vpn_tunnels "$vst")"
   v6=null
   if vm_running && [ -f "${RUN}/guest/guest/ipv6" ]; then
     [ "$(cat "${RUN}/guest/guest/ipv6")" = 1 ] && v6=true || v6=false
   fi
-  printf '{"vm":%s,"net":%s,"ipv6":%s,"vpn":{"status":%s,"addr":%s,"routes_active":%s,"routes_rejected":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
-    "$vmj" "$netj" "$v6" "$(jstr "$vst")" "$(jstr "$vaddr")" "$(jarr "$act")" "$(jarr "$(vpn_rejected)")" \
+  printf '{"vm":%s,"net":%s,"ipv6":%s,"vpn":{"status":%s,"addr":%s,"routes_active":%s,"routes_rejected":%s,"tunnels":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
+    "$vmj" "$netj" "$v6" "$(jstr "$vst")" "$(jstr "$vaddr")" "$(jarr "$act")" "$(jarr "$(vpn_rejected)")" "$tun" \
     "$([ "${VM_SHARE}" = 1 ] && echo true || echo false)" "$(jstr "${smode:-off}")" "$(jstr "${VM_SHARE_PATH}")" \
     "$ce" "$rw" "$cfg"
 }
@@ -168,6 +191,8 @@ vpn_import() {
   if LC_ALL=C grep -q '[^[:print:][:space:]]' "$src" 2>/dev/null; then echo '{"ok":false,"error":"不是文本配置"}'; return 1; fi
   mkdir -p "${XR_DATA}/config"
   cp -f "$src" "${XR_DATA}/config/openvpn.ovpn" && chmod 0600 "${XR_DATA}/config/openvpn.ovpn"
+  _bn="${src##*/}"; _bn="${_bn%.*}"
+  printf '%s\n' "$_bn" | sed 's/["\\]//g' > "${XR_DATA}/config/openvpn.name"
   if vm_running; then
     mkdir -p "${RUN}/guest/host"
     cp -f "$src" "${RUN}/guest/host/openvpn.ovpn"
@@ -175,6 +200,28 @@ vpn_import() {
   fi
   log_info xr "已导入 OpenVPN 配置"
   echo '{"ok":true}'
+}
+
+# 分来源累计流量（WebUI「累计流量」弹窗）：手机本机 / 热点设备各自的 总流量 | 公网 | 内网，
+# 由 OpenWrt 按转发计数（本次运行以来，见 xrouter-acct）。经控制目录请求，最多等 $1 秒
+traffic_split() {
+  vm_running || { echo '{"ok":false,"error":"虚拟机未运行"}'; return 1; }
+  mkdir -p "${RUN}/guest/host"
+  _ts="$(date +%s)$$"
+  echo "snap ${_ts}" > "${RUN}/guest/host/acct.cmd"
+  _i=0
+  while [ "$_i" -lt "$(( ${1:-6} * 5 ))" ]; do
+    if [ "$(head -n 1 "${RUN}/guest/guest/acct" 2>/dev/null)" = "ts=${_ts}" ]; then
+      sed -n 2p "${RUN}/guest/guest/acct" | awk '{
+        for(i=1;i<=8;i++) if($i !~ /^[0-9]+$/) $i=0
+        printf "{\"ok\":true,\"phone\":{\"wan\":{\"up\":%.0f,\"down\":%.0f},\"lan\":{\"up\":%.0f,\"down\":%.0f},\"total\":{\"up\":%.0f,\"down\":%.0f}},", $1, $2, $3, $4, $1+$3, $2+$4
+        printf "\"hotspot\":{\"wan\":{\"up\":%.0f,\"down\":%.0f},\"lan\":{\"up\":%.0f,\"down\":%.0f},\"total\":{\"up\":%.0f,\"down\":%.0f}}}\n", $5, $6, $7, $8, $5+$7, $6+$8 }'
+      return 0
+    fi
+    sleep 0.2 2>/dev/null || sleep 1
+    _i=$((_i + 1))
+  done
+  echo '{"ok":false,"error":"虚拟机未响应"}'; return 1
 }
 
 # 列出内部存储中的目录（WebUI 文件夹浏览）。$2=dir 只列目录；ovpn 另列 .ovpn/.conf 文件
@@ -207,19 +254,26 @@ download_dir() {
   fi
 }
 
-# 打包为 .tar.gz：$1=输出文件 $2=目录（打包其中的子目录 $3）
-make_tgz() {
+# 打包为 .zip（手机文件管理器与各平台都能直接打开）：$1=输出文件 $2=目录（打包其中的子目录 $3）
+# 系统有 zip 时直接用；没有（安卓默认没有）时用通知进程 jar 里的 java.util.zip（app_process 运行，无需安装）
+make_zip() {
   _o="$1"; _d="$2"; _n="$3"
-  ( cd "$_d" && tar -czf "$_o" "$_n" ) 2>/dev/null && [ -s "$_o" ] && return 0
-  ( cd "$_d" && tar -cf - "$_n" | gzip -c > "$_o" ) 2>/dev/null && [ -s "$_o" ] && gzip -t "$_o" 2>/dev/null && return 0
-  if [ -n "${BB}" ] && [ -x "${BB}" ]; then
-    ( cd "$_d" && "${BB}" tar -czf "$_o" "$_n" ) 2>/dev/null && [ -s "$_o" ] && return 0
+  rm -f "$_o"
+  if command -v zip >/dev/null 2>&1; then
+    ( cd "$_d" && zip -q -r -X "$_o" "$_n" ) 2>/dev/null && [ -s "$_o" ] && return 0
+    rm -f "$_o"
+  fi
+  _jar="${XR_NOTIFIER_JAR:-${MODDIR}/bin/xrnotify.jar}"
+  _ap="${XR_APP_PROCESS:-/system/bin/app_process}"
+  if [ -f "$_jar" ] && [ -x "$_ap" ]; then
+    "$_ap" -Djava.class.path="$_jar" /system/bin --nice-name=xrzip com.xrouter.notify.Main zip "$_o" "$_d" "$_n" >/dev/null 2>&1 \
+      && [ -s "$_o" ] && return 0
   fi
   rm -f "$_o"; return 1
 }
 
 # ---- 日志导出（统一，只分普通 / 调试两种）----
-# 普通：模块、串口、控制服务、虚拟机日志（含轮转的 .1），脱敏后打包为 xrouter-logs-<日期-时间>.tar.gz；
+# 普通：模块、串口、控制服务、虚拟机日志（含轮转的 .1），脱敏后打包为 xrouter-logs-<日期-时间>.zip；
 # 调试模式开启时 WebUI 改为「诊断导出」（diag_export）：再加手机与 OpenWrt 现场快照、系统日志、调试日志。
 # $1=前缀 $2=是否诊断（1）
 export_pack() {
@@ -249,8 +303,8 @@ export_pack() {
     [ -f "${RUN}/notifier.log" ] && cp -f "${RUN}/notifier.log" "$tmpd/raw/notifier.log"
   fi
   for f in "$tmpd"/raw/*; do [ -f "$f" ] && diag_redact < "$f" > "$tmpd/$name/${f##*/}"; done
-  out="${dest}/${name}.tar.gz"
-  if ! make_tgz "$out" "$tmpd" "$name"; then rm -rf "$tmpd"; echo '{"ok":false,"error":"tar"}'; return 1; fi
+  out="${dest}/${name}.zip"
+  if ! make_zip "$out" "$tmpd" "$name"; then rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; fi
   rm -rf "$tmpd"
   log_info xr "已导出$([ "$2" = 1 ] && echo 诊断包 || echo 日志) ${out##*/}"
   printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
@@ -306,7 +360,10 @@ case "$cmd" in
   stop-bg)     bg_run stop ;;
   traffic)     acct_json ;;
   traffic-reset)
-    acct_reset; : > "${RUN}/notify.force"; log_info xr "流量统计已清零"; echo '{"ok":true}' ;;
+    acct_reset; : > "${RUN}/notify.force"
+    vm_running && [ -d "${RUN}/guest/host" ] && echo "reset $(date +%s)$$" > "${RUN}/guest/host/acct.cmd"
+    log_info xr "流量统计已清零"; echo '{"ok":true}' ;;
+  traffic-split) traffic_split 4 ;;
   running)     vm_running ;;
   status-json) status_json ;;
   status-line) status_line ;;
@@ -327,10 +384,11 @@ case "$cmd" in
   reset-disk)  disk_reset ;;
   sync)        vm_running && sh "${MODDIR}/scripts/net.sh" sync ;;
   vpn-import)  vpn_import "${1:-}" ;;
+  project)    am start -a android.intent.action.VIEW -d "https://github.com/jjdufu/x-route" >/dev/null 2>&1 ;;
   luci)        load_config; am start -a android.intent.action.VIEW -d "http://${XR_NET_PREFIX}.254" >/dev/null 2>&1 ;;
   ls)          list_dir "${1:-}" "${2:-dir}" ;;
   log-export)  log_export ;;
   diag-export) diag_export ;;
   uninstall-now) uninstall_now "${1:-}" ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"; exit 2 ;;
 esac

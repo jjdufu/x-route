@@ -180,6 +180,17 @@ mtu_sync() {
   mss_rules
 }
 
+# 虚拟机时钟跟手机对时：开机时经 cmdline xr.time，此后每 30 分钟经控制目录 host/time 下发一次
+# （只在到期时写一个小文件，不随 10 秒对账频繁写盘）；客侧本机落后才往前拨（见 xrouter-vpn）
+time_push() {
+  [ -d "${RUN}/guest/host" ] || return 0
+  _now="$(date +%s)"; _tp="$(cat "${RUN}/guest/host/time" 2>/dev/null)"
+  case "$_tp" in ''|*[!0-9]*) _tp=0 ;; esac
+  [ "${#_tp}" -le 10 ] || _tp=0
+  [ "$_now" -ge "$_tp" ] && [ $((_now - _tp)) -lt 1800 ] && return 0
+  echo "$_now" > "${RUN}/guest/host/time"
+}
+
 # TCP MSS 钳制（mangle POSTROUTING 第一条跳 XR_MSS）：发往 xr0 与发往上游出口的 SYN 按出口路径 MTU 改写 MSS，
 # 上游刚切换、MTU 尚未同步的过渡期也不会卡住。IPv6 同构（没有 ip6 mangle 时跳过）。
 mss_rules() {
@@ -455,6 +466,7 @@ sync_v6() {
 net_watch() {
   while [ -d "${SYSNET}/${XR_IF}" ]; do
     sleep 10; load_config
+    time_push
     up="$(upstream_iface)"; outs="$(upstream_out "$up")"; ex="$(expose_ifaces | tr '\n' ' ')"
     have_gw="$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
     want_gw="$(gw_want)"

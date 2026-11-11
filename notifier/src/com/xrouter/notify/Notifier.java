@@ -33,7 +33,9 @@ import java.util.List;
 final class Notifier {
     static final String PKG = "android";
     static final int SYSTEM_UID = 1000;
-    static final String CHANNEL_ID = "xrouter_status";
+    /** v3.6.0 起换新渠道：渠道的锁屏可见性只在创建时生效，旧渠道（锁屏公开）删除后按新设置重建。 */
+    static final String CHANNEL_ID = "xrouter_status_v2";
+    static final String OLD_CHANNEL_ID = "xrouter_status";
     static final String TAG = "xrouter";
     static final int ID = 233;
     static final String MODULE_ID = "xrouter";
@@ -90,7 +92,13 @@ final class Notifier {
         ch.setSound(null, null);
         ch.enableVibration(false);
         ch.enableLights(false);
-        ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        // 只在通知栏常驻，不上锁屏（不影响常驻保活本身）
+        ch.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+        try {
+            call(nm(), "deleteNotificationChannel", PKG, OLD_CHANNEL_ID);
+        } catch (Throwable ignored) {
+            // 旧渠道不存在或 ROM 不允许删除：不影响新渠道
+        }
         Class<?> pls = Class.forName("android.content.pm.ParceledListSlice");
         Object list = pls.getConstructor(List.class).newInstance(Collections.singletonList(ch));
         call(nm(), "createNotificationChannelsForPackage", PKG, SYSTEM_UID, list);
@@ -190,7 +198,7 @@ final class Notifier {
                 .setShowWhen(false)
                 .setLocalOnly(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
-                .setVisibility(Notification.VISIBILITY_PUBLIC);
+                .setVisibility(Notification.VISIBILITY_SECRET);
         PendingIntent pi = tap();
         if (pi != null) b.setContentIntent(pi);
         Notification n = b.build();

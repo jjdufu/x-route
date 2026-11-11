@@ -26,6 +26,7 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
+chk 'grep -qx "XR_HOTSPOT_SUBNET=\"172.28.222.254/24\"" "$ROOT/module/config/config.conf"'   # 默认网关地址（非空）
 chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 24 ]'
 cp "$CONF" "$T/conf.bak"
 # 通知显示：取值校验，改后不需重启，并请求守护进程立即刷新通知
@@ -41,6 +42,7 @@ chk '$XR set XR_HOTSPOT_SUBNET 10.233.0.1/24 | grep -q "\"ok\":true" && grep -qx
 out="$($XR set XR_HOTSPOT_SUBNET 172.29.233.9/24)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "冲突" && grep -qx "XR_HOTSPOT_SUBNET=\"10.233.0.1/24\"" "$CONF"'
 out="$($XR set XR_HOTSPOT_SUBNET 8.8.8.1/24)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "私网网关" && grep -qx "XR_HOTSPOT_SUBNET=\"10.233.0.1/24\"" "$CONF"'
 chk '$XR set XR_HOTSPOT_SUBNET "" | grep -q "\"ok\":true" && grep -qx "XR_HOTSPOT_SUBNET=\"\"" "$CONF"'
+$XR set XR_HOTSPOT_SUBNET 172.28.222.254/24 >/dev/null
 out="$($XR set VPN_ROUTES "8.8.8.0/24")"; chk '[ $? -ne 0 ] && cmp -s "$CONF" "$T/conf.bak"'
 # 未知键应被拒绝（已删除手工网段）
 out="$($XR set VM_MEM_MB)"; chk '[ $? -eq 2 ]'
@@ -91,12 +93,25 @@ chk '! $XR ls /data/adb >/dev/null && ! $XR ls "$XR_MEDIA/../" >/dev/null'
 chk '$XR vpn-import /storage/emulated/0/Download/vpn/home.ovpn | grep -q "\"ok\":true"'
 chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -q "^enable [0-9]*$" "$RUN/guest/host/openvpn.cmd" && [ -f "$XR_DATA/config/openvpn.ovpn" ]'
 chk '$XR vpn-import /storage/emulated/0/Download/vpn/bin.conf | grep -q "\"ok\":false" && ! $XR vpn-import /data/adb/x.ovpn >/dev/null'
+# 隧道名取自导入文件名；组网页按隧道列表渲染（多条 OpenVPN 隧道各自状态 / 地址 / 网段）
+chk '[ "$(cat "$XR_DATA/config/openvpn.name")" = home ]'
+printf '%s\n' "tun0|xrouter|10.8.0.5/24|1342|10.8.0.0/24,192.168.9.0/24" "tun1|office|10.9.0.6/24|1322|192.168.50.0/24" > "$RUN/guest/guest/openvpn.tunnels"
+chk '$XR status-json | J "[t[\"name\"] for t in d[\"vpn\"][\"tunnels\"]]==[\"home\",\"office\"] and d[\"vpn\"][\"tunnels\"][1][\"mtu\"]==1322 and d[\"vpn\"][\"tunnels\"][0][\"routes\"]==[\"10.8.0.0/24\",\"192.168.9.0/24\"]" | grep -qx True'
+rm -f "$RUN/guest/guest/openvpn.tunnels"
+chk '$XR status-json | J "len(d[\"vpn\"][\"tunnels\"])==1 and d[\"vpn\"][\"tunnels\"][0][\"name\"]==\"home\"" | grep -qx True'
+# 累计流量分来源：写 host/acct.cmd，虚拟机回 guest/acct（首行回显 ts）
+( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/acct.cmd" 2>/dev/null)"; if [ -n "$c" ]; then printf 'ts=%s\n1 2 3 4 5 6 7 8\n' "${c#* }" > "$RUN/guest/guest/acct"; break; fi; sleep 0.1; i=$((i+1)); done ) &
+out="$($XR traffic-split)"
+chk 'echo "$out" | J "d[\"ok\"] and d[\"phone\"][\"wan\"]=={\"up\":1,\"down\":2} and d[\"phone\"][\"total\"]=={\"up\":4,\"down\":6} and d[\"hotspot\"][\"lan\"]=={\"up\":7,\"down\":8} and d[\"hotspot\"][\"total\"]=={\"up\":12,\"down\":14}" | grep -qx True'
+wait
+rm -f "$RUN/guest/host/acct.cmd" "$RUN/guest/guest/acct"
+out="$($XR traffic-split 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "未响应"'
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null'; i=0; while [ "$(grep -c "net sync" "$T/net.calls")" -lt 2 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done
 chk '[ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'   # 后台执行，稍等
 # 日志统一：不再有分类查看 / 清空命令
 out="$($XR log xr 5)"; chk '[ $? -eq 2 ]'; out="$($XR log-clear all)"; chk '[ $? -eq 2 ]'
-# 日志导出：普通日志 .tar.gz（文件名带日期时间，脱敏），调试开启时诊断导出另含快照与调试日志
+# 日志导出：普通日志 .zip（文件名带日期时间，脱敏），调试开启时诊断导出另含快照与调试日志
 mkdir -p "$T/dl"
 export XR_DOWNLOAD="$T/dl"
 printf 'module-body password=hunter2\n' > "$LOG"
@@ -107,24 +122,28 @@ printf 'dbg-body\n' > "$XR_DATA/log/debug.log"
 out="$($XR log-export)"
 chk 'echo "$out" | grep -q "\"ok\":true"'
 tgz="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
-chk 'echo "$tgz" | grep -qE "/xrouter-logs-[0-9]{8}-[0-9]{6}\.tar\.gz$" && [ -f "$tgz" ]'
+chk 'echo "$tgz" | grep -qE "/xrouter-logs-[0-9]{8}-[0-9]{6}\.zip$" && [ -f "$tgz" ]'
 python3 - "$tgz" <<'PYZ' || fail=1
-import sys, tarfile, os
-t = tarfile.open(sys.argv[1], "r:gz")
-base = os.path.basename(sys.argv[1])[:-7]
-names = {m.name for m in t.getmembers() if m.isfile()}
+import sys, zipfile, os
+t = zipfile.ZipFile(sys.argv[1])
+if t.testzip() is not None:
+    print("FAIL: zip 校验"); sys.exit(1)
+base = os.path.basename(sys.argv[1])[:-4]
+names = {n for n in t.namelist() if not n.endswith("/")}
 need = {f"{base}/{n}" for n in ("summary.txt", "module.log", "console.log", "vm-ctl.log", "vmm.log")}
 if names != need:
     print("FAIL: 普通日志包内文件", names); sys.exit(1)
-m = t.extractfile(f"{base}/module.log").read()
+m = t.read(f"{base}/module.log")
 if b"module-body" not in m or b"hunter2" in m:
     print("FAIL: module.log 内容或脱敏", m); sys.exit(1)
 PYZ
 out="$($XR diag-export)"
 chk 'echo "$out" | grep -q "\"ok\":true"'
 dg="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
-chk 'echo "$dg" | grep -qE "/xrouter-diag-[0-9]{8}-[0-9]{6}\.tar\.gz$"'
-chk 'tar -tzf "$dg" | grep -q "/debug.log$" && tar -tzf "$dg" | grep -q "/phone.txt$" && tar -tzf "$dg" | grep -q "/module.log$"'
+chk 'echo "$dg" | grep -qE "/xrouter-diag-[0-9]{8}-[0-9]{6}\.zip$"'
+zl() { python3 -c "import zipfile,sys; print(\"\n\".join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$1"; }
+chk 'zl "$dg" | grep -q "/debug.log$" && zl "$dg" | grep -q "/phone.txt$" && zl "$dg" | grep -q "/module.log$"'
+chk '[ -z "$(find "$T/dl" -name "*.gz")" ]'   # 全部导出都是 zip
 $XR stop; chk '! $XR running'
 # 熔断：存在 tripped 时自启和启动都被拒绝，ack-trip 后恢复
 $XR set AUTOSTART 0 >/dev/null; date > "$TRIPPED"

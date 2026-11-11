@@ -103,7 +103,8 @@ vm_start_exec() {
   chmod 0700 "${RUN}/guest"
   # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
   rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt" \
-    "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot"
+    "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot" "${RUN}/guest/host/acct.cmd" "${RUN}/guest/guest/acct" \
+    "${RUN}/guest/guest/openvpn.tunnels"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
   if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
     cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
@@ -114,7 +115,7 @@ vm_start_exec() {
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
   params="${params} xr.ip=${XR_NET_PREFIX}.254/24 xr.gw=${XR_NET_PREFIX}.1 xr.dns=$(echo "${XR_DNS}" | tr ' ' ',')"
   params="${params} xr.ip6=${XR_NET6}::254/64 xr.gw6=${XR_NET6}::1"
-  params="${params} xr.share=${share_mode}"
+  params="${params} xr.share=${share_mode} xr.time=$(date +%s)"
 
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"
   dlog vm "启动参数：cpus=${VM_CPUS} mem=${mem} swiotlb=${VM_SWIOTLB_MB} net=${net_args:-无} disk=${rootmode} share=${share_mode} params=${params}"
