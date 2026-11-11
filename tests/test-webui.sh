@@ -55,6 +55,12 @@ for (const t of ["开机自启", "运行时长", "上游网络", "打开 LuCI", 
 for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH"]) {
   if (html.includes(t) || main.includes(t)) fail(`旧文案残留 ${t}`);
 }
+// 页面切换必须瞬时：无横向滚动吸附、无 smooth 滚动、关闭 Tab 指示条动画
+if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得使用滚动吸附动画");
+if (/behavior:\s*["']smooth|behavior:\s*smooth/.test(main)) fail("页面切换不得使用 smooth 滚动");
+if (!/Tab\.prototype\[ANIMATE_INDICATOR\]\s*=/.test(main)) fail("未关闭 Tab 指示条动画");
+if (!/\.page:not\(\.on\)/.test(css) || !html.includes('class="page on" id="page-home"')) fail("页面应按 .on 直接显隐");
+if (/\.page[^{]*\{[^}]*(transition|animation)/.test(css)) fail("页面不得带过渡动画");
 const visible = html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ");
 if (/XR_|VM_|AUTOSTART|hotspot|bypass|global|ovpn|SWIOTLB/.test(visible)) fail("页面可见文案含内部变量名或取值");
 eq(L.MODE_OPTS.map((o) => o.label), ["全局接管", "旁路网关"], "运行模式");

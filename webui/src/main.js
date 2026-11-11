@@ -1,6 +1,7 @@
 // XRouter WebUI：只通过 kernelsu exec 调用 xr 命令行
 import "@material/web/tabs/tabs.js";
 import "@material/web/tabs/primary-tab.js";
+import { Tab, ANIMATE_INDICATOR } from "@material/web/tabs/internal/tab.js";
 import "@material/web/switch/switch.js";
 import "@material/web/button/filled-button.js";
 import "@material/web/button/filled-tonal-button.js";
@@ -300,29 +301,40 @@ function renderLogKinds() {
   seg($("log-kinds"), LOG_KINDS, logKind, (v) => { logKind = v; renderLogKinds(); loadLog(); });
 }
 
-// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动 ----
-function goPage(i, smooth = true) {
-  page = i;
-  const pager = $("pager");
-  pager.scrollTo({ left: i * pager.clientWidth, behavior: smooth ? "smooth" : "auto" });
+// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动，均瞬时切换、不做任何过渡 ----
+// 关掉 Material Tab 指示条的 250ms 滑动动画：激活态由 CSS :host([active]) 直接显示
+Tab.prototype[ANIMATE_INDICATOR] = function () {};
+
+function goPage(i) {
+  i = Math.max(0, Math.min(3, i));
+  const pages = document.querySelectorAll("#pager > .page");
+  pages.forEach((p, k) => p.classList.toggle("on", k === i));
   const tabs = $("tabs");
   if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
+  if (page === i) return;
+  page = i;
   if (i === 2) loadLog();
 }
 
 function bindPager() {
   const pager = $("pager");
   const tabs = $("tabs");
-  tabs.addEventListener("change", () => { if (tabs.activeTabIndex !== page) goPage(tabs.activeTabIndex); });
-  let t = null;
-  pager.addEventListener("scroll", () => {
-    clearTimeout(t);
-    t = setTimeout(() => {
-      const i = Math.round(pager.scrollLeft / pager.clientWidth);
-      if (i !== page) { page = i; tabs.activeTabIndex = i; if (i === 2) loadLog(); }
-    }, 80);
+  tabs.addEventListener("change", () => goPage(tabs.activeTabIndex));
+  // 只识别明确的横向轻扫：不跟手、不吸附，松手即跳页
+  let sx = 0; let sy = 0; let st = 0; let track = false;
+  pager.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) { track = false; return; }
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = e.timeStamp; track = true;
   }, { passive: true });
-  window.addEventListener("resize", () => goPage(page, false));
+  pager.addEventListener("touchend", (e) => {
+    if (!track) return;
+    track = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx; const dy = t.clientY - sy;
+    if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.6 || e.timeStamp - st > 700) return;
+    goPage(page + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+  pager.addEventListener("touchcancel", () => { track = false; }, { passive: true });
 }
 
 function bindRowSwitch(row, sw, onChange) {
@@ -338,6 +350,7 @@ function bindRowSwitch(row, sw, onChange) {
 function bind() {
   document.querySelectorAll("md-icon[data-icon]").forEach(icon);
   bindPager();
+  goPage(0);
   $("power").addEventListener("click", power);
   $("btn-ack").addEventListener("click", async () => { await xr("ack-trip"); await refresh(); });
   bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));

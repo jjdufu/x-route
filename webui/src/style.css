@@ -94,17 +94,15 @@ md-icon { --md-icon-size: 22px; flex: none; }
   --md-divider-color: var(--md-sys-color-outline-variant);
 }
 
-/* 内容区：横向分页，点击 Tab 或左右滑动切换 */
-.pager {
-  flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden;
-  scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain;
-}
-.pager::-webkit-scrollbar { display: none; }
+/* 内容区：多页叠放，只显示当前页；切换瞬时完成，无滑动或淡入动画 */
+.pager { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; }
 .page {
-  flex: 0 0 100%; width: 100%; scroll-snap-align: start; scroll-snap-stop: always;
+  position: absolute; inset: 0;
   overflow-y: auto; padding: 16px 16px calc(24px + var(--bottom-inset));
   display: flex; flex-direction: column; gap: 12px;
 }
+/* 隐藏页跳过渲染但保留滚动位置 */
+.page:not(.on) { visibility: hidden; content-visibility: hidden; pointer-events: none; }
 .page > * { flex-shrink: 0; }
 
 .card {
