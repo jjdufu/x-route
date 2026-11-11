@@ -198,6 +198,14 @@ set_kv XR_DEBUG 1; : > "$MOCK/calls"; $NET up
 chk 'grep -q "\[cmd\] rc=0 ip addr add 172.29.233.1/24 dev xr0" "$XR_DATA/log/debug.log"'
 chk 'grep -q "\[net\] 同步：上游=rmnet_data2" "$XR_DATA/log/debug.log" && grep -q "接管=block（模式=global" "$XR_DATA/log/debug.log"'
 chk 'grep -q "IPv6 拦截：" "$XR_DATA/log/debug.log" && grep -q "\[sysctl\] rc=" "$XR_DATA/log/debug.log"'
-$NET down; set_kv XR_DEBUG 0
+$NET down
+# 没有 ip6 nat 表的机型：只探测一次，之后既不去删 XR_NAT6 挂钩，调试日志里也不出现相关错误
+: > "$XR_DATA/log/debug.log"; : > "$MOCK/calls"; NAT6_FAIL=1 $NET up; NAT6_FAIL=1 $NET sync; NAT6_FAIL=1 $NET down
+chk '! grep -q "XR_NAT6" "$XR_DATA/log/debug.log" && [ "$(grep -c "^ip6tables .*-t nat" "$MOCK/calls")" -le 1 ]'
+# SIGPIPE（rc=141，读取方提前关管道）不算错误；真正失败照常记录
+: > "$XR_DATA/log/debug.log"; load_config
+xr_exec sh -c 'kill -PIPE $$'; xr_exec sh -c 'exit 3'
+chk '! grep -q "rc=141" "$XR_DATA/log/debug.log" && grep -q "rc=3 sh -c exit 3" "$XR_DATA/log/debug.log"'
+set_kv XR_DEBUG 0
 
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

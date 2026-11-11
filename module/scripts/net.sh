@@ -70,8 +70,19 @@ fwd6_first() {
   while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
   ${IP6T} -I FORWARD 1 -j XR_FWD6
 }
-# 不再使用 ip6tables nat / NAT66；保留函数名以免旧调用报错，并顺手拆掉残留挂钩
+# 手机是否有 ip6tables nat 表：只探测一次（不经 xr_exec，不进调试日志），结果缓存在 net.ip6nat。
+# 很多机型内核没有 ip6 nat 表，每轮对账去删一条不存在的挂钩只会在调试日志里刷错误。
+ip6_nat_ok() {
+  _n="$(cat "${RUN}/net.ip6nat" 2>/dev/null)"
+  if [ -z "$_n" ]; then
+    if "${SYSBIN}/ip6tables" -w -t nat -S POSTROUTING >/dev/null 2>&1; then _n=1; else _n=0; fi
+    echo "$_n" > "${RUN}/net.ip6nat"
+  fi
+  [ "$_n" = 1 ]
+}
+# 不再使用 ip6tables nat / NAT66；保留函数名以免旧调用报错，并顺手拆掉旧版残留挂钩（没有 nat 表时直接跳过）
 nat6_first() {
+  ip6_nat_ok || return 0
   while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
   return 0
 }
@@ -434,8 +445,10 @@ net_down() {
   for o in $(cat "${RUN}/net.up_out" 2>/dev/null); do ndc ipfwd remove "${XR_IF}" "$o" >/dev/null 2>&1; done
   while ${IP6T} -D FORWARD -j XR_FWD6 2>/dev/null; do :; done
   ${IP6T} -F XR_FWD6 2>/dev/null; ${IP6T} -X XR_FWD6 2>/dev/null
-  while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
-  ${IP6T} -t nat -F XR_NAT6 2>/dev/null; ${IP6T} -t nat -X XR_NAT6 2>/dev/null
+  if ip6_nat_ok; then
+    while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
+    ${IP6T} -t nat -F XR_NAT6 2>/dev/null; ${IP6T} -t nat -X XR_NAT6 2>/dev/null
+  fi
   acct_teardown    # XR_FWD / XR_FWD6 已删，计数折算保存后再删统计链
   for f in ip ip6; do
     for p in 18800 18900 4800; do while $f rule del pref "$p" 2>/dev/null; do :; done; done

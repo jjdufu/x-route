@@ -104,7 +104,10 @@ xr_exec() {
   _def="$(mktemp "${RUN}/.dbg.XXXXXX" 2>/dev/null || echo "${RUN}/.dbg.$$")"
   "$@" 2>"$_def"; _drc=$?
   _de="$(head -c 600 "$_def" 2>/dev/null | tr '\n' ' ')"; rm -f "$_def"
-  if [ "$_drc" != 0 ] || [ -n "$_de" ] || _dbg_mut "$@"; then
+  # rc=141 是 SIGPIPE：读取方（grep -q、head 等）拿够数据先关了管道，不是命令出错，只读命令不记
+  if [ "$_drc" = 141 ] && [ -z "$_de" ] && ! _dbg_mut "$@"; then
+    :
+  elif [ "$_drc" != 0 ] || [ -n "$_de" ] || _dbg_mut "$@"; then
     dlog cmd "rc=${_drc} $(echo "$*" | sed "s#${SYSBIN}/##")${_de:+ | stderr: ${_de}}"
   fi
   [ -n "$_de" ] && printf '%s\n' "$_de" >&2
