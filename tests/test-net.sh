@@ -79,8 +79,9 @@ chk 'grep -qx -- "-i xr0 -o v4-rmnet_data2 -j ACCEPT" "$FWD" && grep -qx -- "-i 
 # 464xlat 出口出现/消失（上游名不变）也要重建
 rm -f "$MOCK/rt.rmnet_data2"; $NET sync
 chk '[ "$(cat "$RUN/net.up_out")" = "rmnet_data2 " ] && ! grep -q v4-rmnet "$FWD"'
-# 手机侧不改写 VM 的包：不用 mangle、不限协议/端口、不打 MARK/DSCP/MSS；NAT 只按源网段
-chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
+# 手机侧不改写 VM 的包：不限协议/端口、不打 MARK/DSCP/TOS；NAT 只按源网段。
+# 唯一例外是 XR_MSS 链里按路径 MTU 钳制 SYN 的 MSS（不改载荷，只防大包被上游丢弃）
+chk '! grep -v "XR_MSS" "$MOCK/calls" | grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)"'
 chk '[ -z "$(grep -v -- "^-s 172.29.233.0/24 -o [a-z0-9_-]* -j MASQUERADE$" "$MOCK/XR_NAT")" ]'
 # 3. 去掉 VPN 网段 -> 路由与规则撤销
 set_kv XR_EXPOSE lan; : > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"; $NET sync
@@ -135,8 +136,8 @@ chk '! grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
 echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
 set_kv XR_MODE bypass; : > "$MOCK/calls"; $NET sync
 chk '! grep -q "pref 19100 lookup 233" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
-# 仍不改写 VM 出站包
-chk '! grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)" "$MOCK/calls"'
+# 仍不改写 VM 出站包（XR_MSS 的 MSS 钳制除外）
+chk '! grep -v "XR_MSS" "$MOCK/calls" | grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)"'
 chk '! grep -q "^ip -6 rule add pref 19100" "$MOCK/calls" && ! grep -q -- "REJECT" "$MOCK/XR_FWD6"'
 $NET down
 
@@ -190,6 +191,24 @@ rmdir "$T/sysnet/xr0" 2>/dev/null; : > "$MOCK/calls"; $NET down
 chk 'grep -q "^ip -6 rule del pref 19100" "$MOCK/calls" && grep -q "^ip -6 route flush table 233" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18800" "$MOCK/calls" && grep -q "^ip -6 rule del pref 18900" "$MOCK/calls" && grep -q "^ip -6 rule del pref 4800" "$MOCK/calls"'
 chk '[ ! -f "$MOCK/fwd6_hook" ] && [ ! -f "$MOCK/XR_FWD6" ] && [ ! -f "$RUN/net.v6proxy" ]'
 chk 'grep -q "^ndc network route remove local xr0 fd7a:7872:e9::/64" "$MOCK/calls"'
+
+# MTU：xr0 与 OpenWrt eth0 跟随上游（网卡 MTU 与上游默认路由 mtu 取最小），上游切换时重设；SYN 按路径 MTU 钳制 MSS
+set_kv XR_EXPOSE lan
+mkdir -p "$T/sysnet/rmnet_data2" "$T/sysnet/wlan0"; echo 1500 > "$T/sysnet/rmnet_data2/mtu"; echo 1500 > "$T/sysnet/wlan0/mtu"
+echo "default via 10.114.199.189 dev rmnet_data2 proto static mtu 1410" > "$MOCK/rt.rmnet_data2"
+echo "11000:	from all fwmark 0x0/0xffff iif lo lookup rmnet_data2" > "$MOCK/iprule"; mkdir -p "$T/sysnet/xr0"; : > "$MOCK/calls"; $NET up
+chk 'grep -q "^ip link set xr0 mtu 1410" "$MOCK/calls" && [ "$(cat "$RUN/net.mtu")" = 1410 ] && [ "$(cat "$RUN/guest/host/mtu")" = 1410 ]'
+chk 'grep -q "^iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" "$MOCK/calls"'
+chk 'grep -q "^iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" "$MOCK/calls"'
+chk 'grep -q "^ip6tables -t mangle -A XR_MSS -o xr0 " "$MOCK/calls" && grep -q "^iptables -t mangle -I POSTROUTING 1 -j XR_MSS" "$MOCK/calls"'
+rm -f "$MOCK/rt.rmnet_data2"
+echo "11000:	from all fwmark 0x0/0xffff iif lo lookup wlan0" > "$MOCK/iprule"; : > "$MOCK/calls"; $NET sync
+chk 'grep -q "^ip link set xr0 mtu 1500" "$MOCK/calls" && [ "$(cat "$RUN/guest/host/mtu")" = 1500 ]'
+echo 1280 > "$T/sysnet/wlan0/mtu"; echo 1200 > "$T/sysnet/wlan0/mtu"; : > "$MOCK/calls"; $NET sync
+chk 'grep -q "^ip link set xr0 mtu 1280" "$MOCK/calls"'   # 下限 1280（IPv6 最小 MTU）
+echo 1500 > "$T/sysnet/wlan0/mtu"; : > "$MOCK/calls"; $NET down
+chk 'grep -q "^iptables -t mangle -D POSTROUTING -j XR_MSS" "$MOCK/calls" && grep -q "^iptables -t mangle -X XR_MSS" "$MOCK/calls"'
+echo "11000:	from all fwmark 0x0/0xffff iif lo lookup rmnet_data2" > "$MOCK/iprule"
 
 # 调试模式：命令、返回值、错误输出与判断依据写入 debug.log；关闭时不写
 rm -f "$XR_DATA/log/debug.log"; : > "$MOCK/calls"; $NET up; $NET down

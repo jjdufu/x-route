@@ -1,0 +1,18 @@
+#!/bin/sh
+# XRouter: eth0（VM <-> 手机 xr0）跟随手机上游 MTU（手机侧经控制目录 host/mtu 下发，见 xrouter-vpn）
+#   xrouter-mtu <1280..1500>
+# 同时保证 lan 区开启 MSS 钳制（mtu_fix）：热点设备、VM 自身经 eth0 出去的 TCP 连接按路径 MTU 协商 MSS。
+n="$1"
+case "$n" in ''|*[!0-9]*) exit 1 ;; esac
+[ "$n" -ge 1280 ] && [ "$n" -le 1500 ] || exit 1
+ip link set eth0 mtu "$n" || exit 1
+uci -q get network.xr_eth0 >/dev/null || { uci -q set network.xr_eth0=device; uci -q set network.xr_eth0.name='eth0'; }
+if [ "$(uci -q get network.xr_eth0.mtu)" != "$n" ]; then
+  uci -q set network.xr_eth0.mtu="$n"; uci -q commit network
+fi
+if [ "$(uci -q get firewall.lan.mtu_fix)" != 1 ]; then
+  uci -q set firewall.lan.mtu_fix='1'; uci -q commit firewall
+  /etc/init.d/firewall reload >/dev/null 2>&1
+fi
+logger -t xrouter "eth0 MTU ${n}"
+exit 0

@@ -147,6 +147,58 @@ upstream_out() {
     ip -4 route show table "$1" 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'
   } | sort -u | tr '\n' ' '
 }
+# 上游实际可用的 MTU：各出口网卡 MTU 与上游路由表默认路由上的 mtu（运营商常下发 1410 等）取最小，
+# 限定在 1280..1500；读不到时按 1500
+upstream_mtu() {
+  _m=1500
+  for _o in $2; do
+    _v="$(cat "${SYSNET}/$_o/mtu" 2>/dev/null)"
+    case "$_v" in ''|*[!0-9]*) ;; *) [ "$_v" -lt "$_m" ] && _m="$_v" ;; esac
+  done
+  if [ -n "$1" ]; then
+    for _v in $(ip -4 route show table "$1" 2>/dev/null | awk '$1=="default"{for(i=1;i<NF;i++) if($i=="mtu") print $(i+1)}') \
+              $(ip6 route show table "$1" 2>/dev/null | awk '$1=="default"{for(i=1;i<NF;i++) if($i=="mtu") print $(i+1)}'); do
+      case "$_v" in ''|*[!0-9]*) ;; *) [ "$_v" -lt "$_m" ] && _m="$_v" ;; esac
+    done
+  fi
+  [ "$_m" -lt 1280 ] && _m=1280
+  echo "$_m"
+}
+
+# xr0 与 OpenWrt eth0 跟随上游 MTU：手机自身经 VM 出网的大包不再在上游口被丢（5G 1410 时 xr0 仍是 1500，
+# TCP 按 1460 的 MSS 发包，出 rmnet 时整包被丢，重传、新站点卡 3-4 秒）。上游切换时随对账重设，无需重启 VM。
+mtu_sync() {
+  _mt="$(upstream_mtu "$up" "$outs")"
+  _cur="$(cat "${SYSNET}/${XR_IF}/mtu" 2>/dev/null)"
+  if [ "$_cur" != "$_mt" ]; then
+    ip link set "${XR_IF}" mtu "$_mt" && log_info net "xr0 MTU ${_cur:-?} -> ${_mt}（跟随上游 ${up:-无}）"
+  fi
+  echo "$_mt" > "${RUN}/net.mtu"
+  # 告诉 OpenWrt（eth0 / LAN 侧同样设为该值）；内容不变就不重写，客侧按内容变化执行
+  mkdir -p "${RUN}/guest/host"
+  [ "$(cat "${RUN}/guest/host/mtu" 2>/dev/null)" = "$_mt" ] || echo "$_mt" > "${RUN}/guest/host/mtu"
+  mss_rules
+}
+
+# TCP MSS 钳制（mangle POSTROUTING 第一条跳 XR_MSS）：发往 xr0 与发往上游出口的 SYN 按出口路径 MTU 改写 MSS，
+# 上游刚切换、MTU 尚未同步的过渡期也不会卡住。IPv6 同构（没有 ip6 mangle 时跳过）。
+mss_rules() {
+  for _t in "${IPT}" "${IP6T}"; do
+    ${_t} -t mangle -N XR_MSS 2>/dev/null
+    ${_t} -t mangle -F XR_MSS 2>/dev/null || continue
+    for _o in "${XR_IF}" $outs; do
+      ${_t} -t mangle -A XR_MSS -o "$_o" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    done
+    ${_t} -t mangle -C POSTROUTING -j XR_MSS 2>/dev/null || ${_t} -t mangle -I POSTROUTING 1 -j XR_MSS
+  done
+}
+mss_clear() {
+  for _t in "${IPT}" "${IP6T}"; do
+    while ${_t} -t mangle -D POSTROUTING -j XR_MSS 2>/dev/null; do :; done
+    ${_t} -t mangle -F XR_MSS 2>/dev/null; ${_t} -t mangle -X XR_MSS 2>/dev/null
+  done
+}
+
 # 上游的 IPv6 实际出口（464xlat 的 v4-* 只承载 IPv4，排除）
 upstream_out6() {
   [ -n "$1" ] || return 0
@@ -319,6 +371,7 @@ _sync_all() {
   fi
   ${IPT} -t nat -F XR_NAT
   for o in $outs; do ${IPT} -t nat -A XR_NAT -s "${NET}" -o "$o" -j MASQUERADE; done
+  mtu_sync
 
   ex="$(expose_ifaces | tr '\n' ' ')"; echo "$ex" > "${RUN}/net.expose_if"
   routes_sync      # 08：必须在 XR_FWD 重建前执行（XR_FWD 读取 routes.active）
@@ -411,11 +464,13 @@ net_watch() {
        || [ "$want_gw" != "$have_gw" ] || [ "$(upstream_out6 "$up")" != "$(cat "${RUN}/net.up_out6" 2>/dev/null)" ] \
        || [ "$(vm_v6 && echo 1)" != "$(cat "${RUN}/net.v6" 2>/dev/null)" ] \
        || [ "$(v6_src_fingerprint)" != "$(cat "${RUN}/net.v6src" 2>/dev/null)" ] \
-       || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then
-      dlog watch "状态变化触发同步：上游 $(cat "${RUN}/net.up_if" 2>/dev/null)->${up} 接管 ${have_gw}->${want_gw} 暴露 [$(cat "${RUN}/net.expose_if" 2>/dev/null)]->[${ex}]"
+       || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ] \
+       || [ "$(upstream_mtu "$up" "$outs")" != "$(cat "${RUN}/net.mtu" 2>/dev/null)" ]; then
+      dlog watch "状态变化触发同步：上游 $(cat "${RUN}/net.up_if" 2>/dev/null)->${up} 接管 ${have_gw}->${want_gw} 暴露 [$(cat "${RUN}/net.expose_if" 2>/dev/null)]->[${ex}] MTU $(cat "${RUN}/net.mtu" 2>/dev/null)->$(upstream_mtu "$up" "$outs")"
       sync_all
     fi
     fwd_first; nat_first; fwd6_first; nat6_first; acct_hooks
+    ${IPT} -t mangle -C POSTROUTING -j XR_MSS 2>/dev/null || { net_lock; mss_rules; net_unlock; }
     net_lock; hs_sync; net_unlock
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
@@ -449,6 +504,7 @@ net_down() {
     while ${IP6T} -t nat -D POSTROUTING -j XR_NAT6 2>/dev/null; do :; done
     ${IP6T} -t nat -F XR_NAT6 2>/dev/null; ${IP6T} -t nat -X XR_NAT6 2>/dev/null
   fi
+  mss_clear
   acct_teardown    # XR_FWD / XR_FWD6 已删，计数折算保存后再删统计链
   for f in ip ip6; do
     for p in 18800 18900 4800; do while $f rule del pref "$p" 2>/dev/null; do :; done; done

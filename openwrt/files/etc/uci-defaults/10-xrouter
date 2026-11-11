@@ -52,6 +52,7 @@ add_list firewall.lan.device='eth0'
 set firewall.lan.input='ACCEPT'
 set firewall.lan.output='ACCEPT'
 set firewall.lan.forward='ACCEPT'
+set firewall.lan.mtu_fix='1'
 set firewall.vpn=zone
 set firewall.vpn.name='vpn'
 add_list firewall.vpn.network='vpn'

@@ -78,6 +78,10 @@ while ${IPT} -D OUTPUT -j XR_HS 2>/dev/null; do :; done
 ${IPT} -F XR_HS 2>/dev/null; ${IPT} -X XR_HS 2>/dev/null
 while ${IP6T} -D OUTPUT -j XR_HS6 2>/dev/null; do :; done
 ${IP6T} -F XR_HS6 2>/dev/null; ${IP6T} -X XR_HS6 2>/dev/null
+for t in "${IPT}" "${IP6T}"; do   # TCP MSS 钳制
+  while ${t} -t mangle -D POSTROUTING -j XR_MSS 2>/dev/null; do :; done
+  ${t} -t mangle -F XR_MSS 2>/dev/null; ${t} -t mangle -X XR_MSS 2>/dev/null
+done
 if [ -d /sys/class/net/xrbr1 ]; then
   for p in /sys/class/net/xrbr1/brif/*; do [ -e "$p" ] && ip link set "${p##*/}" nomaster 2>/dev/null; done
   ip link del xrbr1 2>/dev/null

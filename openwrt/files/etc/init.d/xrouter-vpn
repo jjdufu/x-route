@@ -2,7 +2,8 @@
 # XRouter: 挂载主机控制目录（控制通道）：启用 OpenVPN 配置并把实际路由写回主机；
 #          执行 IPv6 开关（host/ipv6.cmd）并上报实际状态（guest/ipv6）；
 #          按 host/diag.cmd 生成网络快照（guest/diag.txt，已脱敏）；
-#          按 host/hotspot.cmd 接管 / 交还热点网段（guest/hotspot 上报状态）。
+#          按 host/hotspot.cmd 接管 / 交还热点网段（guest/hotspot 上报状态）；
+#          按 host/mtu 让 eth0 跟随手机上游 MTU（guest/mtu 上报实际值）。
 # shellcheck disable=SC2034
 START=21
 STOP=15
@@ -65,7 +66,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""
+  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""
   # 上报热点接管能力与状态（手机侧据此判断系统盘是否支持）
   /usr/libexec/xrouter-hotspot status > "${CTL}/guest/hotspot.tmp" && mv -f "${CTL}/guest/hotspot.tmp" "${CTL}/guest/hotspot"
   while :; do
@@ -94,6 +95,12 @@ watch() {
       set -- ${hc% *}
       /usr/libexec/xrouter-hotspot "$@"
       /usr/libexec/xrouter-hotspot status > "${CTL}/guest/hotspot.tmp" && mv -f "${CTL}/guest/hotspot.tmp" "${CTL}/guest/hotspot"
+    fi
+    mt="$(cat "${CTL}/host/mtu" 2>/dev/null)"
+    if [ -n "$mt" ] && [ "$mt" != "$lastmtu" ]; then
+      lastmtu="$mt"
+      /usr/libexec/xrouter-mtu "$mt"
+      cat /sys/class/net/eth0/mtu > "${CTL}/guest/mtu" 2>/dev/null
     fi
     # 调试快照：手机侧写 host/diag.cmd="snap <ts>"，这里生成后整体替换 guest/diag.txt（首行回显 ts）
     dc="$(cat "${CTL}/host/diag.cmd" 2>/dev/null)"

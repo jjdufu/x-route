@@ -3,6 +3,12 @@
 [ "$1" = -w ] && shift
 echo "iptables $*" >> "$MOCK/calls"
 t=filter; [ "$1" = -t ] && { t=$2; shift 2; }
+# TCP MSS 钳制链（mangle XR_MSS）与 POSTROUTING 挂钩
+case "$t:$*" in
+  "mangle:-C POSTROUTING -j XR_MSS") [ -f "$MOCK/mss_hook" ]; exit ;;
+  "mangle:-I POSTROUTING 1 -j XR_MSS") : > "$MOCK/mss_hook"; exit 0 ;;
+  "mangle:-D POSTROUTING -j XR_MSS") [ -f "$MOCK/mss_hook" ] && rm -f "$MOCK/mss_hook" && exit 0; exit 1 ;;
+esac
 # 流量统计链（XR_ACCT*）与 INPUT/OUTPUT 钩子：通用实现，计数从 $MOCK/cnt.<链> 逐行读取（缺省 0）
 case "$t:$*" in
   "filter:-N XR_ACCT"*) [ -n "${ACCT_FAIL:-}" ] && exit 1; [ -f "$MOCK/chain.$2" ] && exit 1; : > "$MOCK/chain.$2"; exit 0 ;;
