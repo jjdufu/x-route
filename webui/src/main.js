@@ -25,6 +25,12 @@ import {
 import { openBrowser } from "./file-browser.js";
 
 const $ = (id) => document.getElementById(id);
+// 只在值真的变化时写 DOM：5 秒一次的状态刷新大多数时候什么都不改，不触发样式重算与重排
+const txt = (el, v) => { v = String(v); if (el.textContent !== v) el.textContent = v; };
+const cls = (el, v) => { if (el.className !== v) el.className = v; };
+const prop = (el, k, v) => { if (el[k] !== v) el[k] = v; };
+const hide = (el, v) => { if (el.hidden !== v) el.hidden = v; };
+const tog = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
 let status = null;
 let pending = null;      // start | stop
 let pendingAt = 0;       // 发出操作的时间，用于兜底超时
@@ -125,20 +131,20 @@ async function setKey(key, value) {
 // ---- 渲染 ----
 function renderPower(d) {
   const v = vmView(d, pending);
-  const wrap = $("power-wrap");
-  wrap.className = "power-wrap " + v.phase;
-  $("power-text").textContent = v.text;
-  $("power").disabled = v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped);
+  cls($("power-wrap"), "power-wrap " + v.phase);
+  txt($("power-text"), v.text);
+  prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped));
   const steps = $("power-steps");
-  steps.hidden = v.phase !== "starting";
-  steps.querySelectorAll("[data-step]").forEach((s) => {
-    const i = Number(s.dataset.step);
-    s.className = i < (v.step || 0) ? "done" : i === v.step ? "cur" : "";
-  });
+  hide(steps, v.phase !== "starting");
+  if (!steps.hidden) {
+    steps.querySelectorAll("[data-step]").forEach((s) => {
+      const i = Number(s.dataset.step);
+      cls(s, i < (v.step || 0) ? "done" : i === v.step ? "cur" : "");
+    });
+  }
   if (v.phase === "starting") bootOn(); else bootOff();
-  const chip = $("chip");
-  chip.className = "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off");
-  $("chip-text").textContent = v.chip;
+  cls($("chip"), "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
+  txt($("chip-text"), v.chip);
 }
 
 function render(d) {
@@ -153,44 +159,46 @@ function render(d) {
   }
   renderPower(d);
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
-  $("trip").hidden = !tripped;
+  hide($("trip"), !tripped);
 
   const as = $("sw-autostart");
-  as.selected = cfg.AUTOSTART === "1";
-  as.disabled = tripped && cfg.AUTOSTART !== "1";
-  $("row-autostart").classList.toggle("disabled", as.disabled);
+  prop(as, "selected", cfg.AUTOSTART === "1");
+  prop(as, "disabled", tripped && cfg.AUTOSTART !== "1");
+  tog($("row-autostart"), "disabled", as.disabled);
 
-  $("v-uptime").textContent = vm.running ? fmtUptime(vm.uptime_s) : "—";
+  // 首页之外的页面不可见（content-visibility: hidden），其中的文字也照样只在变化时写
+  txt($("v-uptime"), vm.running ? fmtUptime(vm.uptime_s) : "—");
   const kind = vm.running ? upKind(net.up_if) : "—";
-  $("v-up").textContent = kind;
-  setIcon($("i-up"), kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off");
+  txt($("v-up"), kind);
+  const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
+  if ($("i-up").dataset.icon !== ic) setIcon($("i-up"), ic);
 
-  $("v-vpn").textContent = VPN_TXT[vpn.status] || "未连接";
+  txt($("v-vpn"), VPN_TXT[vpn.status] || "未连接");
   const routes = vpn.routes_active || [];
-  $("v-routes").textContent = routes.length ? routes.join("\n") : "无";
+  txt($("v-routes"), routes.length ? routes.join("\n") : "无");
 
   seg($("seg-mode"), MODE_OPTS, cfg.XR_MODE || "global", pickMode);
   fillSelect($("sel-access"), ACCESS_OPTS, cfg.XR_EXPOSE || "lan");
   const v6 = $("sw-ipv6");
-  if (!ipv6Busy) v6.selected = d.ipv6 === true;
-  v6.disabled = ipv6Busy || d.ipv6 === null || d.ipv6 === undefined;
-  $("row-ipv6").classList.toggle("disabled", v6.disabled);
+  if (!ipv6Busy) prop(v6, "selected", d.ipv6 === true);
+  prop(v6, "disabled", ipv6Busy || d.ipv6 === null || d.ipv6 === undefined);
+  tog($("row-ipv6"), "disabled", v6.disabled);
 
-  $("sw-share").selected = cfg.VM_SHARE === "1";
+  prop($("sw-share"), "selected", cfg.VM_SHARE === "1");
   seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (v) => setKey("VM_SHARE_MODE", v), sh.rw_supported ? [] : ["rw"]);
-  $("v-share-path").textContent = displayPath(cfg.VM_SHARE_PATH);
+  txt($("v-share-path"), displayPath(cfg.VM_SHARE_PATH));
 
   seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
-  $("sw-debug").selected = cfg.XR_DEBUG === "1";
-  $("sw-hotspot").selected = cfg.XR_HOTSPOT_BRIDGE !== "0";
-  $("v-hotspot").textContent = net.hotspot ? `已接管 ${net.hotspot}` : "";
+  prop($("sw-debug"), "selected", cfg.XR_DEBUG === "1");
+  prop($("sw-hotspot"), "selected", cfg.XR_HOTSPOT_BRIDGE !== "0");
+  txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "");
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
   fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "512");
-  $("v-disk").textContent = fmtSize(cfg.VM_DISK_SIZE_MB);
-  $("btn-expand").disabled = !!vm.running;
-  $("btn-reset").disabled = !!vm.running;
+  txt($("v-disk"), fmtSize(cfg.VM_DISK_SIZE_MB));
+  prop($("btn-expand"), "disabled", !!vm.running);
+  prop($("btn-reset"), "disabled", !!vm.running);
 }
 
 async function refresh() {
@@ -198,8 +206,8 @@ async function refresh() {
   let d = null;
   try { d = JSON.parse(r.stdout); } catch { d = null; }
   if (!d) {
-    $("chip").className = "chip chip-bad";
-    $("chip-text").textContent = "异常";
+    cls($("chip"), "chip chip-bad");
+    txt($("chip-text"), "异常");
     return;
   }
   render(d);
@@ -220,7 +228,7 @@ function bootOn() {
   if (boot) return;
   // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
   // 打开页面时已在开机：直接给出串口日志末尾一段
-  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0 };
+  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0 };
   const el = $("power-log");
   el.textContent = "";
   el.hidden = false;
@@ -230,10 +238,20 @@ function bootOn() {
 function bootOff() {
   if (!boot) return;
   clearTimeout(boot.timer);
+  if (boot.raf) cancelAnimationFrame(boot.raf);
   boot = null;
   const el = $("power-log");
   el.hidden = true;
   el.textContent = "";
+}
+
+// 同一帧内只写一次：单个文本节点整体替换，日志层 contain: strict，不影响页面其余部分排版
+function bootPaint(b) {
+  if (b.raf) return;
+  b.raf = requestAnimationFrame(() => {
+    b.raf = 0;
+    if (boot === b) txt($("power-log"), b.buf.lines.join("\n"));
+  });
 }
 
 async function bootTick(b) {
@@ -246,7 +264,7 @@ async function bootTick(b) {
       b.m = t.mod.size; b.c = t.con.size;
       const a = feedBoot(b.buf, "mod", t.mod.text);
       const c = feedBoot(b.buf, "con", t.con.text);
-      if (a || c) $("power-log").textContent = b.buf.lines.join("\n");
+      if (a || c) bootPaint(b);
       if (pending === "start" && bgArmed && t.rc !== null && t.rc !== 0) {
         // 后台 xr start 已失败退出：立刻结束转圈，显示原因
         pending = null;
@@ -356,12 +374,21 @@ async function resetTraffic() {
 }
 
 // ---- 日志 ----
+// 日志页：最多 300 行、单个文本节点；定时刷新时内容没变就完全不碰 DOM，
+// 变了才整体替换一次（读滚动位置放在写之前，避免强制同步排版）
+let logShown = null;
 async function loadLog(keepScroll) {
   const box = $("log-box");
+  const kind = logKind;
+  const r = await xr("log", kind, "300");
+  if (kind !== logKind) return;
+  const text = r.stdout || "";
+  const key = kind + "\0" + text;
+  if (keepScroll && key === logShown) return;
   const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
-  const r = await xr("log", logKind, "300");
-  box.textContent = r.stdout || "";
-  box.classList.toggle("empty", !r.stdout);
+  logShown = key;
+  box.textContent = text;
+  tog(box, "empty", !text);
   if (!keepScroll || atEnd) box.scrollTop = box.scrollHeight;
 }
 async function exportLog(kind) {

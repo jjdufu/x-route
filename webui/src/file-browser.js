@@ -16,11 +16,11 @@ function iconEl(name) {
   return i;
 }
 
-async function list(path, animate = true) {
+// 目录切换不做过渡：读到结果后一次性替换列表
+async function list(path) {
   const box = $("fb-list");
-  if (animate) { box.classList.add("switching"); await new Promise((r) => setTimeout(r, 120)); }
   const r = await xr("ls", path, mode === "ovpn" ? "ovpn" : "dir");
-  if (r.errno !== 0 && path !== MEDIA_ROOT) { box.classList.remove("switching"); return list(MEDIA_ROOT, false); }
+  if (r.errno !== 0 && path !== MEDIA_ROOT) return list(MEDIA_ROOT);
   cur = path;
   const items = parseLs(r.stdout);
   const nodes = items.map((it) => {
@@ -44,7 +44,6 @@ async function list(path, animate = true) {
   }
   box.replaceChildren(...nodes);
   box.scrollTop = 0;
-  box.classList.remove("switching");
   renderCrumbs();
 }
 
@@ -84,6 +83,6 @@ export async function openBrowser(opts) {
   $("fb-pick").hidden = mode !== "dir";
   $("dlg-files").returnValue = "";
   const start = opts.start ? toMediaPath(opts.start) : (mode === "ovpn" ? MEDIA_ROOT + "/Download" : MEDIA_ROOT);
-  await list(start, false);
+  await list(start);
   return new Promise((resolve) => { resolveFn = resolve; $("dlg-files").show(); });
 }

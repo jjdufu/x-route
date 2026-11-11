@@ -132,8 +132,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 8px 16px 12px; flex-wrap: wrap; }
 .danger { --md-outlined-button-label-text-color: var(--xr-bad); --md-outlined-button-icon-color: var(--xr-bad); --md-filled-button-container-color: var(--md-sys-color-error); --md-filled-button-label-text-color: var(--md-sys-color-on-error); }
 
-.alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); animation: drop .15s ease; }
-@keyframes drop { from { transform: translateY(-8px); opacity: 0; } }
+.alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
 /* 电源按钮：按钮本身就是状态 */
 .power-area { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 28px 0 20px; }
@@ -205,6 +204,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
   flex: 1; min-height: 200px; margin: 0; overflow: auto; padding: 12px 14px;
   background: var(--md-sys-color-surface-container-lowest); border-radius: 16px;
   font: 12px/1.55 ui-monospace, "JetBrains Mono", monospace; color: #c8ccd6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+  contain: content; /* 日志整体替换时只在框内重排 */
 }
 .page-logs .actions { padding: 0; }
 
@@ -222,8 +222,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .crumb md-icon { --md-icon-size: 18px; }
 .crumb.last { color: var(--md-sys-color-on-surface); font-weight: 600; }
 .crumbs .sep { --md-icon-size: 16px; color: var(--md-sys-color-outline); }
-.fb-list { display: flex; flex-direction: column; min-height: 200px; transition: opacity .12s, transform .12s; }
-.fb-list.switching { opacity: 0; transform: translateX(8px); }
+.fb-list { display: flex; flex-direction: column; min-height: 200px; }
 .fb-item { position: relative; display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 8px; border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: 14px; cursor: pointer; }
 .fb-item md-icon { color: var(--md-sys-color-primary); }
 .fb-item.file md-icon { color: var(--md-sys-color-tertiary); }

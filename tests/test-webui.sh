@@ -134,6 +134,11 @@ eq(bb.lines.slice(-2), ["[ 0.1] half line", "ok"], "feedBoot 拼接半行并去�
 for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
 eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
+// 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
+if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
+if (!/key === logShown\) return/.test(main)) fail("日志未变时不应重写");
+if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");
+if (/@keyframes drop|\.switching/.test(css)) fail("不得保留装饰性过渡动画");
 process.exit(bad);
 EOS
 # 构建产物（有依赖时构建到临时目录检查）
