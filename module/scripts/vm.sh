@@ -67,7 +67,10 @@ vm_start_exec() {
   net_args=""
   if [ "${VM_NET}" = 1 ]; then
     sh "${MODDIR}/scripts/net.sh" up || { vm_fail "net up 失败" "网络初始化失败"; return 1; }
+    . "${MODDIR}/scripts/hotspot.sh"
     net_args="--net tap-name=xr0,mac=${XR_VM_MAC}"
+    # 第二块网卡 eth1：热点网桥用（net.sh up 已创建 xr1）
+    [ -d /sys/class/net/xr1 ] && net_args="${net_args} --net tap-name=xr1,mac=$(hs_mac)"
   fi
 
   if [ "${VM_DISK_RW}" = 1 ]; then blk="${ROOTFS},lock=false,root=true"; rootmode=rw
@@ -79,7 +82,8 @@ vm_start_exec() {
   mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
   chmod 0700 "${RUN}/guest"
   # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
-  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt"
+  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt" \
+    "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
   if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
     cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"

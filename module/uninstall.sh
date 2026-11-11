@@ -73,10 +73,20 @@ for t in "${IPT}" "${IP6T}"; do
     for s in "$c" "${c}_UP" "${c}_DN"; do ${t} -X "$s" 2>/dev/null; done
   done
 done
+# 热点网桥：出口过滤链、网桥（端口先摘下，热点网卡交还安卓）、第二块 tap
+while ${IPT} -D OUTPUT -j XR_HS 2>/dev/null; do :; done
+${IPT} -F XR_HS 2>/dev/null; ${IPT} -X XR_HS 2>/dev/null
+while ${IP6T} -D OUTPUT -j XR_HS6 2>/dev/null; do :; done
+${IP6T} -F XR_HS6 2>/dev/null; ${IP6T} -X XR_HS6 2>/dev/null
+if [ -d /sys/class/net/xrbr1 ]; then
+  for p in /sys/class/net/xrbr1/brif/*; do [ -e "$p" ] && ip link set "${p##*/}" nomaster 2>/dev/null; done
+  ip link del xrbr1 2>/dev/null
+fi
+ip link del xr1 2>/dev/null
 ndc ipfwd disable xrouter >/dev/null 2>&1
 ndc ipfwd disable xroute >/dev/null 2>&1
 # pref：访问 VM 网段、VPN 网段、VM 出网、全局接管（见 docs/xrouter-plan/04）
-for pref in 4800 4801 18800 18900 19100; do
+for pref in 4800 4801 18800 18900 19050 19100; do
   while ip rule del pref "${pref}" 2>/dev/null; do :; done
   while ip -6 rule del pref "${pref}" 2>/dev/null; do :; done
 done
@@ -84,6 +94,7 @@ ip route flush table 97 dev xr0 2>/dev/null
 ip route flush table 233 2>/dev/null
 ip -6 route flush table 97 dev xr0 2>/dev/null
 ip -6 route flush table 233 2>/dev/null
+ip -6 route flush table 234 2>/dev/null
 ip link del xr0 2>/dev/null
 
 # 4. 常驻通知（android 身份发出，不随进程退出消失，须显式撤销）与唤醒锁

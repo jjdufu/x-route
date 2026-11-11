@@ -47,6 +47,7 @@ set firewall.@defaults[0].fullcone6='0'
 set firewall.lan=zone
 set firewall.lan.name='lan'
 add_list firewall.lan.network='lan'
+add_list firewall.lan.network='hotspot'
 add_list firewall.lan.device='eth0'
 set firewall.lan.input='ACCEPT'
 set firewall.lan.output='ACCEPT'

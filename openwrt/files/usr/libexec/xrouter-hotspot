@@ -1,0 +1,110 @@
+#!/bin/sh
+# XRouter: 热点交给 OpenWrt 分配地址（手机侧经控制目录 host/hotspot.cmd 下发，见 xrouter-vpn）
+#   xrouter-hotspot on <网关CIDR> [已连设备IP…]  eth1 接管安卓热点的网关地址，起 DHCP（IPv6 开时再起 RA / DHCPv6）
+#   xrouter-hotspot off                           释放 eth1（热点交还安卓）
+#   xrouter-hotspot ipv6                          按当前 IPv6 开关刷新热点侧 IPv6（xrouter-ipv6 调用）
+#   xrouter-hotspot status                        输出当前状态：on <CIDR> 或 off
+# eth1 是虚拟机第二块网卡，手机侧 xr1 与热点网卡同在网桥 xrbr1 中。
+DEV=eth1
+ST=/tmp/xrouter.hotspot
+ULA6="fd7a:7872:ea::1/64"
+
+status() { cat "$ST" 2>/dev/null || echo off; }
+
+len2mask() {
+  l="$1"; m=0; i=0
+  while [ "$i" -lt 32 ]; do
+    m=$(( m * 2 )); [ "$i" -lt "$l" ] && m=$(( m + 1 )); i=$((i + 1))
+  done
+  echo "$(( (m >> 24) & 255 )).$(( (m >> 16) & 255 )).$(( (m >> 8) & 255 )).$(( m & 255 ))"
+}
+
+v6_on() { [ "$(uci -q get network.xr_eth0.ipv6)" = 1 ]; }
+
+apply_v6() {
+  if v6_on; then
+    echo 0 > "/proc/sys/net/ipv6/conf/${DEV}/disable_ipv6" 2>/dev/null
+    uci -q batch <<U
+set network.hotspot.ip6addr='${ULA6}'
+set dhcp.hotspot.ra='server'
+set dhcp.hotspot.dhcpv6='server'
+set dhcp.hotspot.ra_default='2'
+set dhcp.hotspot.ra_management='1'
+U
+  else
+    uci -q batch <<'U'
+delete network.hotspot.ip6addr
+set dhcp.hotspot.ra='disabled'
+set dhcp.hotspot.dhcpv6='disabled'
+U
+    echo 1 > "/proc/sys/net/ipv6/conf/${DEV}/disable_ipv6" 2>/dev/null
+  fi
+}
+
+on() {
+  cidr="$1"; shift
+  [ -d "/sys/class/net/${DEV}" ] || { echo "err 无 ${DEV}" > "$ST"; return 1; }
+  ip="${cidr%/*}"; len="${cidr#*/}"
+  case "$len" in ''|*[!0-9]*) echo "err 网段无效" > "$ST"; return 1 ;; esac
+  if [ "$len" -lt 16 ] || [ "$len" -gt 30 ]; then echo "err 网段无效" > "$ST"; return 1; fi
+  limit=$(( (1 << (32 - len)) - 3 )); [ "$limit" -gt 250 ] && limit=250
+  uci -q batch <<U
+set network.hotspot=interface
+set network.hotspot.proto='static'
+set network.hotspot.device='${DEV}'
+set network.hotspot.auto='0'
+set network.hotspot.ipaddr='${ip}'
+set network.hotspot.netmask='$(len2mask "$len")'
+set dhcp.hotspot=dhcp
+set dhcp.hotspot.interface='hotspot'
+set dhcp.hotspot.start='2'
+set dhcp.hotspot.limit='${limit}'
+set dhcp.hotspot.leasetime='1h'
+set dhcp.hotspot.force='1'
+set dhcp.hotspot.dhcpv4='server'
+set dhcp.@dnsmasq[0].authoritative='1'
+U
+  apply_v6
+  fwchg=0
+  uci -q get firewall.lan.network | grep -qw hotspot || { uci -q add_list firewall.lan.network='hotspot'; fwchg=1; }
+  uci -q commit network; uci -q commit dhcp; uci -q commit firewall
+  ip link set "$DEV" up
+  ifup hotspot >/dev/null 2>&1
+  i=0
+  while [ "$i" -lt 10 ]; do
+    ip -4 addr show dev "$DEV" 2>/dev/null | grep -q " ${ip}/" && break
+    sleep 1; i=$((i + 1))
+  done
+  ip -4 addr show dev "$DEV" 2>/dev/null | grep -q " ${ip}/" || { echo "err eth1 地址未生效" > "$ST"; return 1; }
+  [ "$fwchg" = 1 ] && /etc/init.d/firewall reload >/dev/null 2>&1
+  /etc/init.d/dnsmasq reload >/dev/null 2>&1
+  /etc/init.d/odhcpd reload >/dev/null 2>&1
+  echo "on ${cidr}" > "$ST"
+  logger -t xrouter "热点网段 ${cidr} 由 OpenWrt 接管"
+  # 已连设备：主动 ARP 一次，设备随即把网关 MAC 更新为 eth1（地址不变，无需重连）
+  (
+    command -v arping >/dev/null 2>&1 && arping -U -c 2 -I "$DEV" "$ip" >/dev/null 2>&1
+    for c in "$@"; do ping -c 1 -W 1 -I "$DEV" "$c" >/dev/null 2>&1 & done
+    wait
+  ) &
+  return 0
+}
+
+off() {
+  ifdown hotspot >/dev/null 2>&1
+  ip -4 addr flush dev "$DEV" 2>/dev/null
+  echo off > "$ST"
+  logger -t xrouter "热点交还安卓"
+}
+
+case "$1" in
+  on) shift; on "$@" ;;
+  off) off ;;
+  ipv6)
+    uci -q get network.hotspot >/dev/null || exit 0
+    apply_v6; uci -q commit network; uci -q commit dhcp
+    case "$(status)" in on*) ifup hotspot >/dev/null 2>&1; /etc/init.d/odhcpd reload >/dev/null 2>&1 ;; esac
+    ;;
+  status) status ;;
+  *) echo "usage: xrouter-hotspot on CIDR [IP…]|off|ipv6|status"; exit 2 ;;
+esac

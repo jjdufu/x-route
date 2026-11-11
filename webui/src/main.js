@@ -182,6 +182,8 @@ function render(d) {
 
   seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
   $("sw-debug").selected = cfg.XR_DEBUG === "1";
+  $("sw-hotspot").selected = cfg.XR_HOTSPOT_BRIDGE !== "0";
+  $("v-hotspot").textContent = net.hotspot ? `已接管 ${net.hotspot}` : "";
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
@@ -443,6 +445,7 @@ function bind() {
   bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));
   bindRowSwitch($("row-share"), $("sw-share"), () => setKey("VM_SHARE", $("sw-share").selected ? "1" : "0"));
   bindRowSwitch($("row-ipv6"), $("sw-ipv6"), toggleIpv6);
+  bindRowSwitch($("row-hotspot"), $("sw-hotspot"), () => setKey("XR_HOTSPOT_BRIDGE", $("sw-hotspot").selected ? "1" : "0"));
   bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
   $("btn-diag").addEventListener("click", exportDiag);

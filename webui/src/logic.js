@@ -2,7 +2,7 @@
 export const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 export const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
-  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS",
+  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS", "XR_HOTSPOT_BRIDGE",
 ];
 const ARG_RE = /^[A-Za-z0-9_-]+$/;
 export const MEDIA_ROOT = "/storage/emulated/0";

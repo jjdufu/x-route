@@ -14,6 +14,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/v6.sh"
 . "${MODDIR}/scripts/traffic.sh"
 . "${MODDIR}/scripts/diag.sh"
+. "${MODDIR}/scripts/hotspot.sh"
 load_config
 
 XR_IF=xr0
@@ -85,6 +86,7 @@ net_up() {
   sysw "${PROC}/sys/net/ipv4/conf/${XR_IF}/rp_filter" 0
   ip link set "${XR_IF}" up
   ip6 addr add "${XR_NET6}::1/64" dev "${XR_IF}" nodad
+  hs_tap_up   # 虚拟机第二块网卡（热点网桥用），始终创建，切换选项不需要重启虚拟机
 
   # 1. 登记为 netd 本地网络；不可用时直接用 table 97
   if ndc_ok network interface add local "${XR_IF}" && ndc_ok network route add local "${XR_IF}" "${NET}"; then
@@ -301,6 +303,7 @@ sync_all() {
   ${IPT} -A XR_FWD -o "${XR_IF}" -j DROP
   ${IPT} -A XR_FWD -i "${XR_IF}" -j DROP
   fwd_first
+  hs_sync
   v6_proxy_sync
   g="$(gw_want)"
   dlog net "同步：上游=${up:-无} 出口=${outs:-无} IPv6出口=${outs6:-无} 暴露=${ex:-无} 热点=$(tether_ifaces | tr '\n' ' ') 接管=${g}（$(gw_reason)）"
@@ -314,6 +317,7 @@ sync_v6() {
   echo "$outs6" > "${RUN}/net.up_out6"; { vm_v6 && echo 1; } > "${RUN}/net.v6"
   ${IP6T} -F XR_FWD6
   acct_present6 && ${IP6T} -A XR_FWD6 -j XR_ACCT6
+  hs_fwd6_rules
   ${IP6T} -A XR_FWD6 -o "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   ${IP6T} -A XR_FWD6 -i "${XR_IF}" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
   if vm_v6; then   # 虚拟机自身 IPv6 出网（旁路模式同样可用）
@@ -360,6 +364,7 @@ net_watch() {
       sync_all
     fi
     fwd_first; nat_first; fwd6_first; nat6_first; acct_hooks
+    hs_sync
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
     for f in ip ip6; do
@@ -376,6 +381,7 @@ net_watch() {
 
 net_down() {
   w="$(cat "${RUN}/net_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
+  hs_tap_down
   v6_proxy_remove
   v6_nft_teardown
   gw_remove
@@ -407,9 +413,10 @@ net_down() {
 net_status() { # JSON 片段
   ex="$(cat "${RUN}/net.expose_if" 2>/dev/null)"; exj=""
   for i in $ex; do exj="${exj:+${exj},}\"$i\""; done
-  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1","gw":"%s"}' \
+  printf '{"mode":"%s","up_if":"%s","expose":"%s","expose_if":[%s],"vm_ip":"%s.254","host_ip":"%s.1","gw":"%s","hotspot":"%s"}' \
     "$(cat "${RUN}/net.mode" 2>/dev/null || echo down)" "$(cat "${RUN}/net.up_if" 2>/dev/null)" \
-    "${XR_EXPOSE}" "$exj" "${XR_NET_PREFIX}" "${XR_NET_PREFIX}" "$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
+    "${XR_EXPOSE}" "$exj" "${XR_NET_PREFIX}" "${XR_NET_PREFIX}" "$(cat "${RUN}/net.gw" 2>/dev/null || echo off)" \
+    "$(cat "${RUN}/net.hs_if" 2>/dev/null)"
 }
 
 if [ "${0##*/}" = net.sh ]; then

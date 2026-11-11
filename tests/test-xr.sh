@@ -26,7 +26,7 @@ echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
 J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
-chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 22 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 23 ]'
 cp "$CONF" "$T/conf.bak"
 # 通知显示：取值校验，改后不需重启，并请求守护进程立即刷新通知
 rm -f "$RUN/notify.force"
