@@ -208,6 +208,9 @@ unset -f acct_total
 
 # 17. 伴生 APK 及其回退已彻底移除
 chk '! grep -rqE "keepalive\.apk|com\.xrouter\.keepalive|KeepAliveService|open\.req|cmd notification|pm install|doze_whitelist" "$ROOT/module"'
+chk '[ ! -e "$ROOT/module/apk" ] && [ ! -e "$ROOT/companion" ]'
+chk '! grep -qE "companion|keepalive\.apk|aapt|apksigner" "$ROOT/scripts/package-module.sh" "$ROOT/.github/workflows/package-module.yml" "$ROOT/.github/workflows/build-openwrt.yml"'
+chk 'grep -q "notifier/build.sh" "$ROOT/scripts/package-module.sh"'
 
 
 [ "$fail" = 0 ] && echo "test-keepalive OK"

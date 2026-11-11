@@ -26,17 +26,15 @@ for f in index.html config.json icon.png; do
   [ -s "${REPO}/module/webroot/${f}" ] || { echo "WebUI 构建产物缺少 ${f}"; exit 1; }
 done
 
-# 保活伴生 APK：有 JDK 与 build-tools 时现场构建，否则使用已入库的预编译包
-if command -v javac >/dev/null 2>&1 && { command -v aapt >/dev/null 2>&1 || command -v aapt2 >/dev/null 2>&1; }; then
-  sh "${REPO}/companion/build.sh" "${REPO}/module/apk/keepalive.apk"
+# 通知进程 jar（LSPosed 式，app_process 运行，不是 APK）：有 JDK 与 d8 时现场构建，否则使用已入库的预编译包
+if command -v javac >/dev/null 2>&1 && command -v d8 >/dev/null 2>&1; then
+  sh "${REPO}/notifier/build.sh" "${REPO}/module/bin/xrnotify.jar"
 fi
-[ -s "${REPO}/module/apk/keepalive.apk" ] || { echo "缺少 module/apk/keepalive.apk，请先运行 sh companion/build.sh"; exit 1; }
-[ -s "${REPO}/module/apk/keepalive.ver" ] || { echo "缺少 module/apk/keepalive.ver，请先运行 sh companion/build.sh"; exit 1; }
+[ -s "${REPO}/module/bin/xrnotify.jar" ] || { echo "缺少 module/bin/xrnotify.jar，请先运行 sh notifier/build.sh"; exit 1; }
 
 ST="$(mktemp -d)"; trap 'rm -rf "${ST}"' EXIT
 cp -a "${REPO}/module/." "${ST}/"
 find "${ST}" -name .gitkeep -delete
-find "${ST}" -name '*.idsig' -delete
 rm -rf "${ST}/data"
 chmod 0755 "${ST}"/*.sh "${ST}/scripts/"*.sh "${ST}/scripts/xr"
 [ ! -e "${ST}/META-INF" ] || { echo "不应包含 META-INF"; exit 1; }

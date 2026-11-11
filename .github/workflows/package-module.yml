@@ -38,13 +38,13 @@ jobs:
         run: sh scripts/lint.sh
 
 
-      - name: Setup Java
+      - name: Setup Java (notifier jar)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK (d8 + android.jar for notifier jar)
         run: |
           set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
