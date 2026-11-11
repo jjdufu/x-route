@@ -120,11 +120,16 @@ eq(L.expandSizes(1024), [1536, 2048, 3072, 5120, 9216], "扩容选项"); eq(L.ex
 // 启停与按钮解耦：只投递后台命令，不等待 xr start/stop
 if (subs.has("start") || subs.has("stop")) fail("WebUI 不应同步调用 xr start/stop");
 if (/await\s+xr\(\s*kind/.test(main)) fail("按钮不得等待后台启停");
-// 启动日志：真实增量日志、轮询节流、DOM 行数上限、无模糊/发光动画
-if (!html.includes('id="power-log"')) fail("缺少启动日志层");
+// 开机日志：真实增量日志、轮询节流、固定行池、只用 transform 平滑上移、无模糊/发光动画
+if (!html.includes('id="boot-log"') || html.includes('id="power-log"')) fail("开机日志应在舞台里而不是按钮里");
+if (html.indexOf('id="boot"') > html.indexOf('id="row-autostart"')) fail("开机日志应在「开机自启」上方");
 if (!/setTimeout\(\(\) => bootTick\(b\), (3|4|5)\d\d\)/.test(main)) fail("启动日志应 300-500ms 轮询");
-const plog = css.slice(css.indexOf(".power-log {"), css.indexOf("}", css.indexOf(".power-log {")));
-if (/blur|box-shadow|animation|transition/.test(plog)) fail("启动日志层不得用模糊/阴影/动画");
+const blk = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
+const plog = blk(".boot-log");
+if (/blur|box-shadow|animation|filter/.test(plog + blk(".boot"))) fail("开机日志不得用模糊/阴影/动画");
+if (!/\.boot-log\.glide \{ transition: transform \.1\d+s/.test(css)) fail("上移只用短 transform 过渡");
+if (!/const BOOT_ROWS = \d+;/.test(main) || !/Array\.from\(\{ length: BOOT_ROWS \}/.test(main)) fail("应使用固定行池");
+if (/getBoundingClientRect|offsetHeight|scrollHeight/.test(main.slice(main.indexOf("function bootPaint"), main.indexOf("async function bootTick")))) fail("绘制开机日志时不得读布局");
 const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启动 pid=1\n\x1f30\x1f[    0.000000] Booting Linux\n[ 0.1] half");
 eq([bt.rc, bt.mod.size, bt.con.size], [1, 120, 30], "parseBootTail");
 eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
@@ -137,11 +142,13 @@ L.feedBoot(bb, "con", " line\n\x1b[0m\x1b[1;32mok\x1b[0m\n");
 eq(bb.lines.slice(-2), ["[ 0.1] half line", "ok"], "feedBoot 拼接半行并去颜色码");
 for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
 eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
+eq(bb.total, 54, "feedBoot 累计行数");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
-// 启动中：电源图标完全隐藏，日志在按钮背景内居中，只渲染放得下的行
-if (!/\.starting \.power md-icon \{ display: none; \}/.test(css)) fail("启动中应完全隐藏电源图标");
-if (!/justify-content: center/.test(plog)) fail("启动日志应在按钮内垂直居中");
-if (!/slice\(-BOOT_SHOW\)/.test(main)) fail("启动日志只渲染放得下的行");
+// 启动中：电源按钮整个隐藏、没有转圈；舞台有静态电路板底纹
+if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
+if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
+const stg = blk(".stage");
+if (!/url\("data:image\/svg\+xml/.test(stg) || /animation|transition/.test(stg)) fail("舞台应为静态电路板底纹");
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
 if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");

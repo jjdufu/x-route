@@ -134,8 +134,19 @@ md-icon { --md-icon-size: 22px; flex: none; }
 
 .alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
+/* 首页舞台：开机自启上方的方形区域，铺一张大的电路板底纹（静态 SVG + 渐变，无动画、无发光） */
+.power-area { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0 0 8px; }
+.stage {
+  position: relative; width: 100%; height: 252px; border-radius: var(--xr-radius); overflow: hidden;
+  display: grid; place-items: center; contain: strict;
+  background-color: var(--md-sys-color-surface-container-lowest);
+  background-image:
+    radial-gradient(ellipse at 50% 50%, transparent 0 34%, rgba(12, 14, 19, .82) 78%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%23a8c8ff' stroke-opacity='.16' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M0 40h52l18 18h56l14-14h100'/%3E%3Cpath d='M0 120h34l22-22h42l20 20h50l18-18h54'/%3E%3Cpath d='M0 200h70l16-16h44l26 26h84'/%3E%3Cpath d='M40 0v24l16 16M120 0v44M200 0v30l-18 18v34'/%3E%3Cpath d='M86 240v-40l18-18v-26M160 240v-30l20-20h60M30 240v-58l18-18h20'/%3E%3Cpath d='M182 82v40l-16 16h-36M70 58v28M126 58v36l-14 14'/%3E%3C/g%3E%3Cg fill='%23a8c8ff' fill-opacity='.22'%3E%3Ccircle cx='52' cy='40' r='3'/%3E%3Ccircle cx='126' cy='58' r='3'/%3E%3Ccircle cx='98' cy='98' r='3'/%3E%3Ccircle cx='168' cy='118' r='3'/%3E%3Ccircle cx='86' cy='200' r='3'/%3E%3Ccircle cx='156' cy='184' r='3'/%3E%3Ccircle cx='182' cy='82' r='3'/%3E%3Ccircle cx='70' cy='86' r='3'/%3E%3Ccircle cx='68' cy='164' r='3'/%3E%3Ccircle cx='200' cy='30' r='3'/%3E%3C/g%3E%3Cg fill='none' stroke='%23a8c8ff' stroke-opacity='.12' stroke-width='1.5'%3E%3Crect x='100' y='130' width='40' height='26' rx='3'/%3E%3Crect x='190' y='150' width='26' height='18' rx='2'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 100% 100%, 240px 240px;
+  background-position: center, center;
+}
 /* 电源按钮：按钮本身就是状态 */
-.power-area { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 28px 0 20px; }
 .power-wrap { position: relative; width: 148px; height: 148px; display: grid; place-items: center; }
 .power {
   position: relative; width: 120px; height: 120px; border-radius: 50%; border: 0; cursor: pointer;
@@ -145,32 +156,32 @@ md-icon { --md-icon-size: 22px; flex: none; }
   --md-ripple-hover-color: currentColor; --md-ripple-pressed-color: currentColor;
 }
 .power:active { transform: scale(.96); }
-.power md-icon { --md-icon-size: 56px; position: relative; z-index: 1; }
-/* 启动中：电源图标完全隐藏，按钮圆形背景里居中滚动真实开机日志（瀑布式，最新在下）；
-   只渲染能放下的最后几行，块整体垂直居中；圆形裁切 + 上下静态渐隐，不做模糊、发光或动画 */
-.power { overflow: hidden; isolation: isolate; }
-.power-log {
-  position: absolute; inset: 0; margin: 0; padding: 0 16px; z-index: 0;
-  display: flex; flex-direction: column; justify-content: center;
-  font: 8px/10px ui-monospace, "JetBrains Mono", monospace; color: #3dff8a; text-align: left;
-  white-space: pre; overflow: hidden; opacity: .8; pointer-events: none; contain: strict;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 76%, transparent 92%);
-  mask-image: linear-gradient(to bottom, transparent 10%, #000 30%, #000 76%, transparent 92%);
-}
-.starting .power md-icon { display: none; }
+.power md-icon { --md-icon-size: 56px; }
 .power:disabled { cursor: default; }
+/* 启动中：按钮整个隐藏（没有转圈等动画），舞台里只显示开机日志；完成或失败后按钮恢复 */
+.starting.power-wrap { display: none; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .12s; pointer-events: none; }
-.ring circle { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }
-.starting .ring, .stopping .ring { opacity: 1; animation: spin .8s linear infinite; }
-.stopping .ring circle { stroke: var(--md-sys-color-outline); }
+.ring circle { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }
+.stopping .ring { opacity: 1; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.starting .power { background: #08130d; color: var(--md-sys-color-on-primary-container); }
 /* 运行中只变绿，不要呼吸光或持续发光 */
 .running .power { background: #1d3a26; color: var(--xr-ok); }
 .failed .power { background: #3d1c1a; color: var(--xr-bad); }
+/* 瀑布式开机日志：固定行池（BOOT_ROWS 个行元素，只改文字），新行到来时整体先下移 k 行再用 transform 平滑上移，
+   只走合成层，不触发页面重排；上下静态渐隐 */
+.boot { position: absolute; inset: 0; overflow: hidden; pointer-events: none; contain: strict;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 88%, transparent 100%); }
+.boot-log {
+  position: absolute; left: 16px; right: 16px; bottom: 14px;
+  font: 11px/14px ui-monospace, "JetBrains Mono", monospace; color: #3dff8a; opacity: .9;
+  will-change: transform;
+}
+.boot-log > div { height: 14px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.boot-log.glide { transition: transform .18s ease-out; }
 .power-text { font-size: 18px; font-weight: 600; text-align: center; padding: 0 24px; min-height: 26px; }
-.failed + .power-text { color: var(--xr-bad); }
-.running + .power-text { color: var(--xr-ok); }
+.power-text.failed { color: var(--xr-bad); }
+.power-text.running { color: var(--xr-ok); }
 .steps { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--md-sys-color-outline); }
 .steps md-icon { --md-icon-size: 16px; }
 .steps .done { color: var(--md-sys-color-on-surface-variant); }

@@ -132,6 +132,7 @@ function renderPower(d) {
   const v = vmView(d, pending);
   cls($("power-wrap"), "power-wrap " + v.phase);
   txt($("power-text"), v.text);
+  cls($("power-text"), "power-text " + v.phase);
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped));
   const steps = $("power-steps");
   hide(steps, v.phase !== "starting");
@@ -223,16 +224,30 @@ function schedule() {
   }, fast ? 1500 : 5000);
 }
 
-// ---- 启动日志：增量读取（按字节偏移），约 400ms 一次；点击启动后电源图标隐藏，日志居中显示在按钮背景里，
-// 启动完成或失败（阶段不再是 starting）即撤掉日志、恢复图标 ----
+// ---- 开机日志：增量读取（按字节偏移），约 400ms 一次。点击启动后电源按钮隐藏，舞台里显示瀑布式日志；
+// 启动完成或失败（阶段不再是 starting）即撤掉日志、恢复按钮 ----
+// 固定行池：BOOT_ROWS 个行元素一次建好，之后只改文字（不增删节点）；
+// 新到 k 行时整块先瞬时下移 k 行，再在下一帧用 transform 过渡回 0，看起来是平滑上滚，全程不读布局
+const BOOT_ROWS = 16;
+const BOOT_LH = 14;      // 与 .boot-log 行高一致
+let bootRows = null;
+function bootPool() {
+  if (bootRows) return bootRows;
+  const box = $("boot-log");
+  bootRows = Array.from({ length: BOOT_ROWS }, () => document.createElement("div"));
+  box.replaceChildren(...bootRows);
+  return bootRows;
+}
+
 function bootOn() {
   if (boot) return;
   // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
   // 打开页面时已在开机：直接给出串口日志末尾一段
-  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0 };
-  const el = $("power-log");
-  el.textContent = "";
-  el.hidden = false;
+  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, total: 0 };
+  bootPool().forEach((r) => { r.textContent = ""; });
+  const box = $("boot-log");
+  box.classList.remove("glide"); box.style.transform = "";
+  $("boot").hidden = false;
   bootTick(boot);
 }
 
@@ -241,19 +256,33 @@ function bootOff() {
   clearTimeout(boot.timer);
   if (boot.raf) cancelAnimationFrame(boot.raf);
   boot = null;
-  const el = $("power-log");
-  el.hidden = true;
-  el.textContent = "";
+  $("boot").hidden = true;
 }
 
-// 圆形按钮（120px）里 10px 行高能完整放下的行数；块整体居中，超出的旧行不进 DOM
-const BOOT_SHOW = 9;
-// 同一帧内只写一次：单个文本节点整体替换，日志层 contain: strict，不影响页面其余部分排版
+// 同一帧内只写一次：把缓冲区最后 BOOT_ROWS 行写进行池（文字没变的行不写），再做一次平滑上移
 function bootPaint(b) {
   if (b.raf) return;
   b.raf = requestAnimationFrame(() => {
     b.raf = 0;
-    if (boot === b) txt($("power-log"), b.buf.lines.slice(-BOOT_SHOW).join("\n"));
+    if (boot !== b) return;
+    const rows = bootPool();
+    const lines = b.buf.lines.slice(-BOOT_ROWS);
+    const pad = BOOT_ROWS - lines.length;
+    for (let i = 0; i < BOOT_ROWS; i++) {
+      const t = i < pad ? "" : lines[i - pad];
+      if (rows[i].textContent !== t) rows[i].textContent = t;
+    }
+    const k = Math.min(BOOT_ROWS, b.buf.total - b.shown);
+    b.shown = b.buf.total;
+    if (k <= 0) return;
+    const box = $("boot-log");
+    box.classList.remove("glide");
+    box.style.transform = `translateY(${k * BOOT_LH}px)`;
+    requestAnimationFrame(() => {
+      if (boot !== b) return;
+      box.classList.add("glide");
+      box.style.transform = "translateY(0)";
+    });
   });
 }
 

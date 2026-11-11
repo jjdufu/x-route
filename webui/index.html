@@ -31,14 +31,17 @@
         </div>
 
         <div class="power-area">
-          <div id="power-wrap" class="power-wrap stopped">
-            <svg class="ring" viewBox="0 0 140 140" aria-hidden="true"><circle cx="70" cy="70" r="66"></circle></svg>
-            <button id="power" class="power" type="button" aria-label="电源">
-              <md-ripple></md-ripple>
-              <md-focus-ring></md-focus-ring>
-              <pre id="power-log" class="power-log" aria-hidden="true" hidden></pre>
-              <md-icon data-icon="power_settings_new"></md-icon>
-            </button>
+          <!-- 舞台：电路板底纹（静态）。平时居中显示电源按钮；启动中按钮隐藏，换成瀑布式开机日志 -->
+          <div id="stage" class="stage">
+            <div id="power-wrap" class="power-wrap stopped">
+              <svg class="ring" viewBox="0 0 140 140" aria-hidden="true"><circle cx="70" cy="70" r="66"></circle></svg>
+              <button id="power" class="power" type="button" aria-label="电源">
+                <md-ripple></md-ripple>
+                <md-focus-ring></md-focus-ring>
+                <md-icon data-icon="power_settings_new"></md-icon>
+              </button>
+            </div>
+            <div id="boot" class="boot" aria-hidden="true" hidden><div id="boot-log" class="boot-log"></div></div>
           </div>
           <div id="power-text" class="power-text">已停止</div>
           <div id="power-steps" class="steps" hidden>

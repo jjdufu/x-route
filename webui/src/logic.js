@@ -150,7 +150,7 @@ export function parseBootTail(text) {
 }
 
 export function newBootBuf() {
-  return { lines: [], carry: { mod: "", con: "" } };
+  return { lines: [], carry: { mod: "", con: "" }, total: 0 };
 }
 
 // 并入一段新增文本：各来源保留未完结的半行；去掉颜色码与模块日志的时间前缀；
@@ -166,6 +166,7 @@ export function feedBoot(buf, src, text, cap = BOOT_LINES) {
     if (src === "mod") l = l.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[(?:INFO|ERROR)\] /, "");
     if (!l.trim()) continue;
     buf.lines.push(l.length > BOOT_COLS ? l.slice(0, BOOT_COLS) : l);
+    buf.total++;      // 累计行数：界面据此算出这次新增了几行，做平滑上移
     changed = true;
   }
   if (buf.lines.length > cap) buf.lines.splice(0, buf.lines.length - cap);
