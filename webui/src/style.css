@@ -199,16 +199,6 @@ md-icon { --md-icon-size: 22px; flex: none; }
 }
 .sel-full { width: 100%; --md-menu-container-color: var(--md-sys-color-surface-container-high); }
 
-/* 日志 */
-.page-logs { padding-bottom: calc(12px + var(--bottom-inset)); }
-.log {
-  flex: 1; min-height: 200px; margin: 0; overflow: auto; padding: 12px 14px;
-  background: var(--md-sys-color-surface-container-lowest); border-radius: 16px;
-  font: 12px/1.55 ui-monospace, "JetBrains Mono", monospace; color: #c8ccd6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
-  contain: content; /* 日志整体替换时只在框内重排 */
-}
-.page-logs .actions { padding: 0; }
-
 /* 对话框 */
 .dlg {
   --md-dialog-container-color: var(--md-sys-color-surface-container-high);

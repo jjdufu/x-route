@@ -18,8 +18,7 @@
     <md-tabs id="tabs" class="tabs" aria-label="页面">
       <md-primary-tab data-page="0"><md-icon slot="icon" data-icon="dashboard"></md-icon>主页</md-primary-tab>
       <md-primary-tab data-page="1"><md-icon slot="icon" data-icon="hub"></md-icon>组网</md-primary-tab>
-      <md-primary-tab data-page="2"><md-icon slot="icon" data-icon="receipt_long"></md-icon>日志</md-primary-tab>
-      <md-primary-tab data-page="3"><md-icon slot="icon" data-icon="settings"></md-icon>设置</md-primary-tab>
+      <md-primary-tab data-page="2"><md-icon slot="icon" data-icon="settings"></md-icon>设置</md-primary-tab>
     </md-tabs>
 
     <main id="pager" class="pager">
@@ -78,18 +77,6 @@
         </div>
       </section>
 
-      <!-- 日志 -->
-      <section class="page page-logs" id="page-logs">
-        <div id="log-kinds" class="seg seg-wide" role="tablist"></div>
-        <pre id="log-box" class="log"></pre>
-        <div class="actions">
-          <md-text-button id="btn-log-clear"><md-icon slot="icon" data-icon="delete_sweep"></md-icon>清空</md-text-button>
-          <span class="grow"></span>
-          <md-outlined-button id="btn-export-one"><md-icon slot="icon" data-icon="download"></md-icon>导出当前</md-outlined-button>
-          <md-filled-tonal-button id="btn-export-all"><md-icon slot="icon" data-icon="download"></md-icon>导出全部</md-filled-tonal-button>
-        </div>
-      </section>
-
       <!-- 设置 -->
       <section class="page" id="page-settings">
         <div class="group-title">网络</div>
@@ -123,12 +110,12 @@
           <div class="item"><md-icon data-icon="developer_board"></md-icon><span class="grow">内存</span><md-outlined-select id="sel-mem" class="sel"></md-outlined-select></div>
         </div>
 
-        <div class="group-title">调试</div>
+        <div class="group-title">日志</div>
         <div class="card list">
           <div id="row-debug" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="receipt_long"></md-icon><span class="grow">调试模式</span><md-switch id="sw-debug" icons></md-switch></div>
           <div class="item"><md-icon data-icon="schedule"></md-icon><span class="grow">自动关闭</span><md-outlined-select id="sel-debug-hours" class="sel"></md-outlined-select></div>
           <div class="actions">
-            <md-filled-tonal-button id="btn-diag"><md-icon slot="icon" data-icon="download"></md-icon>诊断导出</md-filled-tonal-button>
+            <md-filled-tonal-button id="btn-export"><md-icon slot="icon" data-icon="download"></md-icon><span id="btn-export-text">日志导出</span></md-filled-tonal-button>
           </div>
         </div>
 

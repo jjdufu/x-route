@@ -2,7 +2,7 @@
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
 # 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
-#       vpn-import PATH|ls PATH [dir|ovpn]|log [KIND] [N]|log-export [all|KIND]|log-clear all|KIND
+#       vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
@@ -163,36 +163,6 @@ list_dir() {
   done | LC_ALL=C sort
 }
 
-log_clear() {
-  case "$1" in
-    all) for k in module console ctl vmm debug; do f="$(log_src "$k")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1"; done ;;
-    module|console|ctl|vmm|debug) f="$(log_src "$1")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1" ;;
-    *) echo '{"ok":false,"error":"usage"}'; return 2 ;;
-  esac
-  echo '{"ok":true}'
-}
-
-log_src() {
-  case "$1" in
-    module|xr) echo "${LOG}" ;;
-    console) echo "${CON_LOG:-${RUN}/console.log}" ;;
-    ctl) echo "${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
-    vmm) echo "${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
-    debug) echo "${DLOG}" ;;
-    *) return 1 ;;
-  esac
-}
-
-log_basename() {
-  case "$1" in
-    module|xr) echo module.log ;;
-    console) echo console.log ;;
-    ctl) echo vm-ctl.log ;;
-    vmm) echo vmm.log ;;
-    debug) echo debug.log ;;
-  esac
-}
-
 download_dir() {
   if [ -n "${XR_DOWNLOAD:-}" ]; then
     echo "${XR_DOWNLOAD}"
@@ -207,87 +177,56 @@ download_dir() {
   fi
 }
 
-copy_log_or_empty() {
-  if [ -f "$1" ]; then
-    cp -f "$1" "$2"
-  else
-    : > "$2"
+# 打包为 .tar.gz：$1=输出文件 $2=目录（打包其中的子目录 $3）
+make_tgz() {
+  _o="$1"; _d="$2"; _n="$3"
+  ( cd "$_d" && tar -czf "$_o" "$_n" ) 2>/dev/null && [ -s "$_o" ] && return 0
+  ( cd "$_d" && tar -cf - "$_n" | gzip -c > "$_o" ) 2>/dev/null && [ -s "$_o" ] && gzip -t "$_o" 2>/dev/null && return 0
+  if [ -n "${BB}" ] && [ -x "${BB}" ]; then
+    ( cd "$_d" && "${BB}" tar -czf "$_o" "$_n" ) 2>/dev/null && [ -s "$_o" ] && return 0
   fi
+  rm -f "$_o"; return 1
 }
 
-make_zip() {
-  z="$1"; shift
-  if command -v zip >/dev/null 2>&1; then
-    zip -q -9 "$z" "$@"
-  elif [ -n "${BB}" ] && "${BB}" zip -q -9 "$z" "$@" 2>/dev/null; then
-    :
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import sys,zipfile; z=sys.argv[1]; zh=zipfile.ZipFile(z,"w",compression=zipfile.ZIP_DEFLATED); [zh.write(n,n) for n in sys.argv[2:]]; zh.close()' "$z" "$@"
-  else
-    return 1
-  fi
-}
-
-log_export() {
-  what="${1:-all}"
-  dest="$(download_dir)"
-  if [ -z "$dest" ] || ! mkdir -p "$dest"; then
-    echo '{"ok":false,"error":"no download dir"}'
-    return 1
-  fi
-  ts="$(date '+%Y%m%d-%H%M%S')"
-  tmpd="$(mktemp -d 2>/dev/null || { mkdir -p "${RUN}/export.$$"; echo "${RUN}/export.$$"; })"
-  case "$what" in
-    all)
-      copy_log_or_empty "$(log_src module)" "$tmpd/module.log"
-      copy_log_or_empty "$(log_src console)" "$tmpd/console.log"
-      copy_log_or_empty "$(log_src ctl)" "$tmpd/vm-ctl.log"
-      copy_log_or_empty "$(log_src vmm)" "$tmpd/vmm.log"
-      out="${dest}/xrouter-logs-${ts}.zip"
-      ( cd "$tmpd" && make_zip "$out" module.log console.log vm-ctl.log vmm.log ) || { rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; }
-      ;;
-    module|console|ctl|vmm|debug)
-      bn="$(log_basename "$what")"
-      out="${dest}/$(echo "$bn" | sed 's/\.log$//')-${ts}.log"
-      copy_log_or_empty "$(log_src "$what")" "$out"
-      ;;
-    *) echo '{"ok":false,"error":"usage"}'; rm -rf "$tmpd"; return 2 ;;
-  esac
-  rm -rf "$tmpd"
-  printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
-}
-
-
-# ---- 一键诊断导出：当场拍手机与 OpenWrt 快照，附相关系统日志与全部模块日志，统一脱敏后打包到 Download ----
-diag_export() {
+# ---- 日志导出（统一，只分普通 / 调试两种）----
+# 普通：模块、串口、控制服务、虚拟机日志（含轮转的 .1），脱敏后打包为 xrouter-logs-<日期-时间>.tar.gz；
+# 调试模式开启时 WebUI 改为「诊断导出」（diag_export）：再加手机与 OpenWrt 现场快照、系统日志、调试日志。
+# $1=前缀 $2=是否诊断（1）
+export_pack() {
   dest="$(download_dir)"
   if [ -z "$dest" ] || ! mkdir -p "$dest"; then echo '{"ok":false,"error":"no download dir"}'; return 1; fi
-  ts="$(date '+%Y%m%d-%H%M%S')"
-  tmpd="${RUN}/diag.$$"; rm -rf "$tmpd"; mkdir -p "$tmpd/raw" "$tmpd/out" || { echo '{"ok":false,"error":"tmp"}'; return 1; }
+  name="$1-$(date '+%Y%m%d-%H%M%S')"
+  tmpd="${RUN}/export.$$"; rm -rf "$tmpd"; mkdir -p "$tmpd/raw" "$tmpd/$name" || { echo '{"ok":false,"error":"tmp"}'; return 1; }
   {
     echo "XRouter $(sed -n 's/^version=//p' "${MODDIR}/module.prop") / $(getprop ro.product.model 2>/dev/null) / Android $(getprop ro.build.version.release 2>/dev/null)"
     echo "导出时间 $(date '+%F %T %z')"
+    echo "调试模式 $([ "${XR_DEBUG:-0}" = 1 ] && echo 开 || echo 关)"
     status_json
   } > "$tmpd/raw/summary.txt" 2>&1
-  diag_phone > "$tmpd/raw/phone.txt" 2>&1
-  diag_guest 15 > "$tmpd/raw/openwrt.txt" 2>&1
-  diag_logcat > "$tmpd/raw/logcat.txt" 2>&1
-  dumpsys tethering > "$tmpd/raw/tethering.txt" 2>&1
-  grep -v '^#' "${CONF}" > "$tmpd/raw/config.conf" 2>/dev/null
-  for k in module console ctl vmm debug; do
-    f="$(log_src "$k")"; bn="$(log_basename "$k")"
+  for f in "${LOG}" "${CON_LOG:-${RUN}/console.log}" "${CTL_LOG:-${RUN}/vm-ctl.log}" "${VMM_LOG:-${XR_DATA}/log/vmm.log}"; do
+    bn="${f##*/}"
     [ -f "${f}.1" ] && cp -f "${f}.1" "$tmpd/raw/${bn}.1"
-    copy_log_or_empty "$f" "$tmpd/raw/${bn}"
+    [ -f "$f" ] && cp -f "$f" "$tmpd/raw/${bn}"
   done
-  [ -f "${RUN}/notifier.log" ] && cp -f "${RUN}/notifier.log" "$tmpd/raw/notifier.log"
-  for f in "$tmpd"/raw/*; do diag_redact < "$f" > "$tmpd/out/${f##*/}"; done
-  out="${dest}/xrouter-diag-${ts}.zip"
-  # shellcheck disable=SC2046
-  ( cd "$tmpd/out" && make_zip "$out" $(ls) ) || { rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; }
+  if [ "$2" = 1 ]; then
+    diag_phone > "$tmpd/raw/phone.txt" 2>&1
+    diag_guest 15 > "$tmpd/raw/openwrt.txt" 2>&1
+    diag_logcat > "$tmpd/raw/logcat.txt" 2>&1
+    dumpsys tethering > "$tmpd/raw/tethering.txt" 2>&1
+    grep -v '^#' "${CONF}" > "$tmpd/raw/config.conf" 2>/dev/null
+    [ -f "${DLOG}.1" ] && cp -f "${DLOG}.1" "$tmpd/raw/debug.log.1"
+    [ -f "${DLOG}" ] && cp -f "${DLOG}" "$tmpd/raw/debug.log"
+    [ -f "${RUN}/notifier.log" ] && cp -f "${RUN}/notifier.log" "$tmpd/raw/notifier.log"
+  fi
+  for f in "$tmpd"/raw/*; do [ -f "$f" ] && diag_redact < "$f" > "$tmpd/$name/${f##*/}"; done
+  out="${dest}/${name}.tar.gz"
+  if ! make_tgz "$out" "$tmpd" "$name"; then rm -rf "$tmpd"; echo '{"ok":false,"error":"tar"}'; return 1; fi
   rm -rf "$tmpd"
-  log_info xr "已导出诊断包 ${out##*/}"
+  log_info xr "已导出$([ "$2" = 1 ] && echo 诊断包 || echo 日志) ${out##*/}"
   printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
 }
+log_export()  { load_config; export_pack xrouter-logs 0; }
+diag_export() { load_config; export_pack xrouter-diag 1; }
 
 # ---- WebUI 异步启停 ----
 # 立即返回，真正的 xr start/stop 在脱离会话的子进程里执行，结束后把退出码写到 bg.rc。
@@ -356,20 +295,7 @@ case "$cmd" in
   vpn-import)  vpn_import "${1:-}" ;;
   luci)        load_config; am start -a android.intent.action.VIEW -d "http://${XR_NET_PREFIX}.254" >/dev/null 2>&1 ;;
   ls)          list_dir "${1:-}" "${2:-dir}" ;;
-  log-clear)   log_clear "${1:-}" ;;
-  log-export)
-    log_export "${1:-all}" ;;
+  log-export)  log_export ;;
   diag-export) diag_export ;;
-  log)
-    case "${1:-xr}" in
-      console) f="${CON_LOG:-${RUN}/console.log}" ;;
-      ctl) f="${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
-      vmm) f="${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
-      debug) f="${DLOG}" ;;
-      xr|module) f="${LOG}" ;;
-      *) echo "usage: xr log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
-    esac
-    n="${2:-200}"; in_range "$n" 1 5000 || n=200
-    tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm|debug]|diag-export|log [xr|module|console|ctl|vmm|debug] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export"; exit 2 ;;
 esac

@@ -18,7 +18,7 @@ import { exec, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import { ICONS } from "./icons.js";
 import {
-  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
+  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
   parseBootTail, newBootBuf, feedBoot, trafficLine,
 } from "./logic.js";
@@ -37,7 +37,6 @@ let pendingAt = 0;       // 发出操作的时间，用于兜底超时
 let bgArmed = false;     // start-bg 已返回，之后读到的 bg.rc 才属于这次操作
 let boot = null;         // 启动日志跟随状态
 let ipv6Busy = false;
-let logKind = "module";
 let page = 0;
 let timer = null;
 
@@ -190,6 +189,7 @@ function render(d) {
 
   seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
   prop($("sw-debug"), "selected", cfg.XR_DEBUG === "1");
+  txt($("btn-export-text"), cfg.XR_DEBUG === "1" ? "诊断导出" : "日志导出");
   prop($("sw-hotspot"), "selected", cfg.XR_HOTSPOT_BRIDGE !== "0");
   txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "");
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
@@ -218,7 +218,7 @@ function schedule() {
   const v = status ? vmView(status, pending) : { phase: "stopped" };
   const fast = v.phase === "starting" || v.phase === "stopping";
   timer = setTimeout(async () => {
-    if (!document.hidden) { await refresh(); if (page === 2) loadLog(true); if (page === 3) loadTraffic(); }
+    if (!document.hidden) { await refresh(); if (page === 2) loadTraffic(); }
     schedule();
   }, fast ? 1500 : 5000);
 }
@@ -376,47 +376,18 @@ async function resetTraffic() {
   loadTraffic();
 }
 
-// ---- 日志 ----
-// 日志页：最多 300 行、单个文本节点；定时刷新时内容没变就完全不碰 DOM，
-// 变了才整体替换一次（读滚动位置放在写之前，避免强制同步排版）
-let logShown = null;
-async function loadLog(keepScroll) {
-  const box = $("log-box");
-  const kind = logKind;
-  const r = await xr("log", kind, "300");
-  if (kind !== logKind) return;
-  const text = r.stdout || "";
-  const key = kind + "\0" + text;
-  if (keepScroll && key === logShown) return;
-  const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
-  logShown = key;
-  box.textContent = text;
-  tog(box, "empty", !text);
-  if (!keepScroll || atEnd) box.scrollTop = box.scrollHeight;
-}
-async function exportLog(kind) {
-  const r = await xr("log-export", kind);
+// ---- 日志导出：日志统一，只分普通 / 调试。调试模式关闭时导出普通日志，开启时导出完整诊断快照 ----
+let exportBusy = false;
+function exportMode() { return status && status.config && status.config.XR_DEBUG === "1" ? "diag" : "log"; }
+async function exportLogs() {
+  if (exportBusy) return;
+  const diag = exportMode() === "diag";
+  exportBusy = true; $("btn-export").disabled = true;
+  snack(diag ? "正在收集诊断信息…" : "正在打包日志…");
+  const r = diag ? await xr("diag-export") : await xr("log-export");
   const res = lastJson(r.stdout);
-  snack(res && res.ok ? "已保存到 Download" : "导出失败", !(res && res.ok));
-}
-let diagBusy = false;
-async function exportDiag() {
-  if (diagBusy) return;
-  diagBusy = true; $("btn-diag").disabled = true;
-  snack("正在收集诊断信息…");
-  const r = await xr("diag-export");
-  const res = lastJson(r.stdout);
-  diagBusy = false; $("btn-diag").disabled = false;
-  snack(res && res.ok ? "诊断包已保存到 Download" : "导出失败", !(res && res.ok));
-}
-async function clearLog() {
-  const label = LOG_KINDS.find((k) => k.value === logKind).label;
-  if (!await confirmDlg(`清空${label}日志`, "", "清空", true)) return;
-  await xr("log-clear", logKind);
-  loadLog();
-}
-function renderLogKinds() {
-  seg($("log-kinds"), LOG_KINDS, logKind, (v) => { logKind = v; renderLogKinds(); loadLog(); });
+  exportBusy = false; $("btn-export").disabled = false;
+  snack(res && res.ok ? `已保存到 Download/${String(res.path).split("/").pop()}` : "导出失败", !(res && res.ok));
 }
 
 // ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动，均瞬时切换、不做任何过渡 ----
@@ -424,15 +395,14 @@ function renderLogKinds() {
 Tab.prototype[ANIMATE_INDICATOR] = function () {};
 
 function goPage(i) {
-  i = Math.max(0, Math.min(3, i));
+  i = Math.max(0, Math.min(2, i));
   const pages = document.querySelectorAll("#pager > .page");
   pages.forEach((p, k) => p.classList.toggle("on", k === i));
   const tabs = $("tabs");
   if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
   if (page === i) return;
   page = i;
-  if (i === 2) loadLog();
-  if (i === 3) loadTraffic();
+  if (i === 2) loadTraffic();
 }
 
 function bindPager() {
@@ -478,7 +448,7 @@ function bind() {
   bindRowSwitch($("row-hotspot"), $("sw-hotspot"), () => setKey("XR_HOTSPOT_BRIDGE", $("sw-hotspot").selected ? "1" : "0"));
   bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
-  $("btn-diag").addEventListener("click", exportDiag);
+  $("btn-export").addEventListener("click", exportLogs);
   $("btn-luci").addEventListener("click", () => xr("luci"));
   $("btn-import").addEventListener("click", importVpn);
   $("btn-share-path").addEventListener("click", pickSharePath);
@@ -488,10 +458,6 @@ function bind() {
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
   $("btn-traffic-reset").addEventListener("click", resetTraffic);
-  $("btn-export-one").addEventListener("click", () => exportLog(logKind));
-  $("btn-export-all").addEventListener("click", () => exportLog("all"));
-  $("btn-log-clear").addEventListener("click", clearLog);
-  renderLogKinds();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); schedule(); } });
 }
 

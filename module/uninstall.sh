@@ -132,7 +132,7 @@ fi
 { echo x-route > /sys/power/wake_unlock; } 2>/dev/null
 
 # 5. 删除数据目录（含日志、配置、镜像、系统盘、运行时文件）
-#    不删除用户导出到 Download 的 xrouter-logs-*.zip
+#    不删除用户导出到 Download 的 xrouter-logs-*.tar.gz / xrouter-diag-*.tar.gz
 rm -rf "${XR_DATA}"
 rm -rf /data/adb/x-route
 sync

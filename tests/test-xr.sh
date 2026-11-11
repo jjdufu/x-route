@@ -86,40 +86,39 @@ chk '! $XR ls /data/adb >/dev/null && ! $XR ls "$XR_MEDIA/../" >/dev/null'
 chk '$XR vpn-import /storage/emulated/0/Download/vpn/home.ovpn | grep -q "\"ok\":true"'
 chk 'grep -q "remote 127.0.0.1 1194" "$RUN/guest/host/openvpn.ovpn" && grep -q "^enable [0-9]*$" "$RUN/guest/host/openvpn.cmd" && [ -f "$XR_DATA/config/openvpn.ovpn" ]'
 chk '$XR vpn-import /storage/emulated/0/Download/vpn/bin.conf | grep -q "\"ok\":false" && ! $XR vpn-import /data/adb/x.ovpn >/dev/null'
-# 清空日志
-printf 'x\n' > "$RUN/console.log"; chk '$XR log-clear console | grep -q "\"ok\":true" && [ ! -s "$RUN/console.log" ]'
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null && [ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'
-chk '$XR log xr 5 | grep -q . && [ "$($XR log xr 3 | wc -l)" -eq 3 ] && $XR log console >/dev/null'
-out="$($XR log bogus)"; chk '[ $? -eq 2 ]'
-# 日志导出：压缩包与单类文件名、内容
+# 日志统一：不再有分类查看 / 清空命令
+out="$($XR log xr 5)"; chk '[ $? -eq 2 ]'; out="$($XR log-clear all)"; chk '[ $? -eq 2 ]'
+# 日志导出：普通日志 .tar.gz（文件名带日期时间，脱敏），调试开启时诊断导出另含快照与调试日志
 mkdir -p "$T/dl"
 export XR_DOWNLOAD="$T/dl"
-printf 'module-body\n' > "$LOG"
+printf 'module-body password=hunter2\n' > "$LOG"
 printf 'console-body\n' > "$RUN/console.log"
 printf 'ctl-body\n' > "$RUN/vm-ctl.log"
 printf 'vmm-body\n' > "$XR_DATA/log/vmm.log"
-out="$($XR log-export all)"
+printf 'dbg-body\n' > "$XR_DATA/log/debug.log"
+out="$($XR log-export)"
 chk 'echo "$out" | grep -q "\"ok\":true"'
-zipf="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
-chk 'echo "$zipf" | grep -qE "xrouter-logs-[0-9]{8}-[0-9]{6}\.zip$" && [ -f "$zipf" ]'
-python3 - "$zipf" <<'PYZ' || fail=1
-import sys, zipfile
-z = zipfile.ZipFile(sys.argv[1])
-names = set(z.namelist())
-need = {"module.log", "console.log", "vm-ctl.log", "vmm.log"}
+tgz="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
+chk 'echo "$tgz" | grep -qE "/xrouter-logs-[0-9]{8}-[0-9]{6}\.tar\.gz$" && [ -f "$tgz" ]'
+python3 - "$tgz" <<'PYZ' || fail=1
+import sys, tarfile, os
+t = tarfile.open(sys.argv[1], "r:gz")
+base = os.path.basename(sys.argv[1])[:-7]
+names = {m.name for m in t.getmembers() if m.isfile()}
+need = {f"{base}/{n}" for n in ("summary.txt", "module.log", "console.log", "vm-ctl.log", "vmm.log")}
 if names != need:
-    print("FAIL: zip 内文件", names); sys.exit(1)
-if z.read("module.log") != b"module-body\n":
-    print("FAIL: module.log 内容"); sys.exit(1)
-if z.read("console.log") != b"console-body\n":
-    print("FAIL: console.log 内容"); sys.exit(1)
+    print("FAIL: 普通日志包内文件", names); sys.exit(1)
+m = t.extractfile(f"{base}/module.log").read()
+if b"module-body" not in m or b"hunter2" in m:
+    print("FAIL: module.log 内容或脱敏", m); sys.exit(1)
 PYZ
-out="$($XR log-export module)"
+out="$($XR diag-export)"
 chk 'echo "$out" | grep -q "\"ok\":true"'
-one="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
-chk 'echo "$one" | grep -qE "module-[0-9]{8}-[0-9]{6}\.log$" && grep -qx module-body "$one"'
-out="$($XR log-export bogus)"; chk '[ $? -eq 2 ] && echo "$out" | grep -q "\"ok\":false"'
+dg="$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"path\"])")"
+chk 'echo "$dg" | grep -qE "/xrouter-diag-[0-9]{8}-[0-9]{6}\.tar\.gz$"'
+chk 'tar -tzf "$dg" | grep -q "/debug.log$" && tar -tzf "$dg" | grep -q "/phone.txt$" && tar -tzf "$dg" | grep -q "/module.log$"'
 $XR stop; chk '! $XR running'
 # 熔断：存在 tripped 时自启和启动都被拒绝，ack-trip 后恢复
 $XR set AUTOSTART 0 >/dev/null; date > "$TRIPPED"

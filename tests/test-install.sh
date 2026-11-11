@@ -68,14 +68,14 @@ sleep 60 &
 livepid=$!
 echo "$livepid" > "$XR_DATA/run/daemon.pid"
 echo 999999 > "$XR_DATA/run/crosvm.pid"
-echo keep > "$T/dl/xrouter-logs-20261110-180900.zip"
+echo keep > "$T/dl/xrouter-logs-20261110-180900.tar.gz"
 # 制造失败路径：xr / net.sh 不可执行时仍须删数据
 chmod a-x "$T/live/scripts/xr" "$T/live/scripts/net.sh" 2>/dev/null || true
 MODDIR="$T/live" sh "$T/live/uninstall.sh"; un_rc=$?
 chk '[ "$un_rc" -eq 0 ]'
 chk '[ ! -d "$XR_DATA" ]'
 chk '! kill -0 "$livepid" 2>/dev/null'
-chk '[ -f "$T/dl/xrouter-logs-20261110-180900.zip" ]'
+chk '[ -f "$T/dl/xrouter-logs-20261110-180900.tar.gz" ]'
 # 网络兜底清理覆盖 IPv4 与 IPv6（假 ip / iptables / ip6tables 记录调用）
 MOCK="$T/mock"; mkdir -p "$MOCK"; export MOCK
 # 假 dumpsys：第一次核对时通知还在（模拟首次撤销未生效），之后消失

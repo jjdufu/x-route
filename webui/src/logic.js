@@ -23,13 +23,6 @@ export const SHARE_OPTS = [
 ];
 export const CPU_OPTS = [1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n} 核` }));
 export const MEM_OPTS = [384, 512, 768, 1024, 1536, 2048].map((n) => ({ value: String(n), label: n >= 1024 ? `${n / 1024} GB` : `${n} MB` }));
-export const LOG_KINDS = [
-  { value: "module", label: "模块" },
-  { value: "console", label: "串口" },
-  { value: "ctl", label: "控制服务" },
-  { value: "vmm", label: "虚拟机" },
-  { value: "debug", label: "调试" },
-];
 export const DEBUG_HOURS_OPTS = [
   { value: "1", label: "1 小时" },
   { value: "6", label: "6 小时" },

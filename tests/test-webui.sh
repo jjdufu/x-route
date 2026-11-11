@@ -35,11 +35,11 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log", "log-export", "log-clear", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log-export", "diag-export", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
-eq(tabs, ["主页", "组网", "日志", "设置"], "顶部 Tab");
+eq(tabs, ["主页", "组网", "设置"], "顶部 Tab");
 if (/bottom|tabbar|nav class/.test(html)) fail("不应有底部导航");
 if (html.indexOf('class="appbar"') > html.indexOf('id="pager"')) fail("标题栏必须在内容区之外");
 const css = fs.readFileSync(W + "/src/style.css", "utf8");
@@ -49,7 +49,7 @@ if (css.includes("breathe") || /animation:\s*breathe/.test(css) || css.includes(
 if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得使用大面积模糊");
 if (html.includes("概览") || main.includes("概览") || css.includes("概览")) fail("页签名应为「主页」");
 for (const t of ["开机自启", "运行时长", "上游网络", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
-  "存储共享", "目录", "虚拟机资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "导出当前", "导出全部", "整机复位后自启已关闭"]) {
+  "存储共享", "目录", "虚拟机资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "热点 DHCP", "整机复位后自启已关闭"]) {
   if (!html.includes(t)) fail(`缺少文案 ${t}`);
 }
 for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH"]) {
@@ -77,8 +77,12 @@ const tj = { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 1024 }, total: {
 eq([L.trafficLine(tj, "total"), L.trafficLine(tj, "wan"), L.trafficLine(tj, "lan"), L.trafficLine(null, "total")],
   ["↑1.0 KB ↓3.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB", "—"], "trafficLine");
 // 累计流量只在设置页读取，不在主页轮询
-if (!/page === 3\) loadTraffic\(\)/.test(main)) fail("累计流量应只在设置页读取");
-eq(L.LOG_KINDS.map((o) => o.label), ["模块", "串口", "控制服务", "虚拟机", "调试"], "日志分类");
+if (!/page === 2\) loadTraffic\(\)/.test(main)) fail("累计流量应只在设置页读取");
+// 日志统一：没有独立日志页与分类，设置里的「日志」分组按调试模式切换「日志导出 / 诊断导出」
+if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-kinds") || /xr\("log",|"log-clear"/.test(main)) fail("不应再有日志页与日志分类");
+if ((html.match(/<md-primary-tab /g) || []).length !== 3) fail("应只剩 主页 / 组网 / 设置 三页");
+if (!html.includes('<div class="group-title">日志</div>') || html.includes('<div class="group-title">调试</div>')) fail("设置分组应改名为「日志」");
+if (!/"诊断导出" : "日志导出"/.test(main) || !/diag \? await xr\("diag-export"\) : await xr\("log-export"\)/.test(main)) fail("导出按钮应随调试模式切换");
 const exposeVals = common.match(/XR_EXPOSE\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
 eq(L.ACCESS_OPTS.map((o) => o.value), exposeVals, "管理访问取值与 valid_kv 一致");
 eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");
@@ -87,7 +91,7 @@ for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(common)) fail(`SE
 
 // 确认弹窗只用于：运行模式、停止、重置 / 扩容系统盘、清空日志
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);
-eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清空${label}日志", "清零流量统计", "重置系统盘"].sort(), "确认弹窗范围");
+eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清零流量统计", "重置系统盘"].sort(), "确认弹窗范围");
 if (!main.includes('dialogResult($("dlg-expand"))')) fail("扩容需确认");
 
 // 纯函数
@@ -140,7 +144,6 @@ if (!/justify-content: center/.test(plog)) fail("启动日志应在按钮内垂�
 if (!/slice\(-BOOT_SHOW\)/.test(main)) fail("启动日志只渲染放得下的行");
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
-if (!/key === logShown\) return/.test(main)) fail("日志未变时不应重写");
 if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");
 if (/@keyframes drop|\.switching/.test(css)) fail("不得保留装饰性过渡动画");
 process.exit(bad);
