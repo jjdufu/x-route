@@ -63,7 +63,11 @@ _pick="$(v6_pick_addr 2409:8a00:1:2::/64 "2409:8a00:1:2:1111:2222:3333:4444/64" 
 _busy="2409:8a00:0001:0002:5054:00ff:fe1d:e9fe/64"
 _pick="$(v6_pick_addr 2409:8a00:1:2::/64 "$_busy" 52:54:00:1d:e9:fe)"
 [ "$_pick" = "2409:8a00:0001:0002:7872:00e9:0000:0254/64" ] || { echo "FAIL: v6_pick_addr fallback $_pick"; fail=1; }
-v6_is_ll fe80::1 && ! v6_is_ll 2409:8a00:1:2::1 && v6_is_ula fd7a:7872:e9::1 && ! v6_is_ula 2409:8a00:1:2::1 || { echo "FAIL: v6_is_ll/ula"; fail=1; }
+if v6_is_ll fe80::1 && ! v6_is_ll 2409:8a00:1:2::1 && v6_is_ula fd7a:7872:e9::1 && ! v6_is_ula 2409:8a00:1:2::1; then
+  :
+else
+  echo "FAIL: v6_is_ll/ula"; fail=1
+fi
 
 # set_kv：合法值写入，非法值不改文件
 ok set_kv XR_EXPOSE local; grep -qx 'XR_EXPOSE="local"' "$CONF" || { echo "FAIL: set_kv write"; fail=1; }
