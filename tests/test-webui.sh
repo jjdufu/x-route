@@ -163,17 +163,26 @@ eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
 // 启动中：电源按钮整个隐藏、没有转圈。舞台三态：未启动红色断电电路板（静态）、开机中只有日志、运行中绿色电路板 + 电流
 if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
-const stg = blk(".stage"); const stgRun = blk(".stage.running");
-if (!/%23ffb4ab/.test(stg) || !/stroke-dasharray/.test(stg) || /animation|transition/.test(stg)) fail("未启动：红色、断开的静态电路板");
-if (!/%237bd88f/.test(stgRun)) fail("运行中：绿色电路板");
-if (!/\.stage\.starting \{[^}]*background-image: none/.test(css) || !/\.starting \.traces \{ display: none; \}/.test(css)) fail("开机中只显示日志");
+// 底图：src/pcb.css（scripts/gen-pcb.py 生成的静态 SVG）。红色版走线断开（路径段数多于绿色版），绿色版接通
+const pcb = fs.readFileSync(W + "/src/pcb.css", "utf8");
+const pblk = (sel) => pcb.slice(pcb.indexOf(sel + " {"), pcb.indexOf("}\n", pcb.indexOf(sel + " {")));
+const stg = pblk(".stage"); const stgRun = pblk(".stage.running");
+const svgOf = (b) => { const m = /url\("data:image\/svg\+xml,([^"]+)"\)/.exec(b); return m ? decodeURIComponent(m[1]) : ""; };
+const segs = (b) => (svgOf(b).match(/ ?M[-\d.]+ [-\d.]+/g) || []).length;
+if (!/%23ff6b5e/.test(stg) || /animation|transition/.test(stg + stgRun)) fail("未启动：红色静态电路板");
+if (!/%2357e389/.test(stgRun)) fail("运行中：绿色电路板");
+if (!(segs(stg) > segs(stgRun) * 1.8)) fail("未启动的走线应断开");
+for (const t of ["<pattern", "stroke-dasharray", "<circle", "rx='12'"]) if (!svgOf(stgRun).includes(t)) fail(`电路板应含 ${t}`);
+if (!/import "\.\/pcb\.css";/.test(main) || !fs.existsSync(W + "/scripts/gen-pcb.py")) fail("电路板底图应由 gen-pcb.py 生成并引入");
+if (!/\.stage\.starting \{[^}]*background-image: none/.test(css) || !/\.pcb-flow \{[^}]*display: none; \}/.test(css)) fail("开机中只显示日志");
 if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随启动阶段切换");
-// 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜
+// 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜；元素启动时一次建好
 const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
-for (const n of ["flowX", "flowY"]) { const k = kf(n); if (!k || /opacity|left|top|width|height|stroke|filter|shadow/.test(k.replace(/@keyframes \w+/, ""))) fail(`${n} 只能改 transform`); }
-if (!/\.running \.tr i \{[^}]*animation: flowX/.test(css) || /(^|\n)\.tr i \{[^}]*animation/.test(css)) fail("电流只在运行中流动");
-if (!/\.page:not\(\.on\) \.tr i, \.hid \.tr i \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
-if ((html.match(/class="tr /g) || []).length > 12) fail("电流走线过多");
+{ const k = kf("pcbFlow"); if (!k || /opacity|left|top|width|height|stroke|filter|shadow|background/.test(k.replace(/@keyframes \w+/, ""))) fail("pcbFlow 只能改 transform"); }
+if (!/\.running \.pcb-flow \{ display: block; \}/.test(css)) fail("电流只在运行中流动");
+if (/filter|box-shadow|blur/.test(blk(".pf i"))) fail("电流不能发光");
+if (!/\.page:not\(\.on\) \.pf i, \.hid \.pf i \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
+{ const n = (fs.readFileSync(W + "/src/pcb.js", "utf8").match(/\{x:/g) || []).length; if (n < 4 || n > 12) fail("电流走线数量应在 4-12"); }
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
 if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");

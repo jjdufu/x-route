@@ -16,6 +16,8 @@ import "@material/web/select/outlined-select.js";
 import "@material/web/select/select-option.js";
 import { exec, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
+import "./pcb.css";
+import { PCB_FLOW } from "./pcb.js";
 import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, VPN_TXT,
@@ -545,8 +547,20 @@ function bindRowSwitch(row, sw, onChange) {
   sw.addEventListener("change", onChange);
 }
 
+// 运行中的电流走线：启动时按 pcb.js 一次性建好（8 个元素），之后只靠 CSS 动画，不再碰 DOM
+function buildFlow() {
+  $("pcb-flow").replaceChildren(...PCB_FLOW.map((f) => {
+    const d = document.createElement("span");
+    d.className = "pf";
+    d.style.cssText = `left:${f.x}px;top:${f.y}px;width:${f.len}px;transform:rotate(${f.deg}deg);--t:${f.delay}s`;
+    d.append(document.createElement("i"));
+    return d;
+  }));
+}
+
 function bind() {
   document.querySelectorAll("md-icon[data-icon]").forEach(icon);
+  buildFlow();
   bindPager();
   goPage(0);
   $("power").addEventListener("click", power);
