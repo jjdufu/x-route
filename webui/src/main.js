@@ -131,6 +131,7 @@ async function setKey(key, value) {
 function renderPower(d) {
   const v = vmView(d, pending);
   cls($("power-wrap"), "power-wrap " + v.phase);
+  cls($("stage"), "stage " + v.phase);   // 舞台底色随阶段：停止 / 失败普通，启动中深色日志，运行中电路板
   txt($("power-text"), v.text);
   cls($("power-text"), "power-text " + v.phase);
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped));

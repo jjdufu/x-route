@@ -147,8 +147,9 @@ eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
 // 启动中：电源按钮整个隐藏、没有转圈；舞台有静态电路板底纹
 if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
-const stg = blk(".stage");
-if (!/url\("data:image\/svg\+xml/.test(stg) || /animation|transition/.test(stg)) fail("舞台应为静态电路板底纹");
+const stg = blk(".stage"); const stgRun = blk(".stage.running");
+if (/url\(/.test(stg) || !/url\("data:image\/svg\+xml/.test(stgRun) || /animation|transition/.test(stg + stgRun)) fail("舞台：停止时普通底色，运行中才是静态电路板底纹");
+if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台底色应随启动阶段切换");
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
 if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");
