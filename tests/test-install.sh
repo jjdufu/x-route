@@ -82,6 +82,8 @@ XR_SYSBIN="$ROOT/tests/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/de
 for c in "ip6tables -X XR_FWD6" "ip6tables -t nat -X XR_NAT6" "iptables -X XR_FWD" "ip -6 route flush table 233" "ip route flush table 233" "ip route flush table 97 dev xr0"; do
   chk 'grep -qx "$c" "$MOCK/calls"'
 done
+# 常驻通知以 android 身份发出，卸载时经 app_process 显式撤销
+chk 'grep -q "app_process -Djava.class.path=$T/live/bin/xrnotify.jar /system/bin --nice-name=xrnotify com.xrouter.notify.Main cancel" "$MOCK/calls"'
 for p in 4800 4801 18800 18900 19100; do chk 'grep -qx "ip -6 rule del pref $p" "$MOCK/calls" && grep -qx "ip rule del pref $p" "$MOCK/calls"'; done
 # 再次卸载：目录已空、工具缺失也不应非 0
 MODDIR="$T/live" sh "$T/live/uninstall.sh"

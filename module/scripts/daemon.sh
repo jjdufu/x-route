@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # XRouter: 独立守护进程。WebUI / ksu.exec 只向这里发命令，不直接拉起 crosvm。
 # 必须以新会话运行，并脱离管理器 cgroup；仅 setsid/nohup 不够。
-# 常驻通知优先用伴生前台服务，cmd notification 只作回退且必须校验是否真的显示。
+# 常驻通知由 LSPosed 式通知进程（app_process，android 身份）发出，见 keepalive.sh。
 # shellcheck disable=SC2034
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
@@ -149,7 +149,7 @@ daemon_loop() {
   trap '_daemon_on_exit' EXIT
   : > "${RUN}/daemon.cmd"
   # 新守护进程重新核对通知（上一个进程留下的状态不可信）
-  rm -f "${RUN}/notify.on" "${RUN}/notify.idle" "${RUN}/notify.last" "${RUN}/notify.ts" "${RUN}/notify.seen" "${RUN}/notify.granted" "${RUN}/apk.failed"
+  rm -f "${RUN}/notify.on" "${RUN}/notify.idle" "${RUN}/notify.last" "${RUN}/notify.ts" "${RUN}/notify.warned"
   echo ready > "${RUN}/daemon.ready"
   log_info daemon "已启动 pid=$$ cgroup=$(cgroup_path $$ 2>/dev/null)"
   while :; do
@@ -166,12 +166,11 @@ daemon_loop() {
     # 大约每分钟把累计流量写一次快照（内容不变不写盘）
     _tick=$(( ${_tick:-0} + 1 ))
     [ $((_tick % 12)) -eq 0 ] && acct_snapshot
-    # 5 秒一轮，但每秒看一眼通知点击和立即刷新请求（只做 [ -f ] 判断，不调外部命令）
+    # 5 秒一轮，但每秒看一眼立即刷新请求（只做 [ -f ] 判断，不调外部命令）
     _dl=0
     while [ "$_dl" -lt 5 ]; do
       sleep 1
       _dl=$((_dl + 1))
-      open_req_pending && open_webui
       [ -f "${RUN}/notify.force" ] && notify_update
     done
   done

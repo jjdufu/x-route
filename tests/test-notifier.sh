@@ -30,6 +30,8 @@ chk 'grep -q "com.sukisu.ultra" "$N"'
 # 进程与守护进程的约定：notify.req / notify.ack / cancel
 M="$S/Main.java"
 chk 'grep -q "systemMain" "$M" && grep -q "\"notify.req\"" "$M" && grep -q "\"notify.ack\"" "$M"'
+chk 'grep -q "notify.req" "$ROOT/module/scripts/keepalive.sh" && grep -q "notify.ack" "$ROOT/module/scripts/keepalive.sh"'
+chk 'grep -q "com.xrouter.notify.Main" "$ROOT/module/scripts/keepalive.sh" && grep -q "bin/xrnotify.jar" "$ROOT/module/scripts/keepalive.sh"'
 
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   mkdir -p "$T/src/com/xrouter/notify"

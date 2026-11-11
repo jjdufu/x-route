@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "app_process $*" >> "$MOCK/calls"

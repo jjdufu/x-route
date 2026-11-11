@@ -1,23 +1,45 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
-# XRouter: 保活辅助（cgroup 脱离、通知校验与回退、异常退出撤路由、电池白名单）
+# XRouter: 保活辅助（cgroup 脱离、异常退出撤路由、LSPosed 式常驻通知进程）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
-cleanup() { rm -rf "$T"; }
+cleanup() {
+  _np="$(cat "$T/data/run/notifier.pid" 2>/dev/null)"; [ -n "$_np" ] && kill "$_np" 2>/dev/null
+  rm -rf "$T"
+}
 trap cleanup EXIT
 
 mkdir -p "$T/bin" "$T/cg/system" "$T/proc/1234" "$T/sysnet/xr0"
 export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" \
   XR_CGROUP_ROOT="$T/cg" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
 cp -a "$ROOT/module/." "$T/mod/"
-# 假外部命令
-printf '#!/bin/sh\necho "cmd $*" >> "%s/cmd.log"; case "$*" in\n  "notification post --ongoing"*) echo "usage: notification post"; exit 0 ;;\n  "notification post"*) echo "couldn'\''t find notification after enqueueing"; exit 0 ;;\n  "appops set"*|"netpolicy"*) echo "$*" >> "%s/appops.log" ;;\nesac\nexit 0\n' "$T" "$T" > "$T/bin/cmd"
-printf '#!/bin/sh\necho "dumpsys $*" >> "%s/ds.log"; [ -f "%s/notify.visible" ] && echo XRouter com.xrouter.keepalive; [ "$1" = deviceidle ] && echo "$*" >> "%s/idle.log"\n' "$T" "$T" "$T" > "$T/bin/dumpsys"
-printf '#!/bin/sh\necho "am $*" >> "%s/am.log"; exit 1\n' "$T" > "$T/bin/am"
-printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; exit 1\n' "$T" > "$T/bin/pm"
+# 假外部命令。app_process 模拟通知进程：serve 时按 notify.req 回执 notify.ack，收到 cancel 撤销并退出
+printf '#!/bin/sh\necho "dumpsys $*" >> "%s/ds.log"\n' "$T" > "$T/bin/dumpsys"
+cat > "$T/bin/app_process" <<'APP'
+#!/bin/sh
+echo "app_process $*" >> "$XR_TEST_DIR/app.log"
+last1=""; last2=""
+for a in "$@"; do last2="$last1"; last1="$a"; done
+mode="$last2"; run="$last1"
+[ "$mode" = cancel ] && { echo cancel-once >> "$XR_TEST_DIR/app.log"; exit 0; }
+mkdir -p "$XR_PROC_BASE/$$"; printf 'xrnotify\0' > "$XR_PROC_BASE/$$/cmdline"
+trap 'rm -rf "$XR_PROC_BASE/$$"; exit 0' TERM
+seen=""
+while :; do
+  l="$(cat "$run/notify.req" 2>/dev/null)"
+  if [ -n "$l" ] && [ "$l" != "$seen" ]; then
+    seen="$l"
+    if [ "$l" = cancel ]; then echo "ok cancel" > "$run/notify.ack"; echo cancelled >> "$XR_TEST_DIR/app.log"; rm -rf "$XR_PROC_BASE/$$"; exit 0; fi
+    if [ -f "$XR_TEST_DIR/notify.fail" ]; then echo "err boom" > "$run/notify.ack"; rm -rf "$XR_PROC_BASE/$$"; exit 1; fi
+    echo "post $l" >> "$XR_TEST_DIR/app.log"; echo "ok $l" > "$run/notify.ack"
+  fi
+  sleep 0.1
+done
+APP
 chmod +x "$T/bin/"*
+export XR_TEST_DIR="$T" XR_APP_PROCESS="$T/bin/app_process" XR_NOTIFY_WAIT=50
 # 假 net.sh：记录 down
 mkdir -p "$T/mod/scripts"
 # keep real keepalive/common; only stub net.sh
@@ -44,21 +66,6 @@ chk '[ "$(cat "$T/proc/1234/oom_score_adj")" = -1000 ]'
 # 脱离后 /proc/cgroup 若已变到根，则不再视为 apps
 echo "0::/" > "$T/proc/1234/cgroup"
 chk '! cgroup_in_apps 1234'
-
-# 2. 通知：--ongoing 与普通 post 都可能 exit 0 但实际失败，必须走回退且不得当成成功
-chk 'notify_cmd_failed "usage: notification post [flags]" 0'
-chk 'notify_cmd_failed "couldn'\''t find notification after enqueueing" 0'
-chk 'notify_cmd_failed "Error: unknown option" 0'
-chk '! notify_cmd_failed "" 0'
-chk '! notify_visible'
-chk '! notify_cmd_post'
-chk 'grep -q "notification post" "$T/cmd.log"'
-# 没有 APK 时 notify_apk_start 失败
-chk '! notify_apk_start && grep -q "pm path" "$T/pm.log"'
-# dumpsys 能看见时，cmd 成功路径才算发出
-: > "$T/notify.visible"
-# 但 cmd 输出仍是失败文案，仍应拒绝
-chk '! notify_cmd_post'
 
 # 3. 异常退出时立刻撤路由（虚拟机不在）
 # vm_running 未定义时 emergency_teardown 应 down
@@ -87,12 +94,6 @@ chk '! stale_gateway'
 unset -f vm_running
 rm -f "$RUN/net.gw"
 chk '! stale_gateway'
-
-# 6. 电池优化 / Doze 白名单
-doze_whitelist com.xrouter.keepalive
-chk 'grep -q "whitelist +com.xrouter.keepalive" "$T/idle.log"'
-chk 'grep -q "RUN_IN_BACKGROUND allow" "$T/appops.log"'
-chk 'grep -q "RUN_ANY_IN_BACKGROUND allow" "$T/appops.log"'
 
 # 7. 模拟管理器被划掉：父进程组被杀后，写到根 cgroup 的子进程标记仍在
 # （本测试不真的 kill -PGID，只验证 escape 目标不是 apps 路径）
@@ -123,81 +124,91 @@ rm -f "$RUN/net.gw" "$RUN/crosvm.pid"
 # 看门狗脚本必须引入 vm.sh
 chk 'grep -q "scripts/vm.sh" "$T/mod/scripts/watchdog.sh"'
 
-# 9. 保活应用经标准输入流式安装（system_server 读不到 /data/adb 路径）
-printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path "*) exit 1 ;; *"-S "*) cat >/dev/null; echo Success ;; esac; exit 1\n' "$T" > "$T/bin/pm"
-chmod +x "$T/bin/pm"
-mkdir -p "$T/mod/apk"; echo apk > "$T/mod/apk/keepalive.apk"
-: > "$T/pm.log"
-chk 'install_keepalive_apk'
-chk 'grep -q "install -r -g -S 4" "$T/pm.log"'
-
-# 10. 伴生应用版本：已装版本低于模块自带版本时要覆盖升级
-echo 2 > "$T/mod/apk/keepalive.ver"
-printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path "*) exit 0 ;; "list packages"*) echo "package:com.xrouter.keepalive versionCode:$(cat "%s/apkver")" ;; esac; exit 0\n' "$T" "$T" > "$T/bin/pm"
-chmod +x "$T/bin/pm"
-echo 1 > "$T/apkver"; chk '! apk_current'
-echo 2 > "$T/apkver"; chk 'apk_current'
-echo 3 > "$T/apkver"; chk 'apk_current'
-
-# 11. 累计流量推送：负载、显式组件与 extras
+# 9. 通知负载
 acct_total() { cat "$T/traffic"; }
 echo "100 200 30 40" > "$T/traffic"
 echo stable > "$RUN/state"
 chk '[ "$(XR_NOTIFY_TRAFFIC=wan notify_payload)" = "运行中 wan 100 200 30 40" ]'
 chk '[ "$(XR_NOTIFY_TRAFFIC=bogus notify_payload)" = "运行中 total 100 200 30 40" ]'
-printf '#!/bin/sh\necho "am $*" >> "%s/am.log"; [ -f "%s/am.err" ] && echo "Error: boom"; exit 0\n' "$T" "$T" > "$T/bin/am"
-chmod +x "$T/bin/am"
-: > "$T/am.log"
-chk 'notify_apk_push "运行中 lan 1 2 3 5000000000"'
-chk 'grep -qx "am start-foreground-service -n com.xrouter.keepalive/.KeepAliveService --es state 运行中 --es mode lan --el wan_up 1 --el wan_dn 2 --el lan_up 3 --el lan_dn 5000000000" "$T/am.log"'
-: > "$T/am.err"; chk '! notify_apk_push "运行中 total 0 0 0 0"'; rm -f "$T/am.err"
 
-# 12. notify_update：节流、内容不变不推、息屏暂停、force 立即刷新、停机只撤一次
+# 10. 通知进程：经 app_process 以 lspd 同样的方式拉起，回执 ok 才算发出
+chk '[ "$XR_NOTIFIER_JAR" = "$T/mod/bin/xrnotify.jar" ] && [ -s "$XR_NOTIFIER_JAR" ]'
+chk '! notifier_running'
+: > "$T/app.log"
+chk 'notifier_post "运行中 lan 1 2 3 5000000000"'
+chk 'grep -qx "app_process -Djava.class.path=$T/mod/bin/xrnotify.jar /system/bin --nice-name=xrnotify com.xrouter.notify.Main serve $RUN" "$T/app.log"'
+chk 'grep -qx "post 运行中 lan 1 2 3 5000000000" "$T/app.log"'
+chk 'notifier_running'
+np="$(cat "$RUN/notifier.pid")"
+# 已在跑时不重复拉起
+chk 'notifier_post "运行中 lan 1 2 3 5000000001"'
+chk '[ "$(cat "$RUN/notifier.pid")" = "$np" ] && [ "$(grep -c "Main serve" "$T/app.log")" = 1 ]'
+# cgroup 脱离覆盖通知进程
+chk 'grep -q "notifier.pid" "$T/mod/scripts/keepalive.sh"'
+
+# 11. notify_update：节流、内容不变不推、息屏暂停、force 立即刷新
+rm -f "$RUN"/notify.on "$RUN"/notify.last "$RUN"/notify.ts; : > "$T/app.log"
 mkdir -p "$T/proc/4321"; printf 'crosvm\0run\0' > "$T/proc/4321/cmdline"; echo 4321 > "$RUN/crosvm.pid"
-: > "$T/notify.visible"
-rm -f "$RUN"/notify.*; : > "$T/am.log"; : > "$T/ds.log"
 export XR_SCREEN=on
+posts() { grep -c "^post " "$T/app.log"; }
 chk 'notify_update'
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ] && [ -f "$RUN/notify.on" ]'
-chk 'grep -q "POST_NOTIFICATIONS" "$T/pm.log" && grep -q "POST_NOTIFICATION allow" "$T/appops.log"'
+chk '[ "$(posts)" = 1 ] && [ -f "$RUN/notify.on" ] && grep -qx "post 运行中 total 100 200 30 40" "$T/app.log"'
 echo "101 200 30 40" > "$T/traffic"
 notify_update   # 10 秒内：不推
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+chk '[ "$(posts)" = 1 ]'
 echo 0 > "$RUN/notify.ts"; echo "100 200 30 40" > "$T/traffic"
 notify_update   # 到点但内容没变：不推
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+chk '[ "$(posts)" = 1 ]'
 echo 0 > "$RUN/notify.ts"; echo "999 200 30 40" > "$T/traffic"
 XR_SCREEN=off notify_update   # 息屏：暂停
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+chk '[ "$(posts)" = 1 ]'
 echo 0 > "$RUN/notify.ts"
 notify_update   # 亮屏且变化：推送
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 2 ] && grep -q "wan_up 999" "$T/am.log"'
+chk '[ "$(posts)" = 2 ] && grep -qx "post 运行中 total 999 200 30 40" "$T/app.log"'
 : > "$RUN/notify.force"; XR_NOTIFY_TRAFFIC=lan XR_SCREEN=off notify_update   # 改设置：立即刷新，即使息屏
-chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 3 ] && grep -q "mode lan" "$T/am.log" && [ ! -f "$RUN/notify.force" ]'
-chk '[ "$(grep -c "dumpsys notification" "$T/ds.log")" = 1 ]'
-rm -rf "$T/proc/4321"; : > "$T/am.log"
+chk '[ "$(posts)" = 3 ] && grep -qx "post 运行中 lan 999 200 30 40" "$T/app.log" && [ ! -f "$RUN/notify.force" ]'
+# 不再依赖 dumpsys notification 校验
+chk '! grep -q "dumpsys notification" "$T/ds.log" 2>/dev/null'
+
+# 12. 通知进程意外退出：下一轮重新拉起并重发（即使内容没变）
+kill "$(cat "$RUN/notifier.pid")"; sleep 1
+chk '! notifier_running'
+notify_update
+chk 'notifier_running && [ "$(cat "$RUN/notifier.pid")" != "$np" ] && [ "$(grep -c "Main serve" "$T/app.log")" = 1 ] && [ "$(posts)" = 4 ]'
+
+# 13. 发送失败：只记一次日志，返回失败
+kill "$(cat "$RUN/notifier.pid")"; sleep 1
+: > "$T/notify.fail"; : > "$LOG"
+: > "$RUN/notify.force"
+chk '! notify_update'
+: > "$RUN/notify.force"; notify_update
+chk '[ "$(grep -c "常驻通知发送失败：err boom" "$LOG")" = 1 ] && [ ! -f "$RUN/notify.on" ]'
+rm -f "$T/notify.fail"
+: > "$RUN/notify.force"
+chk 'notify_update && [ -f "$RUN/notify.on" ] && [ ! -f "$RUN/notify.warned" ]'
+
+# 14. 虚拟机停了：让通知进程撤掉并退出，只撤一次
+rm -rf "$T/proc/4321"; : > "$T/app.log"
 notify_update; notify_update
-chk '[ "$(grep -c stopservice "$T/am.log")" = 1 ] && [ ! -f "$RUN/notify.on" ]'
+chk '[ "$(grep -c "^cancelled" "$T/app.log")" = 1 ] && ! grep -q cancel-once "$T/app.log"'
+chk '! notifier_running && [ ! -f "$RUN/notify.on" ] && [ ! -f "$RUN/notifier.pid" ]'
+
+# 15. 通知进程不在时撤销：一次性拉起 cancel（清掉崩溃后留下的通知）
+: > "$T/app.log"
+notify_cancel
+chk 'grep -qx "app_process -Djava.class.path=$T/mod/bin/xrnotify.jar /system/bin --nice-name=xrnotify com.xrouter.notify.Main cancel $RUN" "$T/app.log"'
+chk 'grep -qx cancel-once "$T/app.log"'
+
+# 16. 缺少 jar：拉不起，返回失败
+mv "$XR_NOTIFIER_JAR" "$T/jar.bak"
+chk '! notifier_start'
+mv "$T/jar.bak" "$XR_NOTIFIER_JAR"
 unset XR_SCREEN
 unset -f acct_total
 
-# 13. 通知点击：root 打开管理器的 WebUIActivity（未导出，普通应用打不开）
-export XR_KEEPALIVE_DIR="$T/kadir"; mkdir -p "$XR_KEEPALIVE_DIR"
-printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path com.sukisu.ultra") exit 0 ;; "path "*) exit 1 ;; esac; exit 0\n' "$T" > "$T/bin/pm"
-chmod +x "$T/bin/pm"
-chk '! open_req_pending'
-echo 1 > "$XR_KEEPALIVE_DIR/open.req"
-chk 'open_req_pending'
-: > "$T/am.log"
-chk 'open_webui'
-chk 'grep -qx "am start -n com.sukisu.ultra/com.sukisu.ultra.ui.webui.WebUIActivity -d ksu://webui?id=xrouter --es id xrouter --es name XRouter" "$T/am.log"'
-chk '! open_req_pending'
-# 活动类不存在时依次回退，最后打开管理器首页
-: > "$T/am.err"; : > "$T/am.log"
-open_webui
-chk 'grep -q "me.weishu.kernelsu.ui.webui.WebUIActivity" "$T/am.log" && grep -q "category.LAUNCHER -p com.sukisu.ultra" "$T/am.log"'
-rm -f "$T/am.err"
-chk 'grep -q "open_req_pending && open_webui" "$T/mod/scripts/daemon.sh"'
+# 17. 伴生 APK 及其回退已彻底移除
+chk '! grep -rqE "keepalive\.apk|com\.xrouter\.keepalive|KeepAliveService|open\.req|cmd notification|pm install|doze_whitelist" "$ROOT/module"'
+
 
 [ "$fail" = 0 ] && echo "test-keepalive OK"
 exit "$fail"

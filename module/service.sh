@@ -17,7 +17,6 @@ load_config
 if [ -f "${MODDIR}/scripts/daemon.sh" ]; then
   # shellcheck disable=SC1091
   . "${MODDIR}/scripts/daemon.sh"
-  doze_whitelist
   ensure_daemon || log_err service "守护进程未能启动"
   ensure_watchdog || log_err service "看门狗未能启动"
 fi
