@@ -43,7 +43,7 @@ chk 'grep -qx -- "-i xr0 -j XR_ACCT" "$MOCK/hook.INPUT" && grep -qx -- "-o xr0 -
 chk 'grep -qx -- "-i xr0 -j XR_ACCT6" "$MOCK/hook6.INPUT" && grep -qx -- "-o xr0 -j XR_ACCT6" "$MOCK/hook6.OUTPUT"'
 # 只计数：统计链里只有 RETURN，不改包、不用 mangle
 chk '! grep -h -v -- "-j RETURN$" "$MOCK/chain.XR_ACCT_UP" "$MOCK/chain.XR_ACCT_DN" | grep -q .'
-chk '! grep -q -- "-t mangle" "$MOCK/calls"'
+chk '! grep -v "XR_MSS" "$MOCK/calls" | grep -q -- "-t mangle"'   # 统计不用 mangle（XR_MSS 是网络层的 MSS 钳制，不属于统计）
 
 # 2. 读数：公网 / 内网 / IPv6 汇总；超过 32 位也不溢出
 setcnt XR_ACCT_UP 1000 5000000000; setcnt XR_ACCT_DN 2000 9000000000
