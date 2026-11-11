@@ -277,6 +277,27 @@ bg_run() {
   echo '{"ok":true}'
 }
 
+# 立即卸载（WebUI「设置 → 立即卸载」）：不等重启，当场把模块从管理器列表里去掉。
+# - 先写 remove 标记兜底：万一下面的删除没做完，下次开机由管理器删除；
+# - 脱离会话的后台进程（WebUI 随模块目录一起消失也不影响它）：等 1 秒让本次调用先返回，
+#   跑模块自带 uninstall.sh（停虚拟机、拆网络、撤通知、删 /data/adb/xrouter），再删模块目录和待更新目录；
+# - 模块没有 system/、system.prop、sepolicy.rule、post-fs-data.sh，且带 skip_mount，没有需要重启才能撤下的挂载；
+# - 安全：只有模块目录名与 module.prop 的 id 一致时才删模块目录（开发树里运行不会删源码）。
+uninstall_now() {
+  [ "${1:-}" = confirm ] || { echo '{"ok":false,"error":"需要确认"}'; return 2; }
+  _id="$(sed -n 's/^id=//p' "${MODDIR}/module.prop" 2>/dev/null | head -1)"
+  { [ -n "${_id}" ] && [ "${MODDIR##*/}" = "${_id}" ]; } || { echo '{"ok":false,"error":"模块目录异常"}'; return 1; }
+  [ -f "${MODDIR}/uninstall.sh" ] || { echo '{"ok":false,"error":"缺少 uninstall.sh"}'; return 1; }
+  log_info xr "WebUI 请求立即卸载"
+  : > "${MODDIR}/remove"
+  _upd="${XR_MODULES_UPDATE:-/data/adb/modules_update}/${_id}"
+  _ss=""; command -v setsid >/dev/null 2>&1 && _ss=setsid
+  # shellcheck disable=SC2016
+  ${_ss} sh -c 'sleep 1; sh "$1/uninstall.sh"; rm -rf "$1" "$2"; sync' \
+    xr-uninstall "${MODDIR}" "${_upd}" </dev/null >/dev/null 2>&1 &
+  echo '{"ok":true}'
+}
+
 cmd="$1"; [ $# -gt 0 ] && shift
 case "$cmd" in
   start)       vm_start ;;
@@ -310,5 +331,6 @@ case "$cmd" in
   ls)          list_dir "${1:-}" "${2:-dir}" ;;
   log-export)  log_export ;;
   diag-export) diag_export ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export"; exit 2 ;;
+  uninstall-now) uninstall_now "${1:-}" ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"; exit 2 ;;
 esac

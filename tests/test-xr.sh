@@ -166,6 +166,18 @@ chk '[ "$(sed -n "/^if \[ \"\${1:-}\" = boot-tail \]/,/^fi/p" "$ROOT/module/scri
 chk '[ "$(grep -n "= boot-tail \]" "$ROOT/module/scripts/xr" | cut -d: -f1)" -lt "$(grep -n "scripts/common.sh\"$" "$ROOT/module/scripts/xr" | head -1 | cut -d: -f1)" ]'
 # xr set 不在前台跑规则重建（WebUI 点击路径上不等 net.sh sync）
 chk 'sed -n "/^after_set()/,/^}/p" "$ROOT/module/scripts/xr" | grep -q "net.sh\" sync </dev/null >/dev/null 2>&1 &$"'
+# 立即卸载：必须带 confirm；模块目录名与 id 不符时拒绝（开发树里不会删源码）；
+# 正常时立即返回，脱离会话的后台进程跑 uninstall.sh 再删模块目录与待更新目录
+out="$($XR uninstall-now)"; chk '[ $? -eq 2 ] && [ -d "$T/mod/scripts" ]'
+out="$($XR uninstall-now confirm)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "模块目录异常" && [ -d "$T/mod/scripts" ] && [ ! -e "$T/mod/remove" ]'
+mkdir -p "$T/mods" "$T/upd/xrouter"; cp -a "$T/mod" "$T/mods/xrouter"
+printf '#!/bin/sh
+echo "ran ${0%%/*}" > "%s/uninst.ran"
+' "$T" > "$T/mods/xrouter/uninstall.sh"
+t0=$(date +%s); out="$(MODDIR="$T/mods/xrouter" XR_MODULES_UPDATE="$T/upd" sh "$T/mods/xrouter/scripts/xr" uninstall-now confirm)"; t1=$(date +%s)
+chk '[ "$out" = "{\"ok\":true}" ] && [ $((t1 - t0)) -le 1 ] && [ -f "$T/mods/xrouter/remove" ]'
+i=0; while [ -d "$T/mods/xrouter" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); done
+chk '[ ! -e "$T/mods/xrouter" ] && [ ! -e "$T/upd/xrouter" ] && grep -qx "ran $T/mods/xrouter" "$T/uninst.ran"'
 # 用法错误
 out="$($XR bogus)"; chk '[ $? -eq 2 ]'
 out="$($XR expand abc)"; chk '[ $? -eq 2 ]'

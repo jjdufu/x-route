@@ -41,6 +41,7 @@ let boot = null;         // 启动日志跟随状态
 let ipv6Busy = false;
 let page = 0;
 let timer = null;
+let gone = false;         // 已请求立即卸载：停止一切轮询
 
 export function icon(el) {
   el.textContent = ICONS[el.dataset.icon] || "";
@@ -242,6 +243,7 @@ function render(d) {
 // 状态刷新单飞：同一时刻最多一个 status-json 在途，期间再要求刷新只记一次，结束后补一次
 let refreshing = null; let refreshAgain = false; let soonTimer = 0;
 function refresh() {
+  if (gone) return Promise.resolve();
   if (refreshing) { refreshAgain = true; return refreshing; }
   refreshing = (async () => {
     do { refreshAgain = false; await refreshOnce(); } while (refreshAgain);
@@ -255,6 +257,7 @@ function refreshSoon(ms = 1200) {
 async function refreshOnce() {
   const t0 = Date.now();
   const r = await xr("status-json");
+  if (gone) return;
   let d = null;
   try { d = JSON.parse(r.stdout); } catch { d = null; }
   if (!d) {
@@ -270,6 +273,7 @@ async function refreshOnce() {
 
 function schedule() {
   clearTimeout(timer);
+  if (gone) return;
   const v = status ? vmView(status, pending) : { phase: "stopped" };
   const fast = v.phase === "stopping";
   timer = setTimeout(async () => {
@@ -474,9 +478,29 @@ async function resetDisk() {
   await refresh();
 }
 
+// ---- 立即卸载：先换成静态「已卸载」页（停掉轮询、开机日志与电流动画），再让手机侧脱离会话去删 ----
+async function uninstallNow() {
+  if (!await confirmDlg("立即卸载 XRouter",
+    "将停止虚拟机并删除全部数据：OpenWrt 系统盘、设置、VPN 配置与日志，模块随即从管理器列表中消失，无需重启。已导出到 Download 的日志 / 诊断包会保留。此操作不可撤销。",
+    "卸载", true)) return;
+  gone = true;
+  clearTimeout(timer); clearTimeout(soonTimer);
+  if (boot) { cancelAnimationFrame(boot.raf); boot = null; }
+  document.querySelector(".shell").remove();
+  $("gone").hidden = false;
+  const r = await xr("uninstall-now", "confirm");
+  if (r.errno !== 0) {
+    const e = (lastJson(r.stdout) || {}).error;
+    $("gone-text").textContent = `卸载请求失败${e ? `（${e}）` : ""}，请到管理器的模块列表中卸载。`;
+    $("gone").classList.add("bad");
+    setIcon(document.querySelector("#gone md-icon"), "error");
+  }
+}
+
 // ---- 累计流量：只在设置页可见时读取 ----
 async function loadTraffic() {
   const r = await xr("traffic");
+  if (gone) return;
   $("v-traffic").textContent = trafficLine(lastJson(r.stdout), "total");
 }
 async function resetTraffic() {
@@ -585,9 +609,10 @@ function bind() {
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
   $("btn-traffic-reset").addEventListener("click", resetTraffic);
+  $("btn-uninstall").addEventListener("click", uninstallNow);
   document.addEventListener("visibilitychange", () => {
     document.documentElement.classList.toggle("hid", document.hidden);   // 不可见时暂停电流动画
-    if (!document.hidden && !boot) { refresh(); schedule(); }
+    if (!document.hidden && !boot && !gone) { refresh(); schedule(); }
   });
 }
 

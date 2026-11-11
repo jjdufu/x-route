@@ -132,8 +132,21 @@
             <md-outlined-button id="btn-reset" class="danger"><md-icon slot="icon" data-icon="restart_alt"></md-icon>重置</md-outlined-button>
           </div>
         </div>
+
+        <div class="group-title">模块</div>
+        <div class="card list">
+          <div class="item"><md-icon data-icon="delete_sweep"></md-icon><span class="grow">卸载 XRouter<span class="sub">删除全部数据，无需重启</span></span>
+            <md-outlined-button id="btn-uninstall" class="danger">立即卸载</md-outlined-button></div>
+        </div>
       </section>
     </main>
+  </div>
+
+  <!-- 卸载后的静态页：模块目录随后被删除，页面不再有任何轮询或动画 -->
+  <div id="gone" class="gone" hidden>
+    <md-icon data-icon="check_circle"></md-icon>
+    <div class="gone-title">已卸载</div>
+    <div id="gone-text" class="gone-text">XRouter 正在后台清理并从模块列表移除，无需重启。可以关闭此页面。</div>
   </div>
 
   <!-- 确认 -->

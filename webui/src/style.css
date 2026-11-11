@@ -263,3 +263,12 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .hint { font-size: 12px; line-height: 1.5; color: var(--md-sys-color-on-surface-variant); }
 .hint.bad { color: var(--md-sys-color-error); }
 .hint:empty { display: none; }
+
+/* 立即卸载后的静态页：无动画、无轮询 */
+.gone { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 24px; text-align: center; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); }
+.gone[hidden] { display: none; }
+.gone md-icon { --md-icon-size: 56px; color: var(--xr-ok); }
+.gone-title { font-size: 22px; font-weight: 600; }
+.gone-text { font-size: 14px; color: var(--md-sys-color-on-surface-variant); max-width: 320px; line-height: 1.5; }
+.gone.bad md-icon { color: var(--xr-bad); }

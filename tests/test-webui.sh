@@ -35,7 +35,7 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh) && !xrsh.includes(`if [ "\${1:-}" = ${s} ]`)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log-export", "diag-export", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
@@ -89,9 +89,9 @@ eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");
 if (!/XR_EXPOSE="lan"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("管理访问默认应为内网");
 for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(common)) fail(`SET_KEYS 含未知键 ${k}`);
 
-// 确认弹窗只用于：运行模式、停止、重置 / 扩容系统盘、清空日志
+// 确认弹窗只用于：运行模式、停止、重置 / 扩容系统盘、清空日志、立即卸载
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);
-eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清零流量统计", "重置系统盘"].sort(), "确认弹窗范围");
+eq(confirms.sort(), ["切换为${label}", "停止虚拟机", "清零流量统计", "重置系统盘", "立即卸载 XRouter"].sort(), "确认弹窗范围");
 if (!main.includes('dialogResult($("dlg-expand"))')) fail("扩容需确认");
 
 // 纯函数
@@ -175,6 +175,13 @@ eq(L.bootStep(0, 100), L.BOOT_MAX_STEP, "bootStep 最大步");
 eq(L.bootStep(0, 5) > L.BOOT_MIN_STEP && L.bootStep(0, 5) < L.BOOT_MAX_STEP, true, "bootStep 按积压加速");
 eq(L.bootStep(0, 1000, 16), 1000 - 16, "bootStep 积压过多直接跳到末尾一屏");
 eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
+// 立即卸载：危险样式 + 确认；先换静态「已卸载」页（删掉主界面、停轮询与开机日志），再请求手机侧删除
+if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" hidden/.test(html)) fail("设置页应有立即卸载按钮与静态已卸载页");
+{ const u = main.slice(main.indexOf("async function uninstallNow"), main.indexOf("// ---- 累计流量"));
+  const iC = u.indexOf("confirmDlg("), iR = u.indexOf('.shell").remove()'), iX = u.indexOf('await xr("uninstall-now", "confirm")');
+  if (iC < 0 || iR < 0 || iX < 0 || !(iC < iR && iR < iX) || !/Download/.test(u) || !/, true\)\) return;/.test(u)) fail("卸载应先确认、再换静态页、最后请求删除");
+  if (!/gone = true;/.test(u) || !/if \(gone\) return Promise\.resolve\(\);/.test(main) || !/clearTimeout\(timer\);\n  if \(gone\) return;/.test(main)) fail("卸载后应停止一切轮询"); }
+if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
 // 启动中：电源按钮整个隐藏、没有转圈。舞台三态：未启动红色断电电路板（静态）、开机中只有日志、运行中绿色电路板 + 电流
 if (!/\.starting\.power-wrap \{ display: none; \}/.test(css)) fail("启动中应隐藏电源按钮");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
