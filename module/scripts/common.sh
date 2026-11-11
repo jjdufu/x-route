@@ -35,6 +35,7 @@ rotate_file() {
 
 rotate_all_logs() {
   rotate_file "${LOG}" mv
+  rotate_debug
   rotate_file "${XR_DATA}/log/vmm.log"
   rotate_file "${RUN}/console.log"
   rotate_file "${RUN}/vm-ctl.log"
@@ -50,7 +51,7 @@ ROOTFS="${IMG}/openwrt-rootfs.img"
 FUSE="${XR_DATA}/config/vm_booting.fuse"
 TRIPPED="${XR_DATA}/config/tripped"
 LAST_GOOD="${XR_DATA}/config/last_good"
-KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC XR_NOTIFY_TRAFFIC"
+KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS XR_EXPOSE XR_MODE VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_DISK_SIZE_MB VM_WAKELOCK VM_SHARE VM_SHARE_MODE VM_SHARE_PATH AUTOSTART AUTOSTART_DELAY_SEC READY_TIMEOUT_SEC STABLE_SEC XR_NOTIFY_TRAFFIC XR_DEBUG XR_DEBUG_HOURS"
 # 影响 VM 稳定性的键：只要这些键变化，last_good 就失效
 HASH_KEYS="XR_NET_PREFIX VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE"
 # rw 共享的属主映射参数（crosvm --shared-dir 选项）。需先在真机上确认 crosvm 支持的写法（见 docs/TESTING.md 第 0 节）；
@@ -68,6 +69,66 @@ log_msg() { # $1=级别 $2=模块 $3...=消息
 }
 log_info() { log_msg INFO "$@"; }
 log_err()  { log_msg ERROR "$@"; }
+
+# ---- 调试模式（XR_DEBUG=1）：超详细日志单独写 log/debug.log，2MB 轮转一次（上限约 4MB）----
+# 开关随配置即时生效：各常驻循环每轮重新读取配置，不需要重启虚拟机。
+# 到期时间（XR_DEBUG_HOURS，0 表示不自动关闭）记在 config/debug.until，由守护进程检查并自动关闭。
+DLOG="${XR_DATA}/log/debug.log"
+DEBUG_UNTIL="${XR_DATA}/config/debug.until"
+SYSBIN="${XR_SYSBIN:-/system/bin}"
+dbg_on() { [ "${XR_DEBUG:-0}" = 1 ]; }
+rotate_debug() {
+  [ -f "${DLOG}" ] || return 0
+  _dsz="$(stat -c %s "${DLOG}" 2>/dev/null || echo 0)"
+  [ "$_dsz" -gt 2097152 ] && mv -f "${DLOG}" "${DLOG}.1"
+  return 0
+}
+dlog() { # $1=模块 $2...=消息；仅调试模式写入
+  dbg_on || return 0
+  _dm="$1"; shift
+  mkdir -p "${XR_DATA}/log"
+  echo "$(date '+%F %T') [$$] [${_dm}] $*" >> "${DLOG}"
+}
+# 是否是会改动系统状态的命令（只读查询成功时不记，失败一律记）
+_dbg_mut() {
+  for _da in "$@"; do
+    case "$_da" in
+      add|del|delete|replace|flush|set|change|append|prepend|-A|-I|-D|-F|-N|-X|-R|-P|-Z|enable|disable|remove|put) return 0 ;;
+    esac
+  done
+  return 1
+}
+# 执行系统网络命令：调试模式记下命令、返回值和错误输出（错误输出照常交给调用方）
+xr_exec() {
+  dbg_on || { "$@"; return $?; }
+  _def="$(mktemp "${RUN}/.dbg.XXXXXX" 2>/dev/null || echo "${RUN}/.dbg.$$")"
+  "$@" 2>"$_def"; _drc=$?
+  _de="$(head -c 600 "$_def" 2>/dev/null | tr '\n' ' ')"; rm -f "$_def"
+  if [ "$_drc" != 0 ] || [ -n "$_de" ] || _dbg_mut "$@"; then
+    dlog cmd "rc=${_drc} $(echo "$*" | sed "s#${SYSBIN}/##")${_de:+ | stderr: ${_de}}"
+  fi
+  [ -n "$_de" ] && printf '%s\n' "$_de" >&2
+  return "$_drc"
+}
+# 到期自动关闭（守护进程定期调用）
+debug_expire() {
+  dbg_on || return 0
+  _du="$(cat "${DEBUG_UNTIL}" 2>/dev/null)"
+  case "$_du" in ''|*[!0-9]*|0) return 0 ;; esac
+  [ "$(date +%s)" -ge "$_du" ] || return 0
+  set_kv XR_DEBUG 0 && rm -f "${DEBUG_UNTIL}"
+  XR_DEBUG=0
+  log_info debug "调试模式已到期，自动关闭"
+}
+# 按当前设置重算到期时间
+debug_arm() {
+  load_config
+  if [ "${XR_DEBUG:-0}" = 1 ] && [ "${XR_DEBUG_HOURS:-0}" != 0 ]; then
+    echo $(( $(date +%s) + XR_DEBUG_HOURS * 3600 )) > "${DEBUG_UNTIL}"
+  else
+    rm -f "${DEBUG_UNTIL}"
+  fi
+}
 
 is_uint()  { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le 6 ]; }
 in_range() { is_uint "$1" && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
@@ -225,6 +286,10 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
       in_range "$2" 60 900 ;;
     XR_NOTIFY_TRAFFIC)
       case "$2" in total|wan|lan) ;; *) return 1;; esac ;;
+    XR_DEBUG)
+      case "$2" in 0|1) ;; *) return 1;; esac ;;
+    XR_DEBUG_HOURS)
+      case "$2" in 0|1|6|24|72) ;; *) return 1;; esac ;;
     *) return 1 ;;
   esac
 }

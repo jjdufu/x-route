@@ -7,6 +7,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/keepalive.sh"
 . "${MODDIR}/scripts/traffic.sh"
+. "${MODDIR}/scripts/diag.sh"
 
 daemon_pid() { cat "${RUN}/daemon.pid" 2>/dev/null; }
 
@@ -165,7 +166,10 @@ daemon_loop() {
     notify_update; rotate_all_logs
     # 大约每分钟把累计流量写一次快照（内容不变不写盘）
     _tick=$(( ${_tick:-0} + 1 ))
-    [ $((_tick % 12)) -eq 0 ] && acct_snapshot
+    if [ $((_tick % 12)) -eq 0 ]; then
+      acct_snapshot
+      load_config; debug_expire   # 调试模式到期自动关闭
+    fi
     # 5 秒一轮，但每秒看一眼立即刷新请求（只做 [ -f ] 判断，不调外部命令）
     _dl=0
     while [ "$_dl" -lt 5 ]; do

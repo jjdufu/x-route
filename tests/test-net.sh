@@ -188,4 +188,13 @@ chk 'grep -q "^ip -6 rule del pref 19100" "$MOCK/calls" && grep -q "^ip -6 route
 chk '[ ! -f "$MOCK/fwd6_hook" ] && [ ! -f "$MOCK/XR_FWD6" ] && [ ! -f "$RUN/net.v6proxy" ]'
 chk 'grep -q "^ndc network route remove local xr0 fd7a:7872:e9::/64" "$MOCK/calls"'
 
+# 调试模式：命令、返回值、错误输出与判断依据写入 debug.log；关闭时不写
+rm -f "$XR_DATA/log/debug.log"; : > "$MOCK/calls"; $NET up; $NET down
+chk '[ ! -f "$XR_DATA/log/debug.log" ]'
+set_kv XR_DEBUG 1; : > "$MOCK/calls"; $NET up
+chk 'grep -q "\[cmd\] rc=0 ip addr add 172.29.233.1/24 dev xr0" "$XR_DATA/log/debug.log"'
+chk 'grep -q "\[net\] 同步：上游=rmnet_data2" "$XR_DATA/log/debug.log" && grep -q "接管=block（模式=global" "$XR_DATA/log/debug.log"'
+chk 'grep -q "IPv6 拦截：" "$XR_DATA/log/debug.log" && grep -q "\[sysctl\] rc=" "$XR_DATA/log/debug.log"'
+$NET down; set_kv XR_DEBUG 0
+
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

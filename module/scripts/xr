@@ -10,6 +10,7 @@ ensure_dirs
 . "${MODDIR}/scripts/vm.sh"   # vm.sh 只定义函数；单独运行时的分发由 [ "${0##*/}" = vm.sh ] 判断
 . "${MODDIR}/scripts/daemon.sh"
 . "${MODDIR}/scripts/traffic.sh"
+. "${MODDIR}/scripts/diag.sh"
 
 RESTART_KEYS="XR_NET_PREFIX XR_VM_MAC XR_DNS VM_CPUS VM_MEM_MB VM_SWIOTLB_MB VM_NET VM_DISK_RW VM_SHARE VM_SHARE_MODE VM_SHARE_PATH"
 
@@ -29,7 +30,17 @@ after_set() {
     XR_EXPOSE|XR_MODE)
       vm_running && [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync ;;
     XR_NOTIFY_TRAFFIC)
-      : > "${RUN}/notify.force" ;;   # 守护进程一秒内按新设置刷新通知，不重启虚拟机
+      : > "${RUN}/notify.force" ;;
+    XR_DEBUG|XR_DEBUG_HOURS)
+      debug_arm   # 常驻循环下一轮（≤10 秒）读到新配置即生效，不重启虚拟机
+      if [ "$1" = XR_DEBUG ]; then
+        if [ "${XR_DEBUG}" = 1 ]; then
+          log_info debug "调试模式已开启（$([ "${XR_DEBUG_HOURS:-0}" = 0 ] && echo 不自动关闭 || echo "${XR_DEBUG_HOURS} 小时后自动关闭")）"
+          diag_snap_bg "调试模式开启"
+        else
+          log_info debug "调试模式已关闭"
+        fi
+      fi ;;   # 守护进程一秒内按新设置刷新通知，不重启虚拟机
     AUTOSTART)
       load_config
       if [ "${AUTOSTART}" = 1 ]; then
@@ -154,8 +165,8 @@ list_dir() {
 
 log_clear() {
   case "$1" in
-    all) for k in module console ctl vmm; do f="$(log_src "$k")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1"; done ;;
-    module|console|ctl|vmm) f="$(log_src "$1")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1" ;;
+    all) for k in module console ctl vmm debug; do f="$(log_src "$k")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1"; done ;;
+    module|console|ctl|vmm|debug) f="$(log_src "$1")"; [ -f "$f" ] && : > "$f"; rm -f "${f}.1" ;;
     *) echo '{"ok":false,"error":"usage"}'; return 2 ;;
   esac
   echo '{"ok":true}'
@@ -167,6 +178,7 @@ log_src() {
     console) echo "${CON_LOG:-${RUN}/console.log}" ;;
     ctl) echo "${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
     vmm) echo "${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
+    debug) echo "${DLOG}" ;;
     *) return 1 ;;
   esac
 }
@@ -177,6 +189,7 @@ log_basename() {
     console) echo console.log ;;
     ctl) echo vm-ctl.log ;;
     vmm) echo vmm.log ;;
+    debug) echo debug.log ;;
   esac
 }
 
@@ -233,7 +246,7 @@ log_export() {
       out="${dest}/xrouter-logs-${ts}.zip"
       ( cd "$tmpd" && make_zip "$out" module.log console.log vm-ctl.log vmm.log ) || { rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; }
       ;;
-    module|console|ctl|vmm)
+    module|console|ctl|vmm|debug)
       bn="$(log_basename "$what")"
       out="${dest}/$(echo "$bn" | sed 's/\.log$//')-${ts}.log"
       copy_log_or_empty "$(log_src "$what")" "$out"
@@ -244,6 +257,37 @@ log_export() {
   printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
 }
 
+
+# ---- 一键诊断导出：当场拍手机与 OpenWrt 快照，附相关系统日志与全部模块日志，统一脱敏后打包到 Download ----
+diag_export() {
+  dest="$(download_dir)"
+  if [ -z "$dest" ] || ! mkdir -p "$dest"; then echo '{"ok":false,"error":"no download dir"}'; return 1; fi
+  ts="$(date '+%Y%m%d-%H%M%S')"
+  tmpd="${RUN}/diag.$$"; rm -rf "$tmpd"; mkdir -p "$tmpd/raw" "$tmpd/out" || { echo '{"ok":false,"error":"tmp"}'; return 1; }
+  {
+    echo "XRouter $(sed -n 's/^version=//p' "${MODDIR}/module.prop") / $(getprop ro.product.model 2>/dev/null) / Android $(getprop ro.build.version.release 2>/dev/null)"
+    echo "导出时间 $(date '+%F %T %z')"
+    status_json
+  } > "$tmpd/raw/summary.txt" 2>&1
+  diag_phone > "$tmpd/raw/phone.txt" 2>&1
+  diag_guest 15 > "$tmpd/raw/openwrt.txt" 2>&1
+  diag_logcat > "$tmpd/raw/logcat.txt" 2>&1
+  dumpsys tethering > "$tmpd/raw/tethering.txt" 2>&1
+  grep -v '^#' "${CONF}" > "$tmpd/raw/config.conf" 2>/dev/null
+  for k in module console ctl vmm debug; do
+    f="$(log_src "$k")"; bn="$(log_basename "$k")"
+    [ -f "${f}.1" ] && cp -f "${f}.1" "$tmpd/raw/${bn}.1"
+    copy_log_or_empty "$f" "$tmpd/raw/${bn}"
+  done
+  [ -f "${RUN}/notifier.log" ] && cp -f "${RUN}/notifier.log" "$tmpd/raw/notifier.log"
+  for f in "$tmpd"/raw/*; do diag_redact < "$f" > "$tmpd/out/${f##*/}"; done
+  out="${dest}/xrouter-diag-${ts}.zip"
+  # shellcheck disable=SC2046
+  ( cd "$tmpd/out" && make_zip "$out" $(ls) ) || { rm -rf "$tmpd"; echo '{"ok":false,"error":"zip"}'; return 1; }
+  rm -rf "$tmpd"
+  log_info xr "已导出诊断包 ${out##*/}"
+  printf '{"ok":true,"path":%s}\n' "$(jstr "$out")"
+}
 
 # ---- WebUI 异步启停 ----
 # 立即返回，真正的 xr start/stop 在脱离会话的子进程里执行，结束后把退出码写到 bg.rc。
@@ -315,15 +359,17 @@ case "$cmd" in
   log-clear)   log_clear "${1:-}" ;;
   log-export)
     log_export "${1:-all}" ;;
+  diag-export) diag_export ;;
   log)
     case "${1:-xr}" in
       console) f="${CON_LOG:-${RUN}/console.log}" ;;
       ctl) f="${CTL_LOG:-${RUN}/vm-ctl.log}" ;;
       vmm) f="${VMM_LOG:-${XR_DATA}/log/vmm.log}" ;;
+      debug) f="${DLOG}" ;;
       xr|module) f="${LOG}" ;;
       *) echo "usage: xr log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm|debug]|diag-export|log [xr|module|console|ctl|vmm|debug] [N]"; exit 2 ;;
 esac

@@ -13,6 +13,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/vpnroutes.sh"
 . "${MODDIR}/scripts/v6.sh"
 . "${MODDIR}/scripts/traffic.sh"
+. "${MODDIR}/scripts/diag.sh"
 load_config
 
 XR_IF=xr0
@@ -21,18 +22,23 @@ NET="${XR_NET_PREFIX}.0/24"
 # KernelSU 以 busybox ash 独立模式运行脚本，裸写 ip 会命中 busybox 的 ip 小程序
 # （不支持 tuntap / 完整 rule 语法），因此 ip/ndc/iptables 一律走系统绝对路径
 SYSBIN="${XR_SYSBIN:-/system/bin}"
-ip()  { "${SYSBIN}/ip" "$@"; }
-ndc() { "${SYSBIN}/ndc" "$@"; }
-IPT="${SYSBIN}/iptables -w"
-IP6T="${SYSBIN}/ip6tables -w"
-ip6() { "${SYSBIN}/ip" -6 "$@"; }
+# 全部经 xr_exec：调试模式下记录命令、返回值与错误输出（平时零开销直通）
+ip()  { xr_exec "${SYSBIN}/ip" "$@"; }
+ndc() { xr_exec "${SYSBIN}/ndc" "$@"; }
+IPT="xr_exec ${SYSBIN}/iptables -w"
+IP6T="xr_exec ${SYSBIN}/ip6tables -w"
+ip6() { xr_exec "${SYSBIN}/ip" -6 "$@"; }
 NET6="${XR_NET6}::/64"
 PROC="${XR_PROC:-/proc}"        # 测试时可指向临时目录
 SYSNET="${XR_SYSNET:-/sys/class/net}"
 
 ndc_ok() { ndc "$@" 2>&1 | grep -q '^200 '; }
 lnt()    { [ "$(cat "${RUN}/net.mode" 2>/dev/null)" = ndc ] && echo local_network || echo 97; }
-sysw()   { { echo "$2" > "$1"; } 2>/dev/null; }
+sysw()   {
+  if { echo "$2" > "$1"; } 2>/dev/null; then _swrc=0; else _swrc=1; fi
+  dlog sysctl "rc=${_swrc} ${1#"${PROC}"/} = $2"
+  return "$_swrc"
+}
 
 # ---- 上游与热点网卡 ----
 upstream_iface() {   # netd 默认网络规则：from all fwmark 0x0/0xffff iif lo lookup <iface>
@@ -169,6 +175,14 @@ gw_want() {
   else echo block; fi
 }
 
+# 调试：全局接管判断依据
+gw_reason() {
+  printf '模式=%s 虚拟机=%s 客侧IPv6=%s 邻居代理=%s' "${XR_MODE:-global}" \
+    "$(vm_alive && cat "${RUN}/state" 2>/dev/null || echo 未运行)" \
+    "$(cat "${RUN}/guest/guest/ipv6" 2>/dev/null || echo 未上报)" \
+    "$([ -f "${RUN}/net.v6proxy" ] && echo 已安装 || echo 未安装)"
+}
+
 copy_dev_routes() {
   dev="$1"
   [ -n "$dev" ] && [ "$dev" != "${XR_IF}" ] || return 0
@@ -253,6 +267,8 @@ sync_all() {
     rules_set ip; rules_set ip6
     echo "$up" > "${RUN}/net.up_if"; echo "$outs" > "${RUN}/net.up_out"
     log_info net "上游 ${old_up:-无} -> ${up:-无}（出口 ${outs:-无}）"
+    dlog net "上游变化：${old_up:-无}(${old_outs:-无}) -> ${up:-无}(${outs:-无})，IPv6 出口 ${outs6:-无}"
+    [ -n "${old_up}" ] && diag_snap_bg "上游变化 ${old_up} -> ${up:-无}"
   fi
   ${IPT} -t nat -F XR_NAT
   for o in $outs; do ${IPT} -t nat -A XR_NAT -s "${NET}" -o "$o" -j MASQUERADE; done
@@ -287,6 +303,8 @@ sync_all() {
   fwd_first
   v6_proxy_sync
   g="$(gw_want)"
+  dlog net "同步：上游=${up:-无} 出口=${outs:-无} IPv6出口=${outs6:-无} 暴露=${ex:-无} 热点=$(tether_ifaces | tr '\n' ' ') 接管=${g}（$(gw_reason)）"
+  case "$g" in block) dlog net "IPv6 拦截：虚拟机 IPv6 $(vm_v6 && echo 已开但邻居代理不可用 || echo 已关闭)，手机与热点的 IPv6 出网被拒绝，应用回落 IPv4" ;; esac
   sync_v6 "$g"
   if [ "$g" = off ]; then gw_remove; else gw_install "$g"; fi
 }
@@ -337,7 +355,10 @@ net_watch() {
        || [ "$want_gw" != "$have_gw" ] || [ "$(upstream_out6 "$up")" != "$(cat "${RUN}/net.up_out6" 2>/dev/null)" ] \
        || [ "$(vm_v6 && echo 1)" != "$(cat "${RUN}/net.v6" 2>/dev/null)" ] \
        || [ "$(v6_src_fingerprint)" != "$(cat "${RUN}/net.v6src" 2>/dev/null)" ] \
-       || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then sync_all; fi
+       || [ "$ck" != "$(cat "${RUN}/vpn.cksum" 2>/dev/null)" ]; then
+      dlog watch "状态变化触发同步：上游 $(cat "${RUN}/net.up_if" 2>/dev/null)->${up} 接管 ${have_gw}->${want_gw} 暴露 [$(cat "${RUN}/net.expose_if" 2>/dev/null)]->[${ex}]"
+      sync_all
+    fi
     fwd_first; nat_first; fwd6_first; nat6_first; acct_hooks
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"

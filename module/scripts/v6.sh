@@ -222,6 +222,7 @@ v6_src_fingerprint() {
 
 # 按当前开关与上游前缀安装或拆除代理（不重启虚拟机）
 v6_proxy_sync() {
+  dlog v6 "邻居代理同步：客侧 IPv6=$(cat "${RUN}/guest/guest/ipv6" 2>/dev/null || echo 未上报) 上游 IPv6 出口=${outs6:-无}"
   if vm_v6; then
     if v6_proxy_install; then
       :

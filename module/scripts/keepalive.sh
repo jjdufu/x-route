@@ -246,6 +246,7 @@ routes_emergency_down() {
 emergency_teardown() {
   _why="${1:-未知原因}"
   log_err daemon "异常退出：${_why}"
+  type diag_snap >/dev/null 2>&1 && diag_snap "异常：${_why}" 3
   if xr_vm_alive; then
     # 虚拟机还在，只记原因，把路由留给仍在跑的 xr0；由看门狗拉起守护进程
     return 0

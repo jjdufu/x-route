@@ -1,6 +1,7 @@
 #!/bin/sh /etc/rc.common
 # XRouter: 挂载主机控制目录（控制通道）：启用 OpenVPN 配置并把实际路由写回主机；
-#          执行 IPv6 开关（host/ipv6.cmd）并上报实际状态（guest/ipv6）。
+#          执行 IPv6 开关（host/ipv6.cmd）并上报实际状态（guest/ipv6）；
+#          按 host/diag.cmd 生成网络快照（guest/diag.txt，已脱敏）。
 # shellcheck disable=SC2034
 START=21
 STOP=15
@@ -63,7 +64,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""; lastwan=""
+  last=""; last6=""; lastwan=""; lastdiag=""
   while :; do
     [ -d "$CTL" ] || exit 0
     cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
@@ -82,6 +83,13 @@ watch() {
       /usr/libexec/xrouter-ipv6 wan
     fi
     /usr/libexec/xrouter-ipv6 state > "${CTL}/guest/ipv6.tmp" && mv -f "${CTL}/guest/ipv6.tmp" "${CTL}/guest/ipv6"
+    # 调试快照：手机侧写 host/diag.cmd="snap <ts>"，这里生成后整体替换 guest/diag.txt（首行回显 ts）
+    dc="$(cat "${CTL}/host/diag.cmd" 2>/dev/null)"
+    if [ -n "$dc" ] && [ "$dc" != "$lastdiag" ]; then
+      lastdiag="$dc"
+      { echo "ts=${dc#snap }"; /usr/libexec/xrouter-diag; } > "${CTL}/guest/diag.tmp" 2>&1
+      mv -f "${CTL}/guest/diag.tmp" "${CTL}/guest/diag.txt"
+    fi
     refresh_routes
     sleep 2
   done

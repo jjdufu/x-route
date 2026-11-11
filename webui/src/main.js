@@ -18,7 +18,7 @@ import { exec, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import { ICONS } from "./icons.js";
 import {
-  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
+  SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
   parseBootTail, newBootBuf, feedBoot, trafficLine,
 } from "./logic.js";
@@ -181,6 +181,8 @@ function render(d) {
   $("v-share-path").textContent = displayPath(cfg.VM_SHARE_PATH);
 
   seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
+  $("sw-debug").selected = cfg.XR_DEBUG === "1";
+  fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
   fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "512");
@@ -365,6 +367,16 @@ async function exportLog(kind) {
   const res = lastJson(r.stdout);
   snack(res && res.ok ? "已保存到 Download" : "导出失败", !(res && res.ok));
 }
+let diagBusy = false;
+async function exportDiag() {
+  if (diagBusy) return;
+  diagBusy = true; $("btn-diag").disabled = true;
+  snack("正在收集诊断信息…");
+  const r = await xr("diag-export");
+  const res = lastJson(r.stdout);
+  diagBusy = false; $("btn-diag").disabled = false;
+  snack(res && res.ok ? "诊断包已保存到 Download" : "导出失败", !(res && res.ok));
+}
 async function clearLog() {
   const label = LOG_KINDS.find((k) => k.value === logKind).label;
   if (!await confirmDlg(`清空${label}日志`, "", "清空", true)) return;
@@ -431,6 +443,9 @@ function bind() {
   bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));
   bindRowSwitch($("row-share"), $("sw-share"), () => setKey("VM_SHARE", $("sw-share").selected ? "1" : "0"));
   bindRowSwitch($("row-ipv6"), $("sw-ipv6"), toggleIpv6);
+  bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
+  $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
+  $("btn-diag").addEventListener("click", exportDiag);
   $("btn-luci").addEventListener("click", () => xr("luci"));
   $("btn-import").addEventListener("click", importVpn);
   $("btn-share-path").addEventListener("click", pickSharePath);

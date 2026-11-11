@@ -22,6 +22,7 @@ watchdog_loop() {
     fi
     if ! daemon_running; then
       log_info watchdog "守护进程不在，重新拉起"
+      load_config; diag_snap_bg "看门狗重新拉起守护进程"
       ensure_daemon
     else
       cgroup_escape_tree

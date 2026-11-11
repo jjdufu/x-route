@@ -1,0 +1,67 @@
+#!/bin/sh
+# XRouter: OpenWrt 内部网络快照（手机侧调试模式 / 诊断导出经控制目录请求，见 xrouter-vpn）
+# 输出前在客侧先脱敏：证书密钥、密码类字段、URL、OpenVPN 服务器地址（配置 remote 行与经 eth0 网关的主机路由）。
+s() { echo "## $*"; "$@" 2>&1; echo; }
+
+vpn_hosts() {
+  [ -f /etc/openvpn/xrouter.ovpn ] && awk '$1=="remote" && $2!="" {print $2}' /etc/openvpn/xrouter.ovpn
+  gw="$(uci -q get network.lan.gateway)"
+  # OpenVPN 为服务器加的主机路由：<IP> via <手机网关> dev eth0
+  [ -n "$gw" ] && ip -4 route show 2>/dev/null | awk -v g="$gw" '$2=="via" && $3==g && $1!="default" && $1 !~ /\// {print $1}'
+  logread 2>/dev/null | sed -n 's/.*\[AF_INET6\{0,1\}\]\([0-9a-fA-F.:]*[0-9a-fA-F]\).*/\1/p' | sed 's/:[0-9]*$//' | sort -u
+}
+
+redact() {
+  f=/tmp/xrouter-redact.sed
+  cat > "$f" <<'SED'
+s#[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]"<>]*#<URL>#g
+/-----BEGIN/,/-----END/{/-----END/!d;s/.*/<已隐去证书或密钥>/;}
+/<(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|secret|pkcs12|extra-certs)>/,/<\/(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2|secret|pkcs12|extra-certs)>/d
+s/(([Pp][Aa][Ss][Ss]([Ww][Oo][Rr][Dd]|[Ww][Dd]|[Pp][Hh][Rr][Aa][Ss][Ee])?|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Ss][Kk]|private_?key|preshared_?key|auth-user-pass)["']?[[:space:]]*[=:][[:space:]]*)[^[:space:]]+/\1<已隐去>/g
+s/(option[[:space:]]+(password|passwd|key|secret|token|psk)[[:space:]]+)[^[:space:]]+/\1<已隐去>/g
+s/\[AF_INET6?\][^[:space:]]*/[AF_INET]<VPN服务器>/g
+SED
+  for h in $(vpn_hosts | sort -u); do
+    printf 's/%s/<VPN服务器>/g\n' "$(printf '%s' "$h" | sed 's/[].[\*^$/]/\\&/g')" >> "$f"
+  done
+  sed -E -f "$f"
+  rm -f "$f"
+}
+
+{
+  s cat /proc/uptime
+  s ip -br addr
+  s ip addr
+  s ip -4 route
+  s ip -6 route
+  s ip -4 rule
+  s ip -6 rule
+  echo "## disable_ipv6"
+  for p in /proc/sys/net/ipv6/conf/*/disable_ipv6; do d="${p%/disable_ipv6}"; echo "${d##*/}=$(cat "$p")"; done
+  echo
+  s ip -6 neigh
+  s ip neigh
+  s uci show network
+  s uci show dhcp
+  s uci show firewall
+  echo "## DHCP 租约"; cat /tmp/dhcp.leases 2>/dev/null; echo
+  s ubus call dhcp ipv6leases
+  s ps w
+  echo "## OpenVPN"
+  cat /var/run/xrouter/guest/openvpn.status /var/run/xrouter/guest/openvpn.addr 2>/dev/null
+  ip -br addr show dev tun0 2>&1
+  ip route show dev tun0 2>&1
+  echo
+  if [ -x /etc/init.d/openclash ]; then
+    echo "## OpenClash"
+    /etc/init.d/openclash enabled && echo "开机启用" || echo "开机未启用"
+    pidof clash mihomo >/dev/null 2>&1 && echo "内核运行中" || echo "内核未运行"
+    uci -q show openclash.config | grep -E '\.(enable|operation_mode|en_mode|proxy_mode|lan_interface_name|ipv6_enable|enable_redirect_dns|dns_hijack)='
+    tail -n 50 /tmp/openclash.log 2>/dev/null
+    echo
+  fi
+  s /usr/libexec/xrouter-ipv6 state
+  [ -x /usr/libexec/xrouter-hotspot ] && s /usr/libexec/xrouter-hotspot status
+  echo "## nft（前 400 行）"; nft list ruleset 2>&1 | head -n 400; echo
+  echo "## logread（最后 300 行）"; logread 2>/dev/null | tail -n 300
+} 2>&1 | redact

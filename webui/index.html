@@ -122,6 +122,15 @@
           <div class="item"><md-icon data-icon="developer_board"></md-icon><span class="grow">内存</span><md-outlined-select id="sel-mem" class="sel"></md-outlined-select></div>
         </div>
 
+        <div class="group-title">调试</div>
+        <div class="card list">
+          <div id="row-debug" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="receipt_long"></md-icon><span class="grow">调试模式</span><md-switch id="sw-debug" icons></md-switch></div>
+          <div class="item"><md-icon data-icon="schedule"></md-icon><span class="grow">自动关闭</span><md-outlined-select id="sel-debug-hours" class="sel"></md-outlined-select></div>
+          <div class="actions">
+            <md-filled-tonal-button id="btn-diag"><md-icon slot="icon" data-icon="download"></md-icon>诊断导出</md-filled-tonal-button>
+          </div>
+        </div>
+
         <div class="group-title">系统盘</div>
         <div class="card list">
           <div class="item"><md-icon data-icon="hard_drive"></md-icon><span class="grow">容量</span><span id="v-disk" class="val">—</span></div>

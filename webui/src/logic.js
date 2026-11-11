@@ -2,7 +2,7 @@
 export const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 export const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
-  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC",
+  "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS",
 ];
 const ARG_RE = /^[A-Za-z0-9_-]+$/;
 export const MEDIA_ROOT = "/storage/emulated/0";
@@ -28,6 +28,13 @@ export const LOG_KINDS = [
   { value: "console", label: "串口" },
   { value: "ctl", label: "控制服务" },
   { value: "vmm", label: "虚拟机" },
+  { value: "debug", label: "调试" },
+];
+export const DEBUG_HOURS_OPTS = [
+  { value: "1", label: "1 小时" },
+  { value: "6", label: "6 小时" },
+  { value: "24", label: "24 小时" },
+  { value: "0", label: "不关闭" },
 ];
 export const NOTIFY_OPTS = [
   { value: "total", label: "总流量" },

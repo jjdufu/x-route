@@ -13,8 +13,8 @@
 # 数值可能超过 32 位，所有加法都交给 awk，不用 shell 算术。
 # ==============================================================================
 SYSBIN="${XR_SYSBIN:-${SYSBIN:-/system/bin}}"
-IPT="${IPT:-${SYSBIN}/iptables -w}"
-IP6T="${IP6T:-${SYSBIN}/ip6tables -w}"
+IPT="${IPT:-xr_exec ${SYSBIN}/iptables -w}"
+IP6T="${IP6T:-xr_exec ${SYSBIN}/ip6tables -w}"
 XR_IF="${XR_IF:-xr0}"
 ACCT_BASE="${XR_DATA}/config/traffic.base"
 ACCT_SNAP="${XR_DATA}/config/traffic.snap"

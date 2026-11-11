@@ -6,6 +6,7 @@
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
+. "${MODDIR}/scripts/diag.sh"
 
 CROSVM="${CROSVM:-/apex/com.android.virt/bin/crosvm}"
 PID_F="${RUN}/crosvm.pid"
@@ -41,6 +42,7 @@ fuse_watch() {
   if ! ready_seen; then vm_fail "${READY_TIMEOUT_SEC} 秒内未就绪，停止 VM" "${READY_TIMEOUT_SEC} 秒内未就绪"; XR_IN_WATCH=1 vm_stop; return; fi
   echo ready > "${RUN}/state"; rm -f "${RUN}/last_error"; log_info vm "XR_READY（$(ready_channel)）"
   sh "${MODDIR}/scripts/net.sh" sync
+  load_config; diag_snap_bg "虚拟机就绪"
   t=0
   while [ "$t" -lt "${STABLE_SEC}" ]; do
     vm_running || { rm -f "${FUSE}"; sync; vm_fail "稳定期内 crosvm 退出" "虚拟机意外退出"; return; }
@@ -77,7 +79,7 @@ vm_start_exec() {
   mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
   chmod 0700 "${RUN}/guest"
   # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
-  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6"
+  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
   if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
     cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
@@ -90,6 +92,7 @@ vm_start_exec() {
   params="${params} xr.share=${share_mode}"
 
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"
+  dlog vm "启动参数：cpus=${VM_CPUS} mem=${mem} swiotlb=${VM_SWIOTLB_MB} net=${net_args:-无} disk=${rootmode} share=${share_mode} params=${params}"
   fuse_arm
   # 解除 Android 默认 64KB RLIMIT_MEMLOCK（Gunyah 需要锁定 guest 内存）
   # shellcheck disable=SC3045
@@ -131,6 +134,7 @@ vm_stop_exec() {
     w="$(cat "${RUN}/fuse_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
   fi
   p="$(cat "${PID_F}" 2>/dev/null)"
+  load_config; diag_snap "停止前" 5
   if vm_running; then
     "${CROSVM}" stop "${SOCK}" >/dev/null 2>&1
     i=0; while vm_running && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done

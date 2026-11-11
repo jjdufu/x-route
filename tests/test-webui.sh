@@ -78,7 +78,7 @@ eq([L.trafficLine(tj, "total"), L.trafficLine(tj, "wan"), L.trafficLine(tj, "lan
   ["↑1.0 KB ↓3.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB", "—"], "trafficLine");
 // 累计流量只在设置页读取，不在主页轮询
 if (!/page === 3\) loadTraffic\(\)/.test(main)) fail("累计流量应只在设置页读取");
-eq(L.LOG_KINDS.map((o) => o.label), ["模块", "串口", "控制服务", "虚拟机"], "日志分类");
+eq(L.LOG_KINDS.map((o) => o.label), ["模块", "串口", "控制服务", "虚拟机", "调试"], "日志分类");
 const exposeVals = common.match(/XR_EXPOSE\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
 eq(L.ACCESS_OPTS.map((o) => o.value), exposeVals, "管理访问取值与 valid_kv 一致");
 eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");

@@ -82,6 +82,7 @@ route_del() {
 routes_sync() {
   load_config
   want="$(routes_valid)"; have="$(cat "${RUN}/routes.active" 2>/dev/null)"
+  [ "$want" = "$have" ] || dlog vpn "OpenVPN 路由变化：[$(echo "$have" | tr '\n' ' ')] -> [$(echo "$want" | tr '\n' ' ')]"
   for c in $have; do echo "$want" | grep -qx "$c" || route_del "$c"; done
   for c in $want; do echo "$have" | grep -qx "$c" || route_add "$c"; done
   echo "$want" > "${RUN}/routes.active"
