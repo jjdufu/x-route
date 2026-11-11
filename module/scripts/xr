@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
-# 用法：xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
+# 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
 #       vpn-import PATH|ls PATH [dir|ovpn]|log [KIND] [N]|log-export [all|KIND]|log-clear all|KIND
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
@@ -242,10 +242,53 @@ log_export() {
 }
 
 
+# ---- WebUI 异步启停 ----
+# 立即返回，真正的 xr start/stop 在脱离会话的子进程里执行，结束后把退出码写到 bg.rc。
+# 管理器的 exec 要等标准输出关闭才回调，所以子进程的三个 fd 必须全部重定向。
+bg_run() {
+  rm -f "${RUN}/bg.rc" "${RUN}/bg.rc.tmp"
+  if [ "$1" = start ] && ! vm_running; then
+    # 旧串口日志属于上一次开机；先清空，WebUI 才能从 0 开始实时跟随这次的启动输出
+    : > "${CON_LOG}"
+  fi
+  _ss=""; command -v setsid >/dev/null 2>&1 && _ss=setsid
+  export MODDIR
+  # shellcheck disable=SC2016
+  ${_ss} sh -c 'sh "$1" "$2"; echo "$?" > "$3.tmp"; mv -f "$3.tmp" "$3"' \
+    xr-bg "${MODDIR}/scripts/xr" "$1" "${RUN}/bg.rc" </dev/null >/dev/null 2>&1 &
+  echo '{"ok":true}'
+}
+
+# 增量读取一段日志：$1=文件 $2=上次的字节偏移（-1 表示只取当前大小）
+# 输出：大小 \037 新增内容（去掉控制字符，最多 6KB）
+tail_from() {
+  _f="$1"; _o="$2"; _max=6144
+  _sz="$(wc -c < "$_f" 2>/dev/null | tr -d ' ')"
+  case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
+  printf '%s\037' "$_sz"
+  case "$_o" in -1) return 0 ;; esac
+  case "$_o" in ''|*[!0-9]*) _o=0 ;; esac
+  [ "$_o" -gt "$_sz" ] && _o=0          # 被截断或轮转
+  [ $((_sz - _o)) -gt "$_max" ] && _o=$((_sz - _max))
+  [ "$_o" -lt "$_sz" ] || return 0
+  tail -c "+$((_o + 1))" "$_f" 2>/dev/null | head -c "$((_sz - _o))" | tr -d '\000-\010\013-\037\177'
+}
+
+# WebUI 启动动画的实时日志：$1=模块日志偏移 $2=串口日志偏移
+# 输出：R<退出码或 -> \037 模块日志大小 \037 内容 \037 串口日志大小 \037 内容
+boot_tail() {
+  printf 'R%s\037' "$(cat "${RUN}/bg.rc" 2>/dev/null || echo -)"
+  tail_from "${LOG}" "${1:--1}"; printf '\037'
+  tail_from "${CON_LOG}" "${2:--1}"
+}
+
 cmd="$1"; [ $# -gt 0 ] && shift
 case "$cmd" in
   start)       vm_start ;;
   stop)        vm_stop ;;
+  start-bg)    bg_run start ;;
+  stop-bg)     bg_run stop ;;
+  boot-tail)   boot_tail "${1:--1}" "${2:--1}" ;;
   running)     vm_running ;;
   status-json) status_json ;;
   status-line) status_line ;;
@@ -276,5 +319,5 @@ case "$cmd" in
     esac
     n="${2:-200}"; in_range "$n" 1 5000 || n=200
     tail -n "$n" "$f" 2>/dev/null ;;
-  *) echo "usage: xr start|stop|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|vpn-import PATH|ls PATH [dir|ovpn]|log-clear KIND|log-export [all|module|console|ctl|vmm]|log [xr|module|console|ctl|vmm] [N]"; exit 2 ;;
 esac

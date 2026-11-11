@@ -126,3 +126,43 @@ export function fmtSize(mb) {
   mb = Number(mb) || 0;
   return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
+
+// ---- 启动动画：按钮背景里滚动的真实启动日志（xr boot-tail） ----
+export const BOOT_LINES = 20;
+export const BOOT_COLS = 64;
+const SEP = "\x1f";
+
+// 输出格式：R<退出码|-> SEP 模块日志大小 SEP 新增 SEP 串口日志大小 SEP 新增
+export function parseBootTail(text) {
+  const f = String(text || "").split(SEP);
+  if (f.length < 5 || f[0][0] !== "R") return null;
+  const rc = f[0].slice(1).trim();
+  return {
+    rc: rc === "" || rc === "-" || isNaN(Number(rc)) ? null : Number(rc),
+    mod: { size: Number(f[1]) || 0, text: f[2] },
+    con: { size: Number(f[3]) || 0, text: f.slice(4).join("") },
+  };
+}
+
+export function newBootBuf() {
+  return { lines: [], carry: { mod: "", con: "" } };
+}
+
+// 并入一段新增文本：各来源保留未完结的半行；去掉颜色码与模块日志的时间前缀；
+// 只留最后 cap 行、每行最多 BOOT_COLS 字，DOM 永远很小。返回是否有新行。
+export function feedBoot(buf, src, text, cap = BOOT_LINES) {
+  if (!text) return false;
+  const parts = (buf.carry[src] + text).split("\n");
+  buf.carry[src] = parts.pop();
+  if (buf.carry[src].length > 512) { parts.push(buf.carry[src]); buf.carry[src] = ""; }
+  let changed = false;
+  for (let l of parts) {
+    l = l.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").replace(/\[\d+(?:;\d+)*m/g, "").replace(/\t/g, "  ").trimEnd();
+    if (src === "mod") l = l.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \[(?:INFO|ERROR)\] /, "");
+    if (!l.trim()) continue;
+    buf.lines.push(l.length > BOOT_COLS ? l.slice(0, BOOT_COLS) : l);
+    changed = true;
+  }
+  if (buf.lines.length > cap) buf.lines.splice(0, buf.lines.length - cap);
+  return changed;
+}

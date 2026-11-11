@@ -95,7 +95,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 }
 
 /* 内容区：多页叠放，只显示当前页；切换瞬时完成，无滑动或淡入动画 */
-.pager { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; }
+.pager { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; overscroll-behavior: none; }
 .page {
   position: absolute; inset: 0;
   overflow-y: auto; padding: 16px 16px calc(24px + var(--bottom-inset));
@@ -145,14 +145,25 @@ md-icon { --md-icon-size: 22px; flex: none; }
   --md-ripple-hover-color: currentColor; --md-ripple-pressed-color: currentColor;
 }
 .power:active { transform: scale(.96); }
-.power md-icon { --md-icon-size: 56px; }
+.power md-icon { --md-icon-size: 56px; position: relative; z-index: 1; }
+/* 启动中：按钮里滚动真实启动日志，终端风格；圆形裁切，上下渐隐（静态遮罩，不做模糊和发光） */
+.power { overflow: hidden; isolation: isolate; }
+.power-log {
+  position: absolute; inset: 0; margin: 0; padding: 0 18px 20px; z-index: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  font: 8px/10px ui-monospace, "JetBrains Mono", monospace; color: #3dff8a; text-align: left;
+  white-space: pre; overflow: hidden; opacity: .55; pointer-events: none; contain: strict;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 8%, #000 42%, #000 78%, transparent 96%);
+  mask-image: linear-gradient(to bottom, transparent 8%, #000 42%, #000 78%, transparent 96%);
+}
+.starting .power md-icon { opacity: .45; }
 .power:disabled { cursor: default; }
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .ring circle { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }
 .starting .ring, .stopping .ring { opacity: 1; animation: spin .8s linear infinite; }
 .stopping .ring circle { stroke: var(--md-sys-color-outline); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.starting .power { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.starting .power { background: #08130d; color: var(--md-sys-color-on-primary-container); }
 /* 运行中只变绿，不要呼吸光或持续发光 */
 .running .power { background: #1d3a26; color: var(--xr-ok); }
 .failed .power { background: #3d1c1a; color: var(--xr-bad); }

@@ -121,6 +121,30 @@ out="$($XR set AUTOSTART 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "熔断
 chk '$XR status-json | J "d[\"vm\"][\"tripped\"] is not None" | grep -qx True'
 $XR start; chk '[ $? -ne 0 ] && ! $XR running'
 $XR ack-trip; chk '[ ! -f "$TRIPPED" ]'
+# WebUI 异步启停：start-bg 立即返回，真正启动在后台完成并写 bg.rc
+echo old-boot > "$RUN/console.log"
+t0="$(date +%s)"; out="$($XR start-bg)"; t1="$(date +%s)"
+chk '[ "$out" = "{\"ok\":true}" ] && [ $((t1 - t0)) -le 1 ]'
+chk '! grep -q old-boot "$RUN/console.log"'
+i=0; while [ ! -f "$RUN/bg.rc" ] && [ $i -lt 60 ]; do sleep 0.25; i=$((i+1)); done
+chk '[ "$(cat "$RUN/bg.rc")" = 0 ] && $XR running'
+chk '$XR boot-tail -1 -1 | python3 -c "import sys; f=sys.stdin.read().split(chr(31)); sys.exit(0 if f[0]==\"R0\" else 1)"'
+out="$($XR stop-bg)"; chk '[ "$out" = "{\"ok\":true}" ]'
+i=0; while $XR running && [ $i -lt 80 ]; do sleep 0.25; i=$((i+1)); done
+chk '! $XR running'
+i=0; while [ ! -f "$RUN/bg.rc" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); done
+chk '[ "$(cat "$RUN/bg.rc")" = 0 ]'
+# boot-tail：按字节偏移增量读取、截断后从头读、去掉控制字符、超长只给末尾 6KB
+BT() { $XR boot-tail "$@" | python3 -c "import sys; f=sys.stdin.buffer.read().split(b'\x1f'); print(\"|\".join(x.decode().replace(chr(10), \"/\") for x in f))"; }
+printf 'l1\nl2\n' > "$RUN/console.log"; : > "$LOG"
+chk '[ "$(BT -1 -1)" = "R0|0||6|" ]'
+chk '[ "$(BT 0 0)" = "R0|0||6|l1/l2/" ]'
+printf 'l3\033[0m\r\n' >> "$RUN/console.log"
+chk '[ "$(BT 0 6)" = "R0|0||14|l3[0m/" ]'
+chk '[ "$(BT 0 12345678)" = "R0|0||14|l1/l2/l3[0m/" ]'
+head -c 10000 /dev/zero | tr '\0' a > "$RUN/console.log"
+chk '[ "$($XR boot-tail -1 0 | python3 -c "import sys; print(len(sys.stdin.buffer.read().split(b\"\x1f\")[4]))")" = 6144 ]'
+rm -f "$RUN/bg.rc"; chk '$XR boot-tail -1 -1 | grep -q "^R-"'
 # 用法错误
 out="$($XR bogus)"; chk '[ $? -eq 2 ]'
 out="$($XR expand abc)"; chk '[ $? -eq 2 ]'

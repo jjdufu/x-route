@@ -35,7 +35,7 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start", "stop", "set", "ipv6", "vpn-import", "ls", "log", "log-export", "log-clear", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "set", "ipv6", "vpn-import", "ls", "log", "log-export", "log-clear", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
@@ -101,6 +101,27 @@ eq(L.crumbs("/data/media/0/A/B").map((c) => c.label), ["内部存储", "A", "B"]
 eq(L.crumbs("/storage/emulated/0/A").map((c) => c.path), ["/storage/emulated/0", "/storage/emulated/0/A"], "面包屑路径");
 eq(L.parseLs("d/A\nf/x.ovpn\nd/.hidden\njunk"), [{ dir: true, name: "A" }, { dir: false, name: "x.ovpn" }], "parseLs");
 eq(L.expandSizes(1024), [1536, 2048, 3072, 5120, 9216], "扩容选项"); eq(L.expandSizes(16384), [], "扩容上限");
+// 启停与按钮解耦：只投递后台命令，不等待 xr start/stop
+if (subs.has("start") || subs.has("stop")) fail("WebUI 不应同步调用 xr start/stop");
+if (/await\s+xr\(\s*kind/.test(main)) fail("按钮不得等待后台启停");
+// 启动日志：真实增量日志、轮询节流、DOM 行数上限、无模糊/发光动画
+if (!html.includes('id="power-log"')) fail("缺少启动日志层");
+if (!/setTimeout\(\(\) => bootTick\(b\), (3|4|5)\d\d\)/.test(main)) fail("启动日志应 300-500ms 轮询");
+const plog = css.slice(css.indexOf(".power-log {"), css.indexOf("}", css.indexOf(".power-log {")));
+if (/blur|box-shadow|animation|transition/.test(plog)) fail("启动日志层不得用模糊/阴影/动画");
+const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启动 pid=1\n\x1f30\x1f[    0.000000] Booting Linux\n[ 0.1] half");
+eq([bt.rc, bt.mod.size, bt.con.size], [1, 120, 30], "parseBootTail");
+eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
+eq(L.parseBootTail("garbage"), null, "parseBootTail 非法");
+const bb = L.newBootBuf();
+eq(L.feedBoot(bb, "mod", bt.mod.text), true, "feedBoot 有新行");
+L.feedBoot(bb, "con", bt.con.text);
+eq(bb.lines, ["[vm] 已启动 pid=1", "[    0.000000] Booting Linux"], "feedBoot 去时间前缀、保留半行");
+L.feedBoot(bb, "con", " line\n\x1b[0m\x1b[1;32mok\x1b[0m\n");
+eq(bb.lines.slice(-2), ["[ 0.1] half line", "ok"], "feedBoot 拼接半行并去颜色码");
+for (let i = 0; i < 50; i++) L.feedBoot(bb, "con", "x".repeat(200) + "\n");
+eq([bb.lines.length, bb.lines[0].length], [L.BOOT_LINES, L.BOOT_COLS], "feedBoot 行数与列宽上限");
+eq(L.feedBoot(bb, "con", ""), false, "feedBoot 空");
 process.exit(bad);
 EOS
 # 构建产物（有依赖时构建到临时目录检查）

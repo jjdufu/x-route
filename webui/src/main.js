@@ -20,12 +20,16 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS, LOG_KINDS, VPN_TXT,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
+  parseBootTail, newBootBuf, feedBoot,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
 const $ = (id) => document.getElementById(id);
 let status = null;
 let pending = null;      // start | stop
+let pendingAt = 0;       // 发出操作的时间，用于兜底超时
+let bgArmed = false;     // start-bg 已返回，之后读到的 bg.rc 才属于这次操作
+let boot = null;         // 启动日志跟随状态
 let ipv6Busy = false;
 let logKind = "module";
 let page = 0;
@@ -131,6 +135,7 @@ function renderPower(d) {
     const i = Number(s.dataset.step);
     s.className = i < (v.step || 0) ? "done" : i === v.step ? "cur" : "";
   });
+  if (v.phase === "starting") bootOn(); else bootOff();
   const chip = $("chip");
   chip.className = "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off");
   $("chip-text").textContent = v.chip;
@@ -141,6 +146,11 @@ function render(d) {
   const vm = d.vm || {}; const net = d.net || {}; const vpn = d.vpn || {}; const sh = d.share || {}; const cfg = d.config || {};
   if (pending === "start" && (vm.running || vm.error)) pending = vm.running ? null : pending;
   if (pending === "stop" && !vm.running) pending = null;
+  // 兜底：后台操作迟迟没有体现在状态里（比如守护进程没回应），不让按钮一直转圈
+  if (pending && Date.now() - pendingAt > (pending === "start" ? 120000 : 45000)) {
+    snack(pending === "start" ? "启动超时" : "停止超时", true);
+    pending = null;
+  }
   renderPower(d);
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
   $("trip").hidden = !tripped;
@@ -199,29 +209,78 @@ function schedule() {
   }, fast ? 1500 : 5000);
 }
 
-// ---- 操作 ----
-async function power() {
-  const v = vmView(status || {}, pending);
-  if (v.phase === "running" || (status && status.vm && status.vm.running)) {
-    if (!await confirmDlg("停止虚拟机", "", "停止", true)) return;
-    pending = "stop"; renderPower(status); schedule();
-    const r = await xr("stop");
-    pending = null;
-    if (r.errno !== 0) snack("停止失败", true);
-  } else {
-    pending = "start";
-    renderPower(status || {});
-    schedule();
-    // 先画出启动中转圈，再等 kernelsu exec，避免空等数秒才出现动画
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const r = await xr("start");
-    await refresh();
-    pending = null;
-    if (r.errno !== 0 && !(status && status.vm && status.vm.running)) {
-      if (!(status && status.vm && status.vm.error)) snack("启动失败", true);
+// ---- 启动日志：增量读取（按字节偏移），约 400ms 一次，最多 20 行，单个文本节点整体替换 ----
+function bootOn() {
+  if (boot) return;
+  // 点击启动：串口日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
+  // 打开页面时已在开机：直接给出串口日志末尾一段
+  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0 };
+  const el = $("power-log");
+  el.textContent = "";
+  el.hidden = false;
+  bootTick(boot);
+}
+
+function bootOff() {
+  if (!boot) return;
+  clearTimeout(boot.timer);
+  boot = null;
+  const el = $("power-log");
+  el.hidden = true;
+  el.textContent = "";
+}
+
+async function bootTick(b) {
+  if (boot !== b) return;
+  if (!document.hidden && page === 0) {
+    const r = await xr("boot-tail", String(b.m), String(b.c));
+    if (boot !== b) return;
+    const t = parseBootTail(r.stdout);
+    if (t) {
+      b.m = t.mod.size; b.c = t.con.size;
+      const a = feedBoot(b.buf, "mod", t.mod.text);
+      const c = feedBoot(b.buf, "con", t.con.text);
+      if (a || c) $("power-log").textContent = b.buf.lines.join("\n");
+      if (pending === "start" && bgArmed && t.rc !== null && t.rc !== 0) {
+        // 后台 xr start 已失败退出：立刻结束转圈，显示原因
+        pending = null;
+        await refresh();
+        if (!(status && status.vm && (status.vm.running || status.vm.error))) snack("启动失败", true);
+        schedule();
+        return;
+      }
     }
   }
-  await refresh(); schedule();
+  if (boot === b) b.timer = setTimeout(() => bootTick(b), 400);
+}
+
+// ---- 操作 ----
+// 点击只切换界面状态并投递后台命令，xr start/stop 在脱离会话的子进程里跑，按钮从不等它
+function act(kind) {
+  pending = kind; pendingAt = Date.now(); bgArmed = false;
+  renderPower(status || {});
+  schedule();
+  (kind === "start" ? xr("start-bg") : xr("stop-bg")).then((r) => {
+    const res = lastJson(r.stdout);
+    if (r.errno !== 0 || !res || !res.ok) {
+      pending = null;
+      snack(kind === "start" ? "启动失败" : "停止失败", true);
+      refresh().then(schedule);
+      return;
+    }
+    bgArmed = true;
+  });
+}
+
+async function power() {
+  const v = vmView(status || {}, pending);
+  if (v.phase === "starting" || v.phase === "stopping") return;
+  if (v.phase === "running" || (status && status.vm && status.vm.running)) {
+    if (!await confirmDlg("停止虚拟机", "", "停止", true)) return;
+    act("stop");
+  } else {
+    act("start");
+  }
 }
 
 async function pickMode(v) {
