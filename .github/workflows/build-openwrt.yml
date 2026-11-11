@@ -3,7 +3,7 @@ name: Build ImmortalWrt ARM64 (Gunyah pVM)
 # push 到 main 时构建并发布 Release；在其他分支手动触发只构建、上传 artifact，不发布。
 # 其他分支的日常检查由 package-module.yml 完成。
 # Tag 规则沿用历史：<module.prop version>-build.<run_number>。
-# 发布为 prerelease：在真机验证通过之前，不标记为正式版。
+# 发布为正式版（非预发布），并标记为 Latest。
 on:
   push:
     branches:
@@ -110,7 +110,8 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.version }}-build.${{ github.run_number }}
           name: "${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.version }}"
-          prerelease: true
+          prerelease: false
+          make_latest: "true"
           body_path: dist/RELEASE_NOTES.md
           files: |
             dist/xrouter-sukisu-*.zip

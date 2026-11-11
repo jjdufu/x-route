@@ -70,7 +70,7 @@ PREV_TAG="$(git -C "${REPO}" tag --list 'v*-build.*' --sort=-v:refname | head -n
       | awk -F': *' '/^(feat|fix)\(/ && !/^(feat|fix)\((lint|docs)\):/ { sub(/^(feat|fix)\([^)]+\): */,""); print "- " $0 }' 
   fi
   echo
-  echo "预发布。仅支持全新安装。登录 root，空密码，请尽快在 LuCI 中设置。"
+  echo "仅支持全新安装。登录 root，空密码，请尽快在 LuCI 中设置。"
   echo
   echo "- 完整包：${FULL##*/}"
   echo "- 精简包：${LITE##*/}"
