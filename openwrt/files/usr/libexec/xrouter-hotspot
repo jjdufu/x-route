@@ -19,6 +19,15 @@ len2mask() {
   echo "$(( (m >> 24) & 255 )).$(( (m >> 16) & 255 )).$(( (m >> 8) & 255 )).$(( m & 255 ))"
 }
 
+# 网段地址：$1=IP $2=掩码长度
+net_of() {
+  o1=${1%%.*}; r=${1#*.}; o2=${r%%.*}; r=${r#*.}; o3=${r%%.*}; o4=${r#*.}
+  a=$(( (o1 << 24) | (o2 << 16) | (o3 << 8) | o4 )); m=0; i=0
+  while [ "$i" -lt 32 ]; do m=$(( m * 2 )); [ "$i" -lt "$2" ] && m=$(( m + 1 )); i=$((i + 1)); done
+  a=$(( a & m ))
+  echo "$(( (a >> 24) & 255 )).$(( (a >> 16) & 255 )).$(( (a >> 8) & 255 )).$(( a & 255 ))/$2"
+}
+
 v6_on() { [ "$(uci -q get network.xr_eth0.ipv6)" = 1 ]; }
 
 apply_v6() {
@@ -67,6 +76,22 @@ U
   apply_v6
   fwchg=0
   uci -q get firewall.lan.network | grep -qw hotspot || { uci -q add_list firewall.lan.network='hotspot'; fwchg=1; }
+  # 热点设备不走 VPN 的流量（直连 / VPN 未连）从 eth0 出去时伪装成 VM 地址：
+  # 手机侧只认 VM 网段（XR_NAT / XR_FWD），回包也就自然回到 OpenWrt，不会被安卓从热点网卡直接送回
+  sub="$(net_of "$ip" "$len")"
+  if [ "$(uci -q get firewall.xr_hs_masq.src_ip)" != "$sub" ]; then
+    uci -q batch <<U
+set firewall.xr_hs_masq=nat
+set firewall.xr_hs_masq.name='xrouter-hotspot-masq'
+set firewall.xr_hs_masq.family='ipv4'
+set firewall.xr_hs_masq.proto='all'
+set firewall.xr_hs_masq.src='lan'
+set firewall.xr_hs_masq.src_ip='${sub}'
+set firewall.xr_hs_masq.device='eth0'
+set firewall.xr_hs_masq.target='MASQUERADE'
+U
+    fwchg=1
+  fi
   uci -q commit network; uci -q commit dhcp; uci -q commit firewall
   ip link set "$DEV" up
   ifup hotspot >/dev/null 2>&1
@@ -91,6 +116,10 @@ U
 }
 
 off() {
+  if uci -q get firewall.xr_hs_masq >/dev/null; then
+    uci -q delete firewall.xr_hs_masq; uci -q commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
+  fi
   ifdown hotspot >/dev/null 2>&1
   ip -4 addr flush dev "$DEV" 2>/dev/null
   echo off > "$ST"

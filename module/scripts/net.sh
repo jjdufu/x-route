@@ -271,7 +271,25 @@ rules_set() {   # $1=ip|ip6：VM 出站 18800 查本地网络表、18900 走当�
 #   - 回包：ESTABLISHED,RELATED 放行（排在所有 DROP 之前）；
 #   - 入站：上游主动发往 xr0 的流量丢弃；只有 XR_EXPOSE 明确列出的下游
 #     （lan：热点/USB 共享；all：再加非蜂窝上游所在局域网）可以访问 VM 网段。
+# 同步互斥：net_up、对账循环、xr set 触发的 net.sh sync 可能同时进来，
+# 并发重建 XR_FWD 会把规则顺序搅乱（如 DROP 排到放行前面）、热点重复桥接。
+net_lock() {
+  _lk="${RUN}/.net.lock"; _n=0
+  while ! mkdir "$_lk" 2>/dev/null; do
+    _p="$(cat "$_lk/pid" 2>/dev/null)"
+    # 持锁进程已不在，或等了 60 秒仍未释放：视为残留
+    if { [ -n "$_p" ] && ! kill -0 "$_p" 2>/dev/null; } || [ "$_n" -ge 120 ]; then rm -rf "$_lk"; continue; fi
+    sleep 0.5; _n=$((_n + 1))
+  done
+  echo $$ > "$_lk/pid"
+}
+net_unlock() { rm -rf "${RUN}/.net.lock"; }
+
 sync_all() {
+  net_lock; _sync_all; _rc=$?; net_unlock; return $_rc
+}
+
+_sync_all() {
   load_config
   up="$(upstream_iface)"; outs="$(upstream_out "$up")"; outs6="$(upstream_out6 "$up")"
   old_up="$(cat "${RUN}/net.up_if" 2>/dev/null)"; old_outs="$(cat "${RUN}/net.up_out" 2>/dev/null)"
@@ -387,7 +405,7 @@ net_watch() {
       sync_all
     fi
     fwd_first; nat_first; fwd6_first; nat6_first; acct_hooks
-    hs_sync
+    net_lock; hs_sync; net_unlock
     ip rule 2>/dev/null | grep -q "^4800:.*to ${NET}" || ip rule add pref 4800 to "${NET}" lookup "$(lnt)"
     ip6 rule 2>/dev/null | grep -q "^4800:.*to ${NET6}" || ip6 rule add pref 4800 to "${NET6}" lookup "$(lnt)"
     for f in ip ip6; do
@@ -404,7 +422,7 @@ net_watch() {
 
 net_down() {
   w="$(cat "${RUN}/net_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
-  hs_tap_down
+  net_lock; hs_tap_down; net_unlock
   v6_proxy_remove "XRouter 网络停止"
   v6_nft_teardown
   gw_remove
