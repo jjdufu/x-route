@@ -31,6 +31,7 @@ if command -v javac >/dev/null 2>&1 && { command -v aapt >/dev/null 2>&1 || comm
   sh "${REPO}/companion/build.sh" "${REPO}/module/apk/keepalive.apk"
 fi
 [ -s "${REPO}/module/apk/keepalive.apk" ] || { echo "缺少 module/apk/keepalive.apk，请先运行 sh companion/build.sh"; exit 1; }
+[ -s "${REPO}/module/apk/keepalive.ver" ] || { echo "缺少 module/apk/keepalive.ver，请先运行 sh companion/build.sh"; exit 1; }
 
 ST="$(mktemp -d)"; trap 'rm -rf "${ST}"' EXIT
 cp -a "${REPO}/module/." "${ST}/"

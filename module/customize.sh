@@ -56,6 +56,8 @@ if [ -f "${MODPATH}/apk/keepalive.apk" ]; then
   _sz="$(wc -c < "${MODPATH}/apk/keepalive.apk" | tr -d ' ')"
   if pm install -r -g -S "${_sz}" < "${MODPATH}/apk/keepalive.apk" 2>&1 | grep -q Success; then
     ui_print "- 已安装保活应用"
+    pm grant com.xrouter.keepalive android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
+    cmd appops set com.xrouter.keepalive POST_NOTIFICATION allow >/dev/null 2>&1
   else
     ui_print "- 保活应用未能安装，将在启动时重试"
   fi

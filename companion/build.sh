@@ -14,9 +14,8 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/src" "$T/cls" "$T/res"
 cp -a "$SRC/src/." "$T/src/"
 cp "$SRC/AndroidManifest.xml" "$T/AndroidManifest.xml"
-# 占位资源，供 aapt 打包
-mkdir -p "$T/res/values"
-echo '<resources><string name="app_name">XRouter</string></resources>' > "$T/res/values/strings.xml"
+# 资源（通知小图标等）
+cp -a "$SRC/res/." "$T/res/"
 AAPT="$(command -v aapt)"
 "$AAPT" package -f -M "$T/AndroidManifest.xml" -S "$T/res" -I "$ANDROID_JAR" -F "$T/base.apk" --min-sdk-version 29 --target-sdk-version 35
 "$AAPT" package -f -M "$T/AndroidManifest.xml" -S "$T/res" -I "$ANDROID_JAR" -m -J "$T/src"
@@ -40,4 +39,6 @@ fi
 apksigner sign --ks "$SRC/debug.keystore" --ks-pass pass:android --key-pass pass:android \
   --out "$OUT" "$T/unsigned.apk"
 rm -f "${OUT}.idsig"
+# 守护进程据此判断已装的伴生应用是否需要升级
+sed -n 's/.*android:versionCode="\([0-9]*\)".*/\1/p' "$SRC/AndroidManifest.xml" | head -1 > "$(dirname "$OUT")/keepalive.ver"
 echo "[+] $OUT"

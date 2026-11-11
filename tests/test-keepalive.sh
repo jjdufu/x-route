@@ -131,5 +131,73 @@ mkdir -p "$T/mod/apk"; echo apk > "$T/mod/apk/keepalive.apk"
 chk 'install_keepalive_apk'
 chk 'grep -q "install -r -g -S 4" "$T/pm.log"'
 
+# 10. 伴生应用版本：已装版本低于模块自带版本时要覆盖升级
+echo 2 > "$T/mod/apk/keepalive.ver"
+printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path "*) exit 0 ;; "list packages"*) echo "package:com.xrouter.keepalive versionCode:$(cat "%s/apkver")" ;; esac; exit 0\n' "$T" "$T" > "$T/bin/pm"
+chmod +x "$T/bin/pm"
+echo 1 > "$T/apkver"; chk '! apk_current'
+echo 2 > "$T/apkver"; chk 'apk_current'
+echo 3 > "$T/apkver"; chk 'apk_current'
+
+# 11. 累计流量推送：负载、显式组件与 extras
+acct_total() { cat "$T/traffic"; }
+echo "100 200 30 40" > "$T/traffic"
+echo stable > "$RUN/state"
+chk '[ "$(XR_NOTIFY_TRAFFIC=wan notify_payload)" = "运行中 wan 100 200 30 40" ]'
+chk '[ "$(XR_NOTIFY_TRAFFIC=bogus notify_payload)" = "运行中 total 100 200 30 40" ]'
+printf '#!/bin/sh\necho "am $*" >> "%s/am.log"; [ -f "%s/am.err" ] && echo "Error: boom"; exit 0\n' "$T" "$T" > "$T/bin/am"
+chmod +x "$T/bin/am"
+: > "$T/am.log"
+chk 'notify_apk_push "运行中 lan 1 2 3 5000000000"'
+chk 'grep -qx "am start-foreground-service -n com.xrouter.keepalive/.KeepAliveService --es state 运行中 --es mode lan --el wan_up 1 --el wan_dn 2 --el lan_up 3 --el lan_dn 5000000000" "$T/am.log"'
+: > "$T/am.err"; chk '! notify_apk_push "运行中 total 0 0 0 0"'; rm -f "$T/am.err"
+
+# 12. notify_update：节流、内容不变不推、息屏暂停、force 立即刷新、停机只撤一次
+mkdir -p "$T/proc/4321"; printf 'crosvm\0run\0' > "$T/proc/4321/cmdline"; echo 4321 > "$RUN/crosvm.pid"
+: > "$T/notify.visible"
+rm -f "$RUN"/notify.*; : > "$T/am.log"; : > "$T/ds.log"
+export XR_SCREEN=on
+chk 'notify_update'
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ] && [ -f "$RUN/notify.on" ]'
+chk 'grep -q "POST_NOTIFICATIONS" "$T/pm.log" && grep -q "POST_NOTIFICATION allow" "$T/appops.log"'
+echo "101 200 30 40" > "$T/traffic"
+notify_update   # 10 秒内：不推
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+echo 0 > "$RUN/notify.ts"; echo "100 200 30 40" > "$T/traffic"
+notify_update   # 到点但内容没变：不推
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+echo 0 > "$RUN/notify.ts"; echo "999 200 30 40" > "$T/traffic"
+XR_SCREEN=off notify_update   # 息屏：暂停
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 1 ]'
+echo 0 > "$RUN/notify.ts"
+notify_update   # 亮屏且变化：推送
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 2 ] && grep -q "wan_up 999" "$T/am.log"'
+: > "$RUN/notify.force"; XR_NOTIFY_TRAFFIC=lan XR_SCREEN=off notify_update   # 改设置：立即刷新，即使息屏
+chk '[ "$(grep -c start-foreground-service "$T/am.log")" = 3 ] && grep -q "mode lan" "$T/am.log" && [ ! -f "$RUN/notify.force" ]'
+chk '[ "$(grep -c "dumpsys notification" "$T/ds.log")" = 1 ]'
+rm -rf "$T/proc/4321"; : > "$T/am.log"
+notify_update; notify_update
+chk '[ "$(grep -c stopservice "$T/am.log")" = 1 ] && [ ! -f "$RUN/notify.on" ]'
+unset XR_SCREEN
+unset -f acct_total
+
+# 13. 通知点击：root 打开管理器的 WebUIActivity（未导出，普通应用打不开）
+export XR_KEEPALIVE_DIR="$T/kadir"; mkdir -p "$XR_KEEPALIVE_DIR"
+printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path com.sukisu.ultra") exit 0 ;; "path "*) exit 1 ;; esac; exit 0\n' "$T" > "$T/bin/pm"
+chmod +x "$T/bin/pm"
+chk '! open_req_pending'
+echo 1 > "$XR_KEEPALIVE_DIR/open.req"
+chk 'open_req_pending'
+: > "$T/am.log"
+chk 'open_webui'
+chk 'grep -qx "am start -n com.sukisu.ultra/com.sukisu.ultra.ui.webui.WebUIActivity -d ksu://webui?id=xrouter --es id xrouter --es name XRouter" "$T/am.log"'
+chk '! open_req_pending'
+# 活动类不存在时依次回退，最后打开管理器首页
+: > "$T/am.err"; : > "$T/am.log"
+open_webui
+chk 'grep -q "me.weishu.kernelsu.ui.webui.WebUIActivity" "$T/am.log" && grep -q "category.LAUNCHER -p com.sukisu.ultra" "$T/am.log"'
+rm -f "$T/am.err"
+chk 'grep -q "open_req_pending && open_webui" "$T/mod/scripts/daemon.sh"'
+
 [ "$fail" = 0 ] && echo "test-keepalive OK"
 exit "$fail"

@@ -6,6 +6,7 @@
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/keepalive.sh"
+. "${MODDIR}/scripts/traffic.sh"
 
 daemon_pid() { cat "${RUN}/daemon.pid" 2>/dev/null; }
 
@@ -105,6 +106,7 @@ daemon_handle() {
     quit)
       DAEMON_QUITTING=1
       vm_stop
+      acct_snapshot
       notify_cancel
       rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready" "${RUN}/daemon.cmd"
       echo 0 > "${RUN}/daemon.res"
@@ -114,6 +116,7 @@ daemon_handle() {
     *) rc=2 ;;
   esac
   echo "$rc" > "${RUN}/daemon.res"
+  : > "${RUN}/notify.force"
   notify_update
 }
 
@@ -145,6 +148,8 @@ daemon_loop() {
   trap '_daemon_on_signal INT' INT
   trap '_daemon_on_exit' EXIT
   : > "${RUN}/daemon.cmd"
+  # 新守护进程重新核对通知（上一个进程留下的状态不可信）
+  rm -f "${RUN}/notify.on" "${RUN}/notify.idle" "${RUN}/notify.last" "${RUN}/notify.ts" "${RUN}/notify.seen" "${RUN}/notify.granted" "${RUN}/apk.failed"
   echo ready > "${RUN}/daemon.ready"
   log_info daemon "已启动 pid=$$ cgroup=$(cgroup_path $$ 2>/dev/null)"
   while :; do
@@ -158,7 +163,17 @@ daemon_loop() {
       emergency_teardown "$(vm_exit_reason)（xr0 无载波或虚拟机已死，规则仍在）"
     fi
     notify_update; rotate_all_logs
-    sleep 5
+    # 大约每分钟把累计流量写一次快照（内容不变不写盘）
+    _tick=$(( ${_tick:-0} + 1 ))
+    [ $((_tick % 12)) -eq 0 ] && acct_snapshot
+    # 5 秒一轮，但每秒看一眼通知点击和立即刷新请求（只做 [ -f ] 判断，不调外部命令）
+    _dl=0
+    while [ "$_dl" -lt 5 ]; do
+      sleep 1
+      _dl=$((_dl + 1))
+      open_req_pending && open_webui
+      [ -f "${RUN}/notify.force" ] && notify_update
+    done
   done
 }
 
