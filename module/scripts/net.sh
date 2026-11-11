@@ -405,7 +405,7 @@ net_watch() {
 net_down() {
   w="$(cat "${RUN}/net_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
   hs_tap_down
-  v6_proxy_remove
+  v6_proxy_remove "XRouter 网络停止"
   v6_nft_teardown
   gw_remove
   routes_clear

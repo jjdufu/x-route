@@ -6,14 +6,19 @@
 #                         on ：全部恢复
 #   xrouter-ipv6 boot     开机按已保存的开关落实到内核（xrouter-vpn 启动时调用）
 #   xrouter-ipv6 wan      按 host/ipv6.wan 给 eth0 加上游前缀中的地址，并把单臂 IPv6 改为 SNAT 到该地址
-#   xrouter-ipv6 state    输出实际状态 1/0（以内核 eth0 的 disable_ipv6 为准）
+#   xrouter-ipv6 state    输出实际状态 1/0：开关为开且内核 eth0 已启用才算 1
+#                         （开机时 netifd 落实配置前内核默认启用，不能据此误报为开）
 DEV=eth0
 CTL=/var/run/xrouter
 WAN_STATE=/tmp/xrouter.ipv6.wan
 ULA_NET="fd7a:7872:e9::/64"
 
 state() {
-  [ "$(cat /proc/sys/net/ipv6/conf/${DEV}/disable_ipv6 2>/dev/null)" = 0 ] && echo 1 || echo 0
+  if [ "$(uci -q get network.xr_eth0.ipv6)" = 1 ] && [ "$(cat /proc/sys/net/ipv6/conf/${DEV}/disable_ipv6 2>/dev/null)" = 0 ]; then
+    echo 1
+  else
+    echo 0
+  fi
 }
 
 lan_net6() {

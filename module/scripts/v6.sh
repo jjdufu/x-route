@@ -145,6 +145,7 @@ v6_write_wan() {
 
 v6_proxy_remove() {
   _addr="$(cat "${RUN}/net.v6vm" 2>/dev/null)"
+  [ -f "${RUN}/net.v6proxy" ] && log_info net "IPv6 邻居代理已撤销（${1:-虚拟机 IPv6 已关闭}）"
   _if="$(cat "${RUN}/net.v6upif" 2>/dev/null)"
   if [ -n "$_addr" ]; then
     _a="${_addr%/*}"
@@ -171,13 +172,15 @@ v6_proxy_remove() {
 # 安装或刷新邻居代理。成功则写入 net.v6proxy。部分运营商可能只放行本机地址。
 v6_proxy_install() {
   _busy="$(v6_discover)" || {
-    log_info net "上游没有可共享的 IPv6 前缀（可能仅有本机 /128），无法做邻居代理"
-    v6_proxy_remove
+    [ -f "${RUN}/net.v6nopfx" ] || log_info net "上游没有可共享的 IPv6 前缀（可能仅有本机 /128），无法做邻居代理"
+    : > "${RUN}/net.v6nopfx"
+    v6_proxy_remove "上游没有可共享的前缀"
     return 1
   }
+  rm -f "${RUN}/net.v6nopfx"
   _pfx="$(cat "${RUN}/net.v6pfx")"
   _if="$(cat "${RUN}/net.v6upif")"
-  _wan="$(v6_pick_addr "$_pfx" "$_busy")" || { v6_proxy_remove; return 1; }
+  _wan="$(v6_pick_addr "$_pfx" "$_busy")" || { v6_proxy_remove "前缀中没有可用地址"; return 1; }
   _a="${_wan%/*}"
   # 已有相同代理则只确保规则还在
   if [ -f "${RUN}/net.v6proxy" ] && [ "$(cat "${RUN}/net.v6vm" 2>/dev/null)" = "$_wan" ]; then
@@ -186,7 +189,7 @@ v6_proxy_install() {
     return 0
   fi
   # 地址变化时先撤旧的
-  [ -f "${RUN}/net.v6proxy" ] && v6_proxy_remove
+  [ -f "${RUN}/net.v6proxy" ] && v6_proxy_remove "上游前缀或地址变化，重新安装"
   # 重新发现（remove 清掉了 pfx 文件）
   _busy="$(v6_discover)" || { return 1; }
   _pfx="$(cat "${RUN}/net.v6pfx")"
@@ -205,11 +208,17 @@ v6_proxy_install() {
   ip6 neigh replace proxy "$_a" dev "$_if" 2>/dev/null
   ip6 route replace "$_a/128" dev "${XR_IF}" 2>/dev/null
   v6_tether_offload_off
+  # 以内核实际状态为准：proxy_ndp 未生效就不算开启，也不写日志说已开启
+  if [ "$(cat "${PROC}/sys/net/ipv6/conf/${_if}/proxy_ndp" 2>/dev/null)" != 1 ]; then
+    log_err net "IPv6 邻居代理未生效（${_if} proxy_ndp 写入失败）"
+    echo "$_wan" > "${RUN}/net.v6vm"; v6_proxy_remove "proxy_ndp 未生效"
+    return 1
+  fi
   echo "$_wan" > "${RUN}/net.v6vm"
   v6_write_wan "$_wan"
   : > "${RUN}/net.v6proxy"
   # 部分运营商只学习手机本机 IID，额外地址的 ND 代理可能没有回程
-  log_info net "IPv6 邻居代理 ${_wan} dev ${_if}（运营商若只放行本机地址，则可能无法出网）"
+  log_info net "IPv6 邻居代理已开启：${_wan} dev ${_if}（运营商若只放行本机地址，则可能无法出网）"
   return 0
 }
 
