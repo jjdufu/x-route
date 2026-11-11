@@ -5,6 +5,7 @@ MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 . "${MODDIR}/scripts/common.sh"
 . "${MODDIR}/scripts/keepalive.sh"
 . "${MODDIR}/scripts/daemon.sh"
+. "${MODDIR}/scripts/vm.sh"
 
 watchdog_loop() {
   ensure_dirs

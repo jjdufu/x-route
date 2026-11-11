@@ -102,5 +102,34 @@ chk 'cgroup_in_apps 1234'
 cgroup_escape 1234
 chk 'grep -qx 1234 "$T/cg/cgroup.procs"'
 
+
+# 8. 回归：看门狗未引入 vm.sh（vm_running 未定义）时，crosvm 仍在跑、xr0 有载波，不得撤路由
+unset -f vm_running 2>/dev/null
+mkdir -p "$T/proc/4321"; printf 'crosvm\0run\0' > "$T/proc/4321/cmdline"
+echo 4321 > "$RUN/crosvm.pid"
+echo block > "$RUN/net.gw"
+echo 1 > "$T/sysnet/xr0/carrier"
+: > "$T/net.calls"
+chk 'xr_vm_alive'
+chk '! stale_gateway'
+emergency_teardown "测试"
+chk '[ -f "$RUN/crosvm.pid" ]'
+chk '! grep -q "net down" "$T/net.calls"'
+# crosvm 真退出后才撤
+rm -rf "$T/proc/4321"
+chk '! xr_vm_alive'
+chk 'stale_gateway'
+rm -f "$RUN/net.gw" "$RUN/crosvm.pid"
+# 看门狗脚本必须引入 vm.sh
+chk 'grep -q "scripts/vm.sh" "$T/mod/scripts/watchdog.sh"'
+
+# 9. 保活应用经标准输入流式安装（system_server 读不到 /data/adb 路径）
+printf '#!/bin/sh\necho "pm $*" >> "%s/pm.log"; case "$*" in "path "*) exit 1 ;; *"-S "*) cat >/dev/null; echo Success ;; esac; exit 1\n' "$T" > "$T/bin/pm"
+chmod +x "$T/bin/pm"
+mkdir -p "$T/mod/apk"; echo apk > "$T/mod/apk/keepalive.apk"
+: > "$T/pm.log"
+chk 'install_keepalive_apk'
+chk 'grep -q "install -r -g -S 4" "$T/pm.log"'
+
 [ "$fail" = 0 ] && echo "test-keepalive OK"
 exit "$fail"

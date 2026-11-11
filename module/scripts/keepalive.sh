@@ -23,10 +23,10 @@ cgroup_escape() {
       "${_root}/system/cgroup.procs" \
       "${_root}/uid_0/cgroup.procs" \
       /dev/memcg/system/cgroup.procs \
-      /dev/cpuset/system-background/cgroup.procs \
-      /dev/cpuset/system-background/tasks \
-      /dev/stune/background/cgroup.procs \
-      /dev/stune/background/tasks
+      /dev/cpuset/foreground/cgroup.procs \
+      /dev/cpuset/foreground/tasks \
+      /dev/stune/foreground/cgroup.procs \
+      /dev/stune/foreground/tasks
   do
     [ -w "$_f" ] || continue
     # 只要有一处写入成功即记下，其余能写也写（cpu/mem 控制器可能分挂）
@@ -34,6 +34,19 @@ cgroup_escape() {
   done
   echo -1000 > "${XR_PROC_BASE}/${_pid}/oom_score_adj" 2>/dev/null
   return 0
+}
+
+# 虚拟机是否在跑。看门狗不引入 vm.sh 时也必须可靠：未定义 vm_running 就直接看 crosvm.pid。
+# 不能把“函数不存在”当成“虚拟机已死”，否则会误撤 xr0，导致 crosvm 写 tap 报 EBADFD、整机断网。
+xr_vm_alive() {
+  if type vm_running >/dev/null 2>&1; then
+    vm_running 2>/dev/null
+    return $?
+  fi
+  _p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
+  [ -n "$_p" ] || return 1
+  [ -d "${XR_PROC_BASE}/${_p}" ] || return 1
+  grep -q crosvm "${XR_PROC_BASE}/${_p}/cmdline" 2>/dev/null
 }
 
 # 当前 cgroup 路径（去掉控制器前缀），供测试与日志
@@ -95,11 +108,26 @@ apk_installed() {
   pm path "${XR_KEEPALIVE_PKG}" >/dev/null 2>&1
 }
 
+# 通过标准输入流式安装：system_server 读不到 /data/adb 下的文件（SELinux），直接给路径会失败。
 install_keepalive_apk() {
   apk_installed && return 0
   _apk="${MODDIR}/apk/keepalive.apk"
   [ -f "$_apk" ] || return 1
-  pm install -r -g "$_apk" >/dev/null 2>&1
+  _sz="$(wc -c < "$_apk" | tr -d ' ')"
+  _out="$(pm install -r -g -S "$_sz" < "$_apk" 2>&1)"
+  case "$_out" in
+    *Success*) return 0 ;;
+  esac
+  # 回退：复制到 shell 可读的临时目录再装
+  _tmp="/data/local/tmp/xrouter-keepalive.apk"
+  cp "$_apk" "$_tmp" 2>/dev/null && chmod 0644 "$_tmp" 2>/dev/null
+  _out2="$(pm install -r -g "$_tmp" 2>&1)"
+  rm -f "$_tmp"
+  case "$_out2" in
+    *Success*) return 0 ;;
+  esac
+  type log_err >/dev/null 2>&1 && log_err daemon "保活应用安装失败：$(echo "$_out $_out2" | tr '\n' ' ' | cut -c1-200)"
+  return 1
 }
 
 # 用伴生前台服务发出常驻通知（ColorOS 上比 cmd notification 可靠）
@@ -143,10 +171,7 @@ notify_cancel() {
 }
 
 notify_update() {
-  if ! type vm_running >/dev/null 2>&1; then
-    return 0
-  fi
-  if vm_running 2>/dev/null; then
+  if xr_vm_alive; then
     # 先走伴生 APK 前台服务；失败再试 cmd，且必须看得见通知
     if notify_apk_start && notify_visible; then
       return 0
@@ -186,7 +211,7 @@ routes_emergency_down() {
 emergency_teardown() {
   _why="${1:-未知原因}"
   log_err daemon "异常退出：${_why}"
-  if type vm_running >/dev/null 2>&1 && vm_running 2>/dev/null; then
+  if xr_vm_alive; then
     # 虚拟机还在，只记原因，把路由留给仍在跑的 xr0；由看门狗拉起守护进程
     return 0
   fi
@@ -199,7 +224,7 @@ emergency_teardown() {
 # xr0 已无载波或网卡不在，但接管规则还在
 stale_gateway() {
   [ -f "${RUN}/net.gw" ] || return 1
-  if type vm_running >/dev/null 2>&1 && vm_running 2>/dev/null; then
+  if xr_vm_alive; then
     _car="${XR_SYSNET:-/sys/class/net}/xr0/carrier"
     [ -f "$_car" ] && [ "$(cat "$_car" 2>/dev/null)" = 0 ] && return 0
     return 1

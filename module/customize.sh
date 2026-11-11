@@ -53,7 +53,8 @@ done
 chmod 0700 "${XR_DATA}"
 # 伴生前台服务：用于在本机真正显示常驻通知并辅助保活
 if [ -f "${MODPATH}/apk/keepalive.apk" ]; then
-  if pm install -r -g "${MODPATH}/apk/keepalive.apk" >/dev/null 2>&1; then
+  _sz="$(wc -c < "${MODPATH}/apk/keepalive.apk" | tr -d ' ')"
+  if pm install -r -g -S "${_sz}" < "${MODPATH}/apk/keepalive.apk" 2>&1 | grep -q Success; then
     ui_print "- 已安装保活应用"
   else
     ui_print "- 保活应用未能安装，将在启动时重试"
