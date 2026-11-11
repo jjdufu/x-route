@@ -78,13 +78,23 @@ chk '! kill -0 "$livepid" 2>/dev/null'
 chk '[ -f "$T/dl/xrouter-logs-20261110-180900.zip" ]'
 # 网络兜底清理覆盖 IPv4 与 IPv6（假 ip / iptables / ip6tables 记录调用）
 MOCK="$T/mock"; mkdir -p "$MOCK"; export MOCK
+# 假 dumpsys：第一次核对时通知还在（模拟首次撤销未生效），之后消失
+cat > "$T/bin/dumpsys" <<'D'
+#!/bin/sh
+[ "$1" = notification ] || exit 0
+n="$(cat "$MOCK/dumpsys.n" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$MOCK/dumpsys.n"
+[ "$n" = 0 ] && echo "  NotificationRecord(0x1: pkg=android user=UserHandle{0} id=233 tag=xrouter importance=2)"
+exit 0
+D
+chmod +x "$T/bin/dumpsys"
 XR_SYSBIN="$ROOT/tests/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
 for c in "ip6tables -X XR_FWD6" "ip6tables -t nat -X XR_NAT6" "iptables -X XR_FWD" "ip -6 route flush table 233" "ip route flush table 233" "ip route flush table 97 dev xr0"; do
   chk 'grep -qx "$c" "$MOCK/calls"'
 done
 # 常驻通知以 android 身份发出，卸载时经 app_process 显式撤销
-chk 'grep -q "app_process -Djava.class.path=$T/live/bin/xrnotify.jar /system/bin --nice-name=xrnotify com.xrouter.notify.Main cancel" "$MOCK/calls"'
-for p in 4800 4801 18800 18900 19100; do chk 'grep -qx "ip -6 rule del pref $p" "$MOCK/calls" && grep -qx "ip rule del pref $p" "$MOCK/calls"'; done
+# 撤销后以 dumpsys 核对，仍在则重试
+chk '[ "$(grep -c "app_process -Djava.class.path=$T/live/bin/xrnotify.jar /system/bin --nice-name=xrnotify-cancel com.xrouter.notify.Main cancel" "$MOCK/calls")" -eq 2 ]'
+for p in 4800 4801 18800 18900 19050 19060 19100; do chk 'grep -qx "ip -6 rule del pref $p" "$MOCK/calls" && grep -qx "ip rule del pref $p" "$MOCK/calls"'; done
 # 再次卸载：目录已空、工具缺失也不应非 0
 MODDIR="$T/live" sh "$T/live/uninstall.sh"
 chk '[ $? -eq 0 ]'

@@ -99,9 +99,30 @@ ip -6 route flush table 235 2>/dev/null
 ip link del xr0 2>/dev/null
 
 # 4. 常驻通知（android 身份发出，不随进程退出消失，须显式撤销）与唤醒锁
+#    守护进程、看门狗、通知进程都已结束，不会再补发；撤销后以 dumpsys 核对，最多重试 3 次。
+#    系统未开机完成（例如开机阶段执行卸载）时 system_server 还不可用：把 jar 复制到临时目录，
+#    后台等开机完成后再撤，撤完删掉临时 jar。
+notify_present() { dumpsys notification 2>/dev/null | grep -q "id=233 tag=xrouter"; }
+notify_cancel_once() {
+  "${SYSBIN}/app_process" -Djava.class.path="$1" /system/bin \
+    --nice-name=xrnotify-cancel com.xrouter.notify.Main cancel >/dev/null 2>&1
+}
 if [ -f "${MODDIR}/bin/xrnotify.jar" ]; then
-  "${SYSBIN}/app_process" -Djava.class.path="${MODDIR}/bin/xrnotify.jar" /system/bin \
-    --nice-name=xrnotify com.xrouter.notify.Main cancel >/dev/null 2>&1
+  if [ "$(getprop sys.boot_completed)" = 1 ]; then
+    n=0
+    while [ "$n" -lt 3 ]; do
+      notify_cancel_once "${MODDIR}/bin/xrnotify.jar"
+      notify_present || break
+      sleep 1; n=$((n + 1))
+    done
+  else
+    tj="/data/local/tmp/xrnotify-cancel.jar"
+    cp -f "${MODDIR}/bin/xrnotify.jar" "$tj" 2>/dev/null && chmod 0644 "$tj"
+    # shellcheck disable=SC2016
+    setsid sh -c 'until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 3; done; sleep 10
+      "$1/app_process" -Djava.class.path="$2" /system/bin --nice-name=xrnotify-cancel com.xrouter.notify.Main cancel
+      rm -f "$2"' xr-cancel "${SYSBIN}" "$tj" </dev/null >/dev/null 2>&1 &
+  fi
 fi
 { echo xrouter > /sys/power/wake_unlock; } 2>/dev/null
 { echo x-route > /sys/power/wake_unlock; } 2>/dev/null
