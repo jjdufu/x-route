@@ -1,6 +1,6 @@
 id=xrouter
 name=XRouter
-version=v3.6.0
-versionCode=360
+version=v3.7.0
+versionCode=370
 author=jjdufu
 description=在手机上运行 OpenWrt。
