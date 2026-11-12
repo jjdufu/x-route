@@ -125,20 +125,25 @@ function draw(svg, w, h, opts) {
     for (const d of brackets(w, h, chamfer, 1.2 + gap * 0.4, arm * 0.9)) {
       g.append(el("path", { class: "fr-br", d, stroke: tone.bright, "stroke-width": 1.55, filter: "url(#fr-glow)" }));
     }
-  } else {
-    // hex / dialog / 默认：三线完整周界，托架叠在中缝
-    g.append(el("path", { class: "fr-dim", d: poly(outer), stroke: tone.dim, "stroke-width": isHex && opts.ticks ? 1.35 : 1 }));
-    for (const d of brackets(w, h, chamfer, 1.2 + gap * 0.45, arm)) {
-      g.append(el("path", { class: "fr-br", d, stroke: tone.bright, "stroke-width": isHex && opts.ticks ? 2.05 : (isHex ? 1.25 : 1.65), filter: isHex && !opts.ticks ? null : "url(#fr-glow)" }));
-    }
-    g.append(el("path", { class: "fr-dim", d: poly(chamferPts(w, h, innerC, innerPad)), stroke: tone.dim, "stroke-width": 1 }));
+  } else if (isHex) {
+    // 页签：单层发光切角描边（活动亮绿 + 洋红刻度，未选中暗青单线）
+    const sw = opts.ticks ? 2.2 : 1.45;
+    const col = opts.ticks ? tone.bright : "rgba(0, 196, 216, .82)";
+    g.append(el("path", { class: "fr-br", d: poly(outer), stroke: col, "stroke-width": sw, filter: opts.ticks ? "url(#fr-glow)" : null }));
     if (opts.ticks) {
       for (const side of ["left", "right"]) {
         for (const d of ticks(w, h, chamfer, 1.2, side)) {
-          g.append(el("path", { class: "fr-tick", d, stroke: "#ff2bd6", "stroke-width": 1.4 }));
+          g.append(el("path", { class: "fr-tick", d, stroke: "#ff2bd6", "stroke-width": 1.5 }));
         }
       }
     }
+  } else {
+    // dialog / 默认：三线完整周界，托架叠在中缝
+    g.append(el("path", { class: "fr-dim", d: poly(outer), stroke: tone.dim, "stroke-width": 1 }));
+    for (const d of brackets(w, h, chamfer, 1.2 + gap * 0.45, arm)) {
+      g.append(el("path", { class: "fr-br", d, stroke: tone.bright, "stroke-width": 1.65, filter: "url(#fr-glow)" }));
+    }
+    g.append(el("path", { class: "fr-dim", d: poly(chamferPts(w, h, innerC, innerPad)), stroke: tone.dim, "stroke-width": 1 }));
   }
 
   // 局部 glow（很小的 drop-shadow，不用 blur 滤镜铺满）

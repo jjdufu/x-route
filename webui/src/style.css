@@ -69,6 +69,7 @@
   --md-ref-typeface-brand: system-ui, "Noto Sans SC", sans-serif;
   --md-ref-typeface-plain: system-ui, "Noto Sans SC", sans-serif;
   --xr-logo: "XR Logo", "XR Display", system-ui, sans-serif;
+  --xr-display: "XR Display", "XR Logo", system-ui, sans-serif;
   --xr-mono: "XR Mono", ui-monospace, "Noto Sans Mono CJK SC", monospace;
   --xr-ok: #39ff88;
   --xr-cyan: #00e5ff;
@@ -139,24 +140,24 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .hud-mag { color: var(--xr-magenta); text-shadow: 0 0 6px rgba(255, 43, 214, .7); }
 .title {
   margin: 2px 0 0; text-align: center; align-self: center;
-  font-family: var(--xr-logo); font-size: clamp(56px, 17.4vw, 72px); font-weight: 400;
-  font-style: italic; letter-spacing: .02em; line-height: .92;
-  transform: skewX(-10deg);
-  background: linear-gradient(90deg, #39ff88 0%, #5efbff 42%, #00e5ff 78%, #7dffd0 100%);
+  font-family: var(--xr-display); font-size: clamp(58px, 18vw, 76px); font-weight: 800;
+  font-style: italic; letter-spacing: -.03em; line-height: .9;
+  transform: skewX(-6deg);
+  background: linear-gradient(90deg, #39ff88 0%, #7dfff0 38%, #00e5ff 72%, #5efbff 100%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
   -webkit-text-fill-color: transparent;
   position: relative; width: 100%;
-  filter: drop-shadow(0 0 6px rgba(57, 255, 136, .32));
+  filter: drop-shadow(0 0 7px rgba(57, 255, 136, .38));
 }
 .title::before, .title::after {
   content: attr(data-text); position: absolute; left: 0; top: 0; width: 100%;
   color: #ff2bd6; -webkit-text-fill-color: #ff2bd6;
   background: none; -webkit-background-clip: initial; background-clip: initial;
-  opacity: .85; pointer-events: none;
-  font: inherit; letter-spacing: inherit; transform: none;
+  opacity: .9; pointer-events: none;
+  font: inherit; letter-spacing: inherit; font-weight: inherit; font-style: inherit;
 }
-.title::before { transform: translate(3px, -1px); clip-path: polygon(0 8%, 100% 12%, 100% 28%, 0 22%, 0 48%, 100% 44%, 100% 52%, 0 58%); }
-.title::after { color: #00e5ff; -webkit-text-fill-color: #00e5ff; transform: translate(-3px, 1px); clip-path: polygon(0 68%, 100% 62%, 100% 78%, 0 86%, 0 92%, 100% 96%, 100% 100%, 0 100%); }
+.title::before { transform: translate(4px, -1px); clip-path: polygon(0 6%, 100% 10%, 100% 22%, 0 18%, 0 38%, 100% 34%, 100% 44%, 0 50%, 0 62%, 100% 58%); }
+.title::after { color: #00e5ff; -webkit-text-fill-color: #00e5ff; transform: translate(-3px, 2px); clip-path: polygon(0 64%, 100% 58%, 100% 70%, 0 78%, 0 86%, 100% 90%, 100% 100%, 0 100%); }
 .chip { display: inline-flex; align-items: center; gap: 6px; }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .chip-ok { color: var(--xr-ok); }
@@ -397,15 +398,17 @@ md-primary-tab[active]::after, md-primary-tab[aria-selected="true"]::after {
 .chip-intact { opacity: 0; visibility: hidden; }
 .running .chip-cracked, .healed .chip-cracked { opacity: 0; visibility: hidden; }
 .running .chip-intact, .healed .chip-intact { opacity: 1; visibility: visible; }
-.running .chip-pins { fill: #4a5c52; }
-.die-live { fill: #0c1611; }
-.die-live-pad { stroke: #1c4a32; stroke-width: .8; }
-.die-edge-live { stroke: #39ff88; stroke-width: 2; fill: none; filter: drop-shadow(0 0 3px #39ff88); }
-.core-outer { fill: #163d28; stroke: #39ff88; stroke-width: 1.2; }
-.core-inner { fill: #d6ffe4; filter: drop-shadow(0 0 4px #9dffc6); }
+.running .chip-pins, .healed .chip-pins, .starting .chip-pins { fill: #3dff8a; }
+.die-live { fill: #07140e; }
+.die-live-pad { stroke: #1a5a38; stroke-width: 1; }
+.die-edge-live { stroke: #39ff88; stroke-width: 2.2; fill: none; filter: drop-shadow(0 0 3px #39ff88); }
+.core-frame { stroke: #39ff88; stroke-width: 2; filter: drop-shadow(0 0 3px rgba(57, 255, 136, .7)); }
+.core-frame-in { stroke: rgba(57, 255, 136, .55); stroke-width: 1.1; }
+.core-outer { fill: #0a2a18; stroke: #39ff88; stroke-width: 1.4; }
+.core-inner { fill: #d6ffe4; filter: drop-shadow(0 0 5px #9dffc6); }
 .running .power { filter: drop-shadow(0 0 8px rgba(57, 255, 136, .55)); }
 .starting .power { filter: drop-shadow(0 0 10px rgba(57, 255, 136, .4)); }
-.chip-flow-g, .chip-flow { fill: none; stroke: #7dffb0; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+.chip-flow-g, .chip-flow { fill: none; stroke: #9dffc6; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
 .chip-flow { stroke-dasharray: 8 20; animation: chipFlow 2.2s linear infinite; }
 @keyframes chipFlow { to { stroke-dashoffset: -28; } }
 .page:not(.on) .chip-flow, .hid .chip-flow { animation-play-state: paused; }
@@ -419,7 +422,7 @@ md-primary-tab[active]::after, md-primary-tab[aria-selected="true"]::after {
   .power:active { transform: none; }
   .chip-flow, .tr-pulse { animation: none; }
   .title::before, .title::after { transform: none; }
-  .title { filter: none; transform: skewX(-10deg); }
+  .title { filter: none; transform: skewX(-6deg); }
 }
 /* 失败错误叠在舞台底部空隙，绝对定位，不改变舞台高度、不推动芯片 */
 .power-err {
