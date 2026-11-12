@@ -77,7 +77,7 @@ kill "$(cat "$RUN/crosvm.pid")" 2>/dev/null
 w=0; while kill -0 "$dpid" 2>/dev/null && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
 chk '! kill -0 "$dpid" 2>/dev/null'
 chk '[ "$(grep -c "异常退出" "$LOG")" = "$n0" ] && [ ! -f "$RUN/last_error" ]'
-chk '[ "$(grep -c "系统关机，虚拟机随之停止" "$LOG")" = 1 ]'
+chk '[ "$(grep -c "系统关机，服务随之停止" "$LOG")" = 1 ]'
 chk '! grep -v "^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9:]* \[" "$LOG" | grep -q .'
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"
 

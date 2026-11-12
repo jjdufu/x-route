@@ -101,7 +101,7 @@ diag_guest() {
   _w="${1:-10}"
   _p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
   if [ -z "$_p" ] || ! kill -0 "$_p" 2>/dev/null || [ ! -d "${RUN}/guest/host" ]; then
-    echo "### OpenWrt 快照：虚拟机未运行"; return 1
+    echo "### OpenWrt 快照：服务未运行"; return 1
   fi
   _ts="$(date +%s)$$"
   echo "snap ${_ts}" > "${RUN}/guest/host/diag.cmd"
@@ -115,7 +115,7 @@ diag_guest() {
     echo "### OpenWrt 快照 $(date '+%F %T')"
     tail -n +2 "${RUN}/guest/guest/diag.txt"
   else
-    echo "### OpenWrt 快照：${_w} 秒内无响应（旧版系统盘不支持，或虚拟机未就绪）"
+    echo "### OpenWrt 快照：${_w} 秒内无响应（旧版系统盘不支持，或服务未就绪）"
     return 1
   fi
 }

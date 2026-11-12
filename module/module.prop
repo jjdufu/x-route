@@ -3,4 +3,4 @@ name=XRouter
 version=v3.6.0
 versionCode=360
 author=jjdufu
-description=在手机虚拟机中运行 OpenWrt。
+description=在手机上运行 OpenWrt。

@@ -2,7 +2,7 @@
 # ==============================================================================
 # XRouter: 统一命令行（docs/v2-plan/10-cli-webui.md）。WebUI、action.sh、service.sh 只调用它。
 # 用法：xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|
-#       vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export
+#       vpn-import PATH|vpn-enable|vpn-disable|ls PATH [dir|ovpn]|log-export|diag-export
 # ==============================================================================
 MODDIR="${MODDIR:-/data/adb/modules/xrouter}"
 
@@ -141,8 +141,10 @@ status_json() {
   if vm_running && [ -f "${RUN}/guest/guest/ipv6" ]; then
     [ "$(cat "${RUN}/guest/guest/ipv6")" = 1 ] && v6=true || v6=false
   fi
-  printf '{"vm":%s,"net":%s,"ipv6":%s,"vpn":{"status":%s,"addr":%s,"routes_active":%s,"routes_rejected":%s,"tunnels":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
-    "$vmj" "$netj" "$v6" "$(jstr "$vst")" "$(jstr "$vaddr")" "$(jarr "$act")" "$(jarr "$(vpn_rejected)")" "$tun" \
+  vcfg=false; [ -f "${XR_DATA}/config/openvpn.ovpn" ] && vcfg=true
+  ven=true; [ "$(cat "${XR_DATA}/config/openvpn.enabled" 2>/dev/null)" = 0 ] && ven=false
+  printf '{"vm":%s,"net":%s,"ipv6":%s,"vpn":{"status":%s,"addr":%s,"routes_active":%s,"routes_rejected":%s,"tunnels":%s,"configured":%s,"enabled":%s},"share":{"enabled":%s,"mode":%s,"path":%s,"ce_ready":%s,"rw_supported":%s},"config":{%s}}\n' \
+    "$vmj" "$netj" "$v6" "$(jstr "$vst")" "$(jstr "$vaddr")" "$(jarr "$act")" "$(jarr "$(vpn_rejected)")" "$tun" "$vcfg" "$ven" \
     "$([ "${VM_SHARE}" = 1 ] && echo true || echo false)" "$(jstr "${smode:-off}")" "$(jstr "${VM_SHARE_PATH}")" \
     "$ce" "$rw" "$cfg"
 }
@@ -164,7 +166,7 @@ status_line() {
 ipv6_set() {
   case "$1" in on) want=1 ;; off) want=0 ;; *) echo '{"ok":false,"error":"用法：xr ipv6 on|off"}'; return 2 ;; esac
   if ! vm_running || [ ! -f "${RUN}/guest/guest/ipv6" ]; then
-    printf '{"ok":false,"error":%s}\n' "$(jstr "虚拟机未就绪")"; return 1
+    printf '{"ok":false,"error":%s}\n' "$(jstr "服务未就绪")"; return 1
   fi
   echo "$1 $(date +%s)" > "${RUN}/guest/host/ipv6.cmd"
   i=0
@@ -173,10 +175,10 @@ ipv6_set() {
   done
   [ "${VM_NET:-1}" = 1 ] && sh "${MODDIR}/scripts/net.sh" sync
   if [ "$(cat "${RUN}/guest/guest/ipv6" 2>/dev/null)" = "$want" ]; then
-    log_info xr "虚拟机 IPv6 已$([ "$want" = 1 ] && echo 开启 || echo 关闭)"
+    log_info xr "服务 IPv6 已$([ "$want" = 1 ] && echo 开启 || echo 关闭)"
     echo '{"ok":true}'
   else
-    printf '{"ok":false,"error":%s}\n' "$(jstr "虚拟机未响应")"; return 1
+    printf '{"ok":false,"error":%s}\n' "$(jstr "服务未响应")"; return 1
   fi
 }
 
@@ -193,6 +195,7 @@ vpn_import() {
   cp -f "$src" "${XR_DATA}/config/openvpn.ovpn" && chmod 0600 "${XR_DATA}/config/openvpn.ovpn"
   _bn="${src##*/}"; _bn="${_bn%.*}"
   printf '%s\n' "$_bn" | sed 's/["\\]//g' > "${XR_DATA}/config/openvpn.name"
+  echo 1 > "${XR_DATA}/config/openvpn.enabled"
   if vm_running; then
     mkdir -p "${RUN}/guest/host"
     cp -f "$src" "${RUN}/guest/host/openvpn.ovpn"
@@ -202,10 +205,41 @@ vpn_import() {
   echo '{"ok":true}'
 }
 
+
+# OpenVPN 启停：写持久开关，再经控制目录通知客侧 enable|disable；等待 guest/openvpn.status 变化
+vpn_persist() { mkdir -p "${XR_DATA}/config"; echo "$1" > "${XR_DATA}/config/openvpn.enabled"; }
+
+vpn_set() {   # $1=enable|disable
+  case "$1" in enable) want=1 ;; disable) want=0 ;; *) echo '{"ok":false,"error":"用法：xr vpn-enable|vpn-disable"}'; return 2 ;; esac
+  [ -f "${XR_DATA}/config/openvpn.ovpn" ] || { echo '{"ok":false,"error":"未导入配置"}'; return 1; }
+  vpn_persist "$want"
+  if ! vm_running; then
+    if [ "$want" = 1 ]; then
+      printf '{"ok":false,"error":%s}\n' "$(jstr "服务未运行")"; return 1
+    fi
+    echo '{"ok":true}'
+    return 0
+  fi
+  mkdir -p "${RUN}/guest/host"
+  [ "$want" = 1 ] && cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
+  echo "$1 $(date +%s)" > "${RUN}/guest/host/openvpn.cmd"
+  i=0
+  while [ "$i" -lt "${XR_VPN_WAIT:-20}" ]; do
+    vst="$(cat "${RUN}/guest/guest/openvpn.status" 2>/dev/null)"
+    if [ "$want" = 1 ]; then
+      if [ "$vst" = up ] || [ "$vst" = connecting ]; then echo '{"ok":true}'; return 0; fi
+    else
+      if [ "$vst" = down ] || [ -z "$vst" ]; then echo '{"ok":true}'; return 0; fi
+    fi
+    sleep 1; i=$((i+1))
+  done
+  printf '{"ok":false,"error":%s}\n' "$(jstr "未响应")"; return 1
+}
+
 # 分来源累计流量（WebUI「累计流量」弹窗）：手机本机 / 热点设备各自的 总流量 | 公网 | 内网，
 # 由 OpenWrt 按转发计数（本次运行以来，见 xrouter-acct）。经控制目录请求，最多等 $1 秒
 traffic_split() {
-  vm_running || { echo '{"ok":false,"error":"虚拟机未运行"}'; return 1; }
+  vm_running || { echo '{"ok":false,"error":"服务未运行"}'; return 1; }
   mkdir -p "${RUN}/guest/host"
   _ts="$(date +%s)$$"
   echo "snap ${_ts}" > "${RUN}/guest/host/acct.cmd"
@@ -221,7 +255,7 @@ traffic_split() {
     sleep 0.2 2>/dev/null || sleep 1
     _i=$((_i + 1))
   done
-  echo '{"ok":false,"error":"虚拟机未响应"}'; return 1
+  echo '{"ok":false,"error":"服务未响应"}'; return 1
 }
 
 # 列出内部存储中的目录（WebUI 文件夹浏览）。$2=dir 只列目录；ovpn 另列 .ovpn/.conf 文件
@@ -384,11 +418,13 @@ case "$cmd" in
   reset-disk)  disk_reset ;;
   sync)        vm_running && sh "${MODDIR}/scripts/net.sh" sync ;;
   vpn-import)  vpn_import "${1:-}" ;;
+  vpn-enable)  vpn_set enable ;;
+  vpn-disable) vpn_set disable ;;
   project)    am start -a android.intent.action.VIEW -d "https://github.com/jjdufu/x-route" >/dev/null 2>&1 ;;
   luci)        load_config; am start -a android.intent.action.VIEW -d "http://${XR_NET_PREFIX}.254" >/dev/null 2>&1 ;;
   ls)          list_dir "${1:-}" "${2:-dir}" ;;
   log-export)  log_export ;;
   diag-export) diag_export ;;
   uninstall-now) uninstall_now "${1:-}" ;;
-  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"; exit 2 ;;
+  *) echo "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH|vpn-enable|vpn-disable|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"; exit 2 ;;
 esac

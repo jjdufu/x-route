@@ -97,7 +97,7 @@ sys_shutting_down() {
 shutdown_note() {
   [ -f "${RUN}/shutdown.noted" ] && return 0
   : > "${RUN}/shutdown.noted" 2>/dev/null
-  log_info "${1:-daemon}" "系统关机，虚拟机随之停止"
+  log_info "${1:-daemon}" "系统关机，服务随之停止"
 }
 
 # 开机清理（service.sh 最先调用）：run/ 在 /data 上，重启后还留着上一次开机的全部运行时状态

@@ -73,7 +73,7 @@ rm -f "$T/net.calls"
 emergency_teardown "测试杀死守护进程"
 chk 'grep -qx "net down" "$T/net.calls"'
 chk 'grep -q "异常退出：测试杀死守护进程" "$LOG"'
-chk '[ "$(cat "$RUN/last_error")" = "虚拟机意外退出" ]'
+chk '[ "$(cat "$RUN/last_error")" = "服务意外退出" ]'
 
 # 3b. 同一原因不刷屏：规则撤不掉时每轮都会走到 emergency_teardown，同一原因只记一次
 emergency_teardown "测试杀死守护进程"; emergency_teardown "测试杀死守护进程"
@@ -87,7 +87,7 @@ printf '#!/bin/sh\n[ "$1" = sys.shutdown.requested ] && echo 1reboot\nexit 0\n' 
 n0="$(grep -c "异常退出" "$LOG")"
 emergency_teardown "关机中 crosvm 已退出"; emergency_teardown "关机中 crosvm 已退出（看门狗）"
 chk '[ "$(grep -c "异常退出" "$LOG")" = "$n0" ] && [ ! -f "$RUN/last_error" ]'
-chk '[ "$(grep -c "系统关机，虚拟机随之停止" "$LOG")" = 1 ]'
+chk '[ "$(grep -c "系统关机，服务随之停止" "$LOG")" = 1 ]'
 chk 'grep -qx "net down" "$T/net.calls" && ! stale_gateway'
 # 关机标记粘住：getprop 之后失败也仍视为关机
 rm -f "$T/bin/getprop"; chk 'sys_shutting_down'

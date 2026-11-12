@@ -33,19 +33,291 @@
         </div>
 
         <div class="power-area">
-          <!-- 舞台：电源按钮周围是整页电路板最密的一块（芯片 + 扇出走线），边缘径向淡出融进整页底纹。
-               未启动红色断电；开机中按钮淡出、瀑布式开机日志淡入；运行中绿色、电流流向芯片（电源按钮） -->
+          <!-- 舞台：可点芯片在整页电路板最密处。停止/失败为裂纹芯片；启动中淡出并显示瀑布日志；
+               运行中愈合上电，绿光沿内部电路流向引脚。过渡见 docs/chip-transition-flow.md -->
           <div id="stage" class="stage stopped">
             <div class="st-wrap" aria-hidden="true">
               <div class="st-layer st-red"></div><div class="st-layer st-green"></div>
               <div id="pcb-flow" class="pcb-flow"></div>
             </div>
             <div id="power-wrap" class="power-wrap stopped">
-              <svg class="ring" viewBox="0 0 140 140" aria-hidden="true"><circle cx="70" cy="70" r="66"></circle></svg>
               <button id="power" class="power" type="button" aria-label="电源">
                 <md-ripple></md-ripple>
                 <md-focus-ring></md-focus-ring>
-                <md-icon data-icon="power_settings_new"></md-icon>
+                <svg class="chip-svg" viewBox="0 0 200 200" aria-hidden="true">
+                  <defs>
+                    <clipPath id="chip-die"><rect x="34" y="34" width="132" height="132" rx="14"/></clipPath><clipPath id="f1"><polygon points="34,34 112,34 100,58 86,72 70,64 48,52 34,62"/></clipPath><clipPath id="f2"><polygon points="112,34 166,34 166,78 138,86 118,70 100,58"/></clipPath><clipPath id="f3"><polygon points="34,62 48,52 70,64 86,72 92,96 78,124 52,118 34,128"/></clipPath><clipPath id="f4"><polygon points="34,128 52,118 78,124 88,150 70,166 34,166"/></clipPath><clipPath id="f5"><polygon points="92,96 86,72 100,58 118,70 138,86 166,78 166,136 150,144 120,136 88,150 78,124"/></clipPath><clipPath id="f-loose"><polygon points="150,144 166,136 166,166 140,166 148,152"/></clipPath>
+                  </defs>
+                  <g class="chip-pins"><rect class="pin" x="26" y="46" width="8" height="4" rx="1"/><rect class="pin" x="166" y="46" width="8" height="4" rx="1"/><rect class="pin" x="46" y="26" width="4" height="8" rx="1"/><rect class="pin" x="46" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="59" width="8" height="4" rx="1"/><rect class="pin" x="166" y="59" width="8" height="4" rx="1"/><rect class="pin" x="59" y="26" width="4" height="8" rx="1"/><rect class="pin" x="59" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="72" width="8" height="4" rx="1"/><rect class="pin" x="166" y="72" width="8" height="4" rx="1"/><rect class="pin" x="72" y="26" width="4" height="8" rx="1"/><rect class="pin" x="72" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="85" width="8" height="4" rx="1"/><rect class="pin" x="166" y="85" width="8" height="4" rx="1"/><rect class="pin" x="85" y="26" width="4" height="8" rx="1"/><rect class="pin" x="85" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="98" width="8" height="4" rx="1"/><rect class="pin" x="166" y="98" width="8" height="4" rx="1"/><rect class="pin" x="98" y="26" width="4" height="8" rx="1"/><rect class="pin" x="98" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="111" width="8" height="4" rx="1"/><rect class="pin" x="166" y="111" width="8" height="4" rx="1"/><rect class="pin" x="111" y="26" width="4" height="8" rx="1"/><rect class="pin" x="111" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="124" width="8" height="4" rx="1"/><rect class="pin" x="166" y="124" width="8" height="4" rx="1"/><rect class="pin" x="124" y="26" width="4" height="8" rx="1"/><rect class="pin" x="124" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="137" width="8" height="4" rx="1"/><rect class="pin" x="166" y="137" width="8" height="4" rx="1"/><rect class="pin" x="137" y="26" width="4" height="8" rx="1"/><rect class="pin" x="137" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="150" width="8" height="4" rx="1"/><rect class="pin" x="166" y="150" width="8" height="4" rx="1"/><rect class="pin" x="150" y="26" width="4" height="8" rx="1"/><rect class="pin" x="150" y="166" width="4" height="8" rx="1"/></g>
+                  <g class="chip-cracked">
+                    <g class="chip-die-frags" clip-path="url(#chip-die)">
+                      <g class="frag f1" data-dx="-6" data-dy="-7" data-rot="-4" clip-path="url(#f1)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/><rect class="die-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g><g class="frag f2" data-dx="7" data-dy="-8" data-rot="5" clip-path="url(#f2)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/><rect class="die-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g><g class="frag f3" data-dx="-8" data-dy="3" data-rot="-3" clip-path="url(#f3)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/><rect class="die-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g><g class="frag f4" data-dx="-5" data-dy="8" data-rot="4" clip-path="url(#f4)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/><rect class="die-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g><g class="frag f5" data-dx="5" data-dy="5" data-rot="3" clip-path="url(#f5)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/><rect class="die-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g>
+                    </g>
+                    <g class="frag f-loose" data-dx="16" data-dy="18" data-rot="14" clip-path="url(#f-loose)"><rect class="die-fill" x="34" y="34" width="132" height="132" rx="14"/><rect class="die-edge" x="34" y="34" width="132" height="132" rx="14" fill="none"/>
+                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M50 52 H78 V70"/>
+                  <path d="M58 52 V44"/>
+                  <path d="M90 48 H120 V66 H136"/>
+                  <path d="M110 48 V40"/>
+                  <path d="M46 90 H70 V110 H90"/>
+                  <path d="M70 98 H58"/>
+                  <path d="M48 150 H78 V138"/>
+                  <path d="M100 88 V118 H128 V138 H150"/>
+                  <path d="M128 118 H140"/>
+                  <path d="M154 92 V80 H140"/>
+                  <path d="M150 152 H160 V160"/>
+                  <path d="M88 150 H100 V166"/>
+                </g>
+                <g class="vias-red" fill="#c0473c">
+                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
+                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
+                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
+                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
+                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
+                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
+                </g>
+                </g>
+                <path class="crack-lines" fill="none" stroke="#0b0c0e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+                  d="M112 34 L100 58 L86 72 L70 64 L48 52 L34 62
+                     M86 72 L92 96 L78 124 L52 118 L34 128
+                     M78 124 L88 150 L70 166
+                     M100 58 L118 70 L138 86 L166 78
+                     M138 86 L166 136 L150 144 L120 136 L88 150
+                     M150 144 L148 152 L140 166"/>
+                <path class="crack-gap" fill="#0b0c0e" fill-opacity=".85"
+                  d="M96 100 L102 108 L98 116 L90 112 Z"/>
+
+                  </g>
+                  <g class="chip-intact" clip-path="url(#chip-die)">
+                    <rect class="die-live" x="34" y="34" width="132" height="132" rx="14"/>
+                    <rect class="die-live-pad" x="40" y="40" width="120" height="120" rx="10" fill="none"/>
+                    
+                <g class="circuit-static" fill="none" stroke="#1f6b45" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round">
+                  <!-- quadrant memory-like blocks -->
+                  <path d="M58 58 h22 v10 h-8 v8 h-14 z"/>
+                  <path d="M120 58 h22 v18 h-22 v-8 h8 v-10 z"/>
+                  <path d="M58 122 h14 v8 h8 v10 h-22 z"/>
+                  <path d="M120 124 h22 v14 h-10 v-6 h-12 z"/>
+                  <path d="M64 64 h10 v6 h-10 z"/><path d="M126 64 h10 v6 h-10 z"/>
+                  <path d="M64 128 h10 v6 h-10 z"/><path d="M126 130 h10 v6 h-10 z"/>
+                  <!-- fan to pins (四边) -->
+                <path d="M100 100 L100 42"/>
+                <path d="M100 100 L100 158"/>
+                <path d="M100 100 L42 100"/>
+                <path d="M100 100 L158 100"/>
+                <path d="M100 100 L60 60"/>
+                <path d="M100 100 L140 60"/>
+                <path d="M100 100 L60 140"/>
+                <path d="M100 100 L140 140"/>
+                <path d="M76 76 H124 V124 H76 Z"/>
+                <path d="M88 88 H112 V112 H88 Z"/>
+                <path d="M76 81.8 L34 48"/>
+                <path d="M124 81.8 L166 48"/>
+                <path d="M81.8 76 L48 34"/>
+                <path d="M81.8 124 L48 166"/>
+                <path d="M76 86.3 L34 61"/>
+                <path d="M124 86.3 L166 61"/>
+                <path d="M86.3 76 L61 34"/>
+                <path d="M86.3 124 L61 166"/>
+                <path d="M76 90.9 L34 74"/>
+                <path d="M124 90.9 L166 74"/>
+                <path d="M90.9 76 L74 34"/>
+                <path d="M90.9 124 L74 166"/>
+                <path d="M76 95.5 L34 87"/>
+                <path d="M124 95.5 L166 87"/>
+                <path d="M95.5 76 L87 34"/>
+                <path d="M95.5 124 L87 166"/>
+                <path d="M76 100.0 L34 100"/>
+                <path d="M124 100.0 L166 100"/>
+                <path d="M100.0 76 L100 34"/>
+                <path d="M100.0 124 L100 166"/>
+                <path d="M76 104.5 L34 113"/>
+                <path d="M124 104.5 L166 113"/>
+                <path d="M104.5 76 L113 34"/>
+                <path d="M104.5 124 L113 166"/>
+                <path d="M76 109.1 L34 126"/>
+                <path d="M124 109.1 L166 126"/>
+                <path d="M109.1 76 L126 34"/>
+                <path d="M109.1 124 L126 166"/>
+                <path d="M76 113.7 L34 139"/>
+                <path d="M124 113.7 L166 139"/>
+                <path d="M113.7 76 L139 34"/>
+                <path d="M113.7 124 L139 166"/>
+                <path d="M76 118.2 L34 152"/>
+                <path d="M124 118.2 L166 152"/>
+                <path d="M118.2 76 L152 34"/>
+                <path d="M118.2 124 L152 166"/>
+                </g>
+                    <g class="chip-flow-g"><path class="chip-flow" data-flow="c0" pathLength="100" d="M100 100 L100 42"/>
+                <path class="chip-flow" data-flow="c1" pathLength="100" d="M100 100 L100 158"/>
+                <path class="chip-flow" data-flow="c2" pathLength="100" d="M100 100 L42 100"/>
+                <path class="chip-flow" data-flow="c3" pathLength="100" d="M100 100 L158 100"/>
+                <path class="chip-flow" data-flow="c4" pathLength="100" d="M100 100 L60 60"/>
+                <path class="chip-flow" data-flow="c5" pathLength="100" d="M100 100 L140 60"/>
+                <path class="chip-flow" data-flow="c6" pathLength="100" d="M100 100 L60 140"/>
+                <path class="chip-flow" data-flow="c7" pathLength="100" d="M100 100 L140 140"/>
+                <path class="chip-flow" data-flow="r0" pathLength="100" d="M76 76 H124 V124 H76 Z"/>
+                <path class="chip-flow" data-flow="r1" pathLength="100" d="M88 88 H112 V112 H88 Z"/>
+                <path class="chip-flow" data-flow="pl0" pathLength="100" d="M76 81.8 L34 48"/>
+                <path class="chip-flow" data-flow="pr0" pathLength="100" d="M124 81.8 L166 48"/>
+                <path class="chip-flow" data-flow="pt0" pathLength="100" d="M81.8 76 L48 34"/>
+                <path class="chip-flow" data-flow="pb0" pathLength="100" d="M81.8 124 L48 166"/>
+                <path class="chip-flow" data-flow="pl1" pathLength="100" d="M76 86.3 L34 61"/>
+                <path class="chip-flow" data-flow="pr1" pathLength="100" d="M124 86.3 L166 61"/>
+                <path class="chip-flow" data-flow="pt1" pathLength="100" d="M86.3 76 L61 34"/>
+                <path class="chip-flow" data-flow="pb1" pathLength="100" d="M86.3 124 L61 166"/>
+                <path class="chip-flow" data-flow="pl2" pathLength="100" d="M76 90.9 L34 74"/>
+                <path class="chip-flow" data-flow="pr2" pathLength="100" d="M124 90.9 L166 74"/>
+                <path class="chip-flow" data-flow="pt2" pathLength="100" d="M90.9 76 L74 34"/>
+                <path class="chip-flow" data-flow="pb2" pathLength="100" d="M90.9 124 L74 166"/>
+                <path class="chip-flow" data-flow="pl3" pathLength="100" d="M76 95.5 L34 87"/>
+                <path class="chip-flow" data-flow="pr3" pathLength="100" d="M124 95.5 L166 87"/>
+                <path class="chip-flow" data-flow="pt3" pathLength="100" d="M95.5 76 L87 34"/>
+                <path class="chip-flow" data-flow="pb3" pathLength="100" d="M95.5 124 L87 166"/>
+                <path class="chip-flow" data-flow="pl4" pathLength="100" d="M76 100.0 L34 100"/>
+                <path class="chip-flow" data-flow="pr4" pathLength="100" d="M124 100.0 L166 100"/>
+                <path class="chip-flow" data-flow="pt4" pathLength="100" d="M100.0 76 L100 34"/>
+                <path class="chip-flow" data-flow="pb4" pathLength="100" d="M100.0 124 L100 166"/>
+                <path class="chip-flow" data-flow="pl5" pathLength="100" d="M76 104.5 L34 113"/>
+                <path class="chip-flow" data-flow="pr5" pathLength="100" d="M124 104.5 L166 113"/>
+                <path class="chip-flow" data-flow="pt5" pathLength="100" d="M104.5 76 L113 34"/>
+                <path class="chip-flow" data-flow="pb5" pathLength="100" d="M104.5 124 L113 166"/>
+                <path class="chip-flow" data-flow="pl6" pathLength="100" d="M76 109.1 L34 126"/>
+                <path class="chip-flow" data-flow="pr6" pathLength="100" d="M124 109.1 L166 126"/>
+                <path class="chip-flow" data-flow="pt6" pathLength="100" d="M109.1 76 L126 34"/>
+                <path class="chip-flow" data-flow="pb6" pathLength="100" d="M109.1 124 L126 166"/>
+                <path class="chip-flow" data-flow="pl7" pathLength="100" d="M76 113.7 L34 139"/>
+                <path class="chip-flow" data-flow="pr7" pathLength="100" d="M124 113.7 L166 139"/>
+                <path class="chip-flow" data-flow="pt7" pathLength="100" d="M113.7 76 L139 34"/>
+                <path class="chip-flow" data-flow="pb7" pathLength="100" d="M113.7 124 L139 166"/>
+                <path class="chip-flow" data-flow="pl8" pathLength="100" d="M76 118.2 L34 152"/>
+                <path class="chip-flow" data-flow="pr8" pathLength="100" d="M124 118.2 L166 152"/>
+                <path class="chip-flow" data-flow="pt8" pathLength="100" d="M118.2 76 L152 34"/>
+                <path class="chip-flow" data-flow="pb8" pathLength="100" d="M118.2 124 L152 166"/></g>
+                    
+                <g class="chip-core">
+                  <rect x="90" y="90" width="20" height="20" rx="3" class="core-outer"/>
+                  <rect x="94" y="94" width="12" height="12" rx="2" class="core-inner"/>
+                </g>
+
+                    <rect class="die-edge-live" x="34" y="34" width="132" height="132" rx="14" fill="none"/>
+                  </g>
+                </svg>
               </button>
             </div>
             <div id="boot" class="boot" aria-hidden="true"><div id="boot-log" class="boot-log"></div></div>
@@ -79,6 +351,8 @@
       <section class="page" id="page-link">
         <div id="vpn-list" class="vpn-list"></div>
         <div id="vpn-actions" class="actions">
+          <md-filled-tonal-button id="btn-vpn-start" disabled>启动</md-filled-tonal-button>
+          <md-outlined-button id="btn-vpn-stop" class="danger" disabled>停止</md-outlined-button>
           <md-filled-tonal-button id="btn-import"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
         </div>
       </section>

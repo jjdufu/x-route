@@ -264,7 +264,7 @@ emergency_teardown() {
     # 虚拟机还在，只记原因，把路由留给仍在跑的 xr0；由看门狗拉起守护进程
     return 0
   fi
-  echo "虚拟机意外退出" > "${RUN}/last_error"
+  echo "服务意外退出" > "${RUN}/last_error"
   rm -f "${RUN}/state" "${RUN}/crosvm.pid"
   routes_emergency_down
   notify_cancel

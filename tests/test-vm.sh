@@ -38,13 +38,23 @@ $VM expand 2048; chk '[ $? -ne 0 ] && [ "$(stat -c %s "$ROOTFS")" -eq $((300*104
 # 2. 停止
 $VM stop
 chk '! sh -c ". $T/mod/scripts/vm.sh; vm_running" && [ ! -f "$RUN/crosvm.pid" ] && grep -q "net down" "$T/net.calls"'
+# 2b. OpenVPN 持久开关：开机按 openvpn.enabled 下发 enable / disable
+. "$T/mod/scripts/vm.sh"
+mkdir -p "$XR_DATA/config" "$RUN/guest/host"
+printf 'client\n' > "$XR_DATA/config/openvpn.ovpn"
+echo 0 > "$XR_DATA/config/openvpn.enabled"
+vpn_boot_prepare
+chk 'grep -q "remote\|^client\|." "$RUN/guest/host/openvpn.ovpn" && grep -qx disable "$RUN/guest/host/openvpn.cmd"'
+echo 1 > "$XR_DATA/config/openvpn.enabled"
+vpn_boot_prepare
+chk 'grep -qx enable "$RUN/guest/host/openvpn.cmd"'
 # 3. 未就绪超时 -> 自动停止、熔断文件删除
 FAKE_NO_READY=1 $VM start; sleep 10
 chk '[ ! -f "$RUN/crosvm.pid" ] && [ ! -f "$FUSE" ] && grep -q "秒内未就绪" "$LOG"'
 chk '$VM status | grep -q "\"running\":false.*\"error\":\"[0-9]* 秒内未就绪\""'   # WebUI 显示失败原因
 # 4. crosvm 立即退出
 FAKE_EXIT=1 FAKE_NO_READY=1 $VM start; chk '[ $? -ne 0 ] && [ ! -f "$FUSE" ] && grep -q "立即退出" "$LOG"'
-chk '[ "$(cat "$RUN/last_error")" = 虚拟机无法启动 ]'
+chk '[ "$(cat "$RUN/last_error")" = 无法启动 ]'
 # 5. 熔断未确认时拒绝启动
 date > "$TRIPPED"; $VM start; chk '[ $? -ne 0 ] && grep -q "熔断未确认" "$LOG"'; rm -f "$TRIPPED"
 # 6. VM_NET=0 / VM_DISK_RW=0

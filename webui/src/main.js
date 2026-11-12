@@ -43,6 +43,12 @@ let ipv6Busy = false;
 let page = 0;
 let timer = null;
 let gone = false;         // 已请求立即卸载：停止一切轮询
+let vpnBusy = null;       // enable | disable
+let vpnBusyAt = 0;
+let vpnBusyFrom = "";
+let chipTok = 0;
+let chipRestPhase = null;
+let chipLock = null;      // heal | shutdown | fail
 
 export function icon(el) {
   el.textContent = ICONS[el.dataset.icon] || "";
@@ -157,20 +163,279 @@ async function setKey(key, value) {
     return false;
   }
   e.doneAt = Date.now();
-  if (res.restart) snack("重启虚拟机后生效");
+  if (res.restart) snack("重启服务后生效");
   refreshSoon();
   return true;
+}
+
+
+// ---- 芯片过渡（docs/chip-transition-flow.md）：只用 transform / opacity / stroke-dashoffset ----
+const CHIP_REDUCE = window.matchMedia("(prefers-reduced-motion: reduce)");
+const EASE_DECEL = (EASING && EASING.EMPHASIZED_DECELERATE) || "cubic-bezier(0.05, 0.7, 0.1, 1)";
+const EASE_ACCEL = (EASING && EASING.EMPHASIZED_ACCELERATE) || "cubic-bezier(0.3, 0, 0.8, 0.15)";
+const EASE_STD = (EASING && EASING.STANDARD) || "cubic-bezier(0.2, 0, 0, 1)";
+const prefersReduce = () => CHIP_REDUCE.matches;
+
+function finishTree(el) {
+  if (!el) return;
+  el.getAnimations({ subtree: true }).forEach((a) => { try { a.finish(); } catch { try { a.cancel(); } catch { /* 已结束 */ } } });
+}
+
+function fragRest(assembled) {
+  const svg = document.querySelector(".chip-svg");
+  if (!svg) return;
+  svg.querySelectorAll(".frag").forEach((g) => {
+    g.style.transform = assembled
+      ? "translate(0, 0) rotate(0deg)"
+      : `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)`;
+  });
+  const cracks = svg.querySelector(".crack-lines");
+  const gap = svg.querySelector(".crack-gap");
+  if (cracks) {
+    const len = cracks.getTotalLength ? cracks.getTotalLength() : 400;
+    cracks.style.strokeDasharray = String(len);
+    cracks.style.strokeDashoffset = assembled ? String(len) : "0";
+    cracks.style.opacity = assembled ? "0" : "1";
+  }
+  if (gap) gap.style.opacity = assembled ? "0" : "1";
+}
+
+function clearFlowInline(svg) {
+  if (!svg) return;
+  svg.querySelectorAll(".chip-flow").forEach((p) => {
+    p.style.animation = "";
+    p.style.strokeDasharray = "";
+    p.style.strokeDashoffset = "";
+  });
+  const intact = svg.querySelector(".chip-intact");
+  const cracked = svg.querySelector(".chip-cracked");
+  if (intact) { intact.style.opacity = ""; intact.style.visibility = ""; }
+  if (cracked) { cracked.style.opacity = ""; cracked.style.visibility = ""; }
+  const red = svg.querySelector(".traces-red");
+  if (red) red.style.opacity = "";
+}
+
+function chipJump(phase) {
+  chipTok += 1;
+  chipLock = null;
+  const wrap = $("power-wrap");
+  finishTree(wrap);
+  finishTree($("boot"));
+  fragRest(phase === "running");
+  clearFlowInline(wrap && wrap.querySelector(".chip-svg"));
+  if (phase !== "starting") bootOff();
+  if (wrap) wrap.className = "power-wrap " + phase;
+  chipRestPhase = phase;
+}
+
+function waitAnims(anims) {
+  return Promise.all(anims.filter(Boolean).map((a) => a.finished.catch(() => {})));
+}
+
+async function bootCollapse(live) {
+  const el = $("boot");
+  if (boot) {
+    clearTimeout(boot.timer);
+    if (boot.raf) cancelAnimationFrame(boot.raf);
+    boot = null;
+  }
+  if (!el) return;
+  if (!prefersReduce() && el.classList.contains("on") && live()) {
+    const a = el.animate(
+      [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-28px) scale(0.86)" }],
+      { duration: 300, easing: EASE_ACCEL, fill: "forwards" }
+    );
+    await a.finished.catch(() => {});
+    try { a.cancel(); } catch { /* */ }
+  }
+  el.style.transition = "none";
+  el.classList.remove("on");
+  el.style.transform = "";
+  el.style.opacity = "";
+  requestAnimationFrame(() => { el.style.transition = ""; });
+  clearTimeout(bootClear);
+  bootClear = setTimeout(() => {
+    if (!boot) { bootPool().forEach((r) => { r.textContent = ""; }); $("boot-log").style.transform = ""; }
+  }, 40);
+}
+
+async function chipToRunning(from, live) {
+  if (from !== "starting") { chipJump("running"); return; }
+  await bootCollapse(live);
+  if (!live()) return;
+  if (prefersReduce()) { chipJump("running"); return; }
+  const wrap = $("power-wrap");
+  wrap.className = "power-wrap running healing";
+  fragRest(false);
+  const svg = wrap.querySelector(".chip-svg");
+  const frags = [...svg.querySelectorAll(".frag")];
+  const cracks = svg.querySelector(".crack-lines");
+  const gap = svg.querySelector(".crack-gap");
+  const len = cracks && cracks.getTotalLength ? cracks.getTotalLength() : 400;
+  if (cracks) { cracks.style.strokeDasharray = String(len); cracks.style.strokeDashoffset = "0"; cracks.style.opacity = "1"; }
+  const anims = frags.map((g) => g.animate(
+    [
+      { transform: `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)` },
+      { transform: "translate(0, 0) rotate(0deg)" },
+    ],
+    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
+  ));
+  if (cracks) anims.push(cracks.animate(
+    [{ strokeDashoffset: 0, opacity: 1 }, { strokeDashoffset: len, opacity: 0 }],
+    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
+  ));
+  if (gap) anims.push(gap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }));
+  await waitAnims(anims);
+  if (!live()) return;
+  const intact = svg.querySelector(".chip-intact");
+  const cracked = svg.querySelector(".chip-cracked");
+  const flows = [...svg.querySelectorAll(".chip-flow")];
+  flows.forEach((p) => { p.style.animation = "none"; p.style.strokeDasharray = "100"; p.style.strokeDashoffset = "100"; });
+  intact.style.visibility = "visible";
+  const fade = [
+    intact.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE_STD, fill: "forwards" }),
+    cracked.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: EASE_STD, fill: "forwards" }),
+  ];
+  flows.forEach((p, i) => {
+    fade.push(p.animate(
+      [{ strokeDashoffset: 100 }, { strokeDashoffset: 0 }],
+      { duration: 400, delay: Math.min(280, (i % 12) * 24), easing: EASE_STD, fill: "forwards" }
+    ));
+  });
+  await waitAnims(fade);
+  if (!live()) return;
+  finishTree(wrap);
+  clearFlowInline(svg);
+  fragRest(true);
+  chipLock = null;
+  wrap.className = "power-wrap running";
+  chipRestPhase = "running";
+}
+
+async function chipToStopped(from, live) {
+  if (from !== "running" && from !== "stopping") { chipJump("stopped"); return; }
+  const wrap = $("power-wrap");
+  wrap.className = "power-wrap stopping shutdown";
+  if (prefersReduce()) { chipJump("stopped"); return; }
+  const svg = wrap.querySelector(".chip-svg");
+  const flows = [...svg.querySelectorAll(".chip-flow")];
+  const shrink = flows.map((p, i) => {
+    p.style.animation = "none";
+    p.style.strokeDasharray = "100";
+    return p.animate(
+      [{ strokeDashoffset: 0 }, { strokeDashoffset: 100 }],
+      { duration: 400, delay: Math.min(200, (11 - (i % 12)) * 16), easing: EASE_STD, fill: "forwards" }
+    );
+  });
+  await waitAnims(shrink);
+  if (!live()) return;
+  const intact = svg.querySelector(".chip-intact");
+  const cracked = svg.querySelector(".chip-cracked");
+  fragRest(true);
+  const cracks = svg.querySelector(".crack-lines");
+  const gap = svg.querySelector(".crack-gap");
+  const len = cracks && cracks.getTotalLength ? cracks.getTotalLength() : 400;
+  if (cracks) { cracks.style.strokeDasharray = String(len); cracks.style.strokeDashoffset = String(len); cracks.style.opacity = "0"; }
+  cracked.style.visibility = "visible";
+  const open = [
+    intact.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }),
+    cracked.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: EASE_DECEL, fill: "forwards" }),
+  ];
+  if (cracks) open.push(cracks.animate(
+    [{ strokeDashoffset: len, opacity: 0 }, { strokeDashoffset: 0, opacity: 1 }],
+    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
+  ));
+  if (gap) open.push(gap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }));
+  svg.querySelectorAll(".frag").forEach((g) => {
+    open.push(g.animate(
+      [
+        { transform: "translate(0, 0) rotate(0deg)" },
+        { transform: `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)` },
+      ],
+      { duration: 500, easing: EASE_DECEL, fill: "forwards" }
+    ));
+  });
+  await waitAnims(open);
+  if (!live()) return;
+  finishTree(wrap);
+  clearFlowInline(svg);
+  fragRest(false);
+  chipLock = null;
+  wrap.className = "power-wrap stopped";
+  chipRestPhase = "stopped";
+}
+
+async function chipToFailed(from, live) {
+  if (from === "starting") {
+    const el = $("boot");
+    if (boot) { clearTimeout(boot.timer); if (boot.raf) cancelAnimationFrame(boot.raf); boot = null; }
+    if (!prefersReduce() && el.classList.contains("on") && live()) {
+      const a = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: EASE_ACCEL, fill: "forwards" });
+      await a.finished.catch(() => {});
+      try { a.cancel(); } catch { /* */ }
+    }
+    el.style.transition = "none";
+    el.classList.remove("on");
+    el.style.opacity = "";
+    requestAnimationFrame(() => { el.style.transition = ""; });
+  }
+  if (!live()) return;
+  const wrap = $("power-wrap");
+  wrap.className = "power-wrap failed";
+  fragRest(false);
+  if (prefersReduce()) { chipJump("failed"); return; }
+  const red = wrap.querySelector(".traces-red");
+  if (red && live()) {
+    const a = red.animate(
+      [{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }],
+      { duration: 360, easing: EASE_STD }
+    );
+    await a.finished.catch(() => {});
+  }
+  if (!live()) return;
+  chipLock = null;
+  chipRestPhase = "failed";
+}
+
+function chipFollow(phase) {
+  if (chipRestPhase === null) { chipJump(phase); return; }
+  if (phase === chipRestPhase && !chipLock) return;
+  const tok = ++chipTok;
+  const live = () => tok === chipTok;
+  if (prefersReduce()) { chipJump(phase); return; }
+  if (phase === "starting") { chipJump("starting"); return; }
+  if (phase === "running") {
+    if (chipRestPhase === "starting") chipLock = "heal";
+    chipToRunning(chipRestPhase, live);
+    return;
+  }
+  if (phase === "stopping" || phase === "stopped") {
+    if (chipLock === "shutdown") return;
+    if (chipRestPhase === "stopped" && phase === "stopped") return;
+    chipLock = "shutdown";
+    chipToStopped(chipRestPhase, live);
+    return;
+  }
+  if (phase === "failed") {
+    chipLock = "fail";
+    chipToFailed(chipRestPhase, live);
+    return;
+  }
+  chipJump(phase);
 }
 
 // ---- 渲染 ----
 function renderPower(d) {
   const v = vmView(d, pending);
-  cls($("power-wrap"), "power-wrap " + v.phase);
+  const wrapCls = chipLock === "heal" ? "power-wrap running healing"
+    : chipLock === "shutdown" ? "power-wrap stopping shutdown"
+    : "power-wrap " + v.phase;
+  cls($("power-wrap"), wrapCls);
   cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红色断电，启动中变暗叠开机日志，运行中绿色 + 电流
   cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
   txt($("power-text"), v.text);
   cls($("power-text"), "power-text " + v.phase);
-  prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped));
+  prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped) || !!chipLock);
   const steps = $("power-steps");
   hide(steps, v.phase !== "starting");
   if (!steps.hidden) {
@@ -179,7 +444,9 @@ function renderPower(d) {
       cls(s, i < (v.step || 0) ? "done" : i === v.step ? "cur" : "");
     });
   }
-  if (v.phase === "starting") bootOn(); else bootOff();
+  if (v.phase === "starting") bootOn();
+  chipFollow(v.phase);
+  if (v.phase !== "starting" && !chipLock) bootOff();
   cls($("chip"), "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
   txt($("chip-text"), v.chip);
   tog(document.querySelector(".shell"), "nostate", false);   // 拿到状态（或上次缓存）才显示按钮与背景，不先闪「已停止」
@@ -220,6 +487,20 @@ function renderVpn(vpn) {
   const want = multi ? [...cards, acts] : cards;
   if (box.children.length !== want.length || want.some((c, i) => box.children[i] !== c)) box.replaceChildren(...want);
   for (const k of vpnCards.keys()) if (!list.some((t) => t.key === k)) vpnCards.delete(k);
+  if (vpnBusy && Date.now() - vpnBusyAt > 20000) {
+    snack(vpnBusy === "enable" ? "启动超时" : "停止超时", true);
+    vpnBusy = null;
+  }
+  if (vpnBusy && vpn) {
+    const stNow = vpn.status || "down";
+    if (vpnBusy === "enable" && stNow !== "down") vpnBusy = null;
+    if (vpnBusy === "disable" && stNow === "down") vpnBusy = null;
+  }
+  const configured = !!(vpn && vpn.configured);
+  const vmOn = !!(status && status.vm && status.vm.running);
+  const st = (vpn && vpn.status) || "down";
+  $("btn-vpn-start").disabled = !(configured && vmOn && !vpnBusy && st === "down");
+  $("btn-vpn-stop").disabled = !(configured && vmOn && !vpnBusy && (st === "up" || st === "connecting"));
 }
 
 function render(d) {
@@ -329,7 +610,7 @@ function schedule() {
   clearTimeout(timer);
   if (gone) return;
   const v = status ? vmView(status, pending) : { phase: "stopped" };
-  const fast = v.phase === "stopping";
+  const fast = v.phase === "stopping" || !!vpnBusy;
   timer = setTimeout(async () => {
     // 开机中由 bootTick 驱动状态刷新，这里不再并行拉 status-json
     if (!document.hidden && !boot) { await refresh(); if (page === 2) loadTraffic(); }
@@ -494,6 +775,25 @@ async function importVpn() {
   await refresh();
 }
 
+async function actVpn(kind) {
+  if (vpnBusy) return;
+  vpnBusy = kind;
+  vpnBusyAt = Date.now();
+  vpnBusyFrom = (status && status.vpn && status.vpn.status) || "down";
+  renderVpn((status && status.vpn) || {});
+  const r = kind === "enable" ? await xr("vpn-enable") : await xr("vpn-disable");
+  const res = lastJson(r.stdout);
+  if (!res || !res.ok) {
+    vpnBusy = null;
+    snack((res && res.error) || (kind === "enable" ? "启动失败" : "停止失败"), true);
+    await refresh();
+    return;
+  }
+  snack(kind === "enable" ? "已启动" : "已停止");
+  await refresh();
+  schedule();
+}
+
 async function pickSharePath() {
   const cur = status && status.config ? status.config.VM_SHARE_PATH : "";
   const path = await openBrowser({ mode: "dir", start: cur, xr });
@@ -528,7 +828,7 @@ async function pickRestartKey(key, sel, label, fmt) {
   const v = sel.value;
   if (v === cur) return;
   const running = !!(status && status.vm && status.vm.running);
-  const ok = await confirmDlg(`${label}改为 ${fmt(v)}`, running ? "需要重启虚拟机后生效" : "下次启动虚拟机时生效", "保存");
+  const ok = await confirmDlg(`${label}改为 ${fmt(v)}`, running ? "需要重启服务后生效" : "下次启动时生效", "保存");
   if (!ok) { sel.select(cur); return; }
   setKey(key, v);
 }
@@ -559,7 +859,7 @@ async function resetDisk() {
 // ---- 立即卸载：先换成静态「已卸载」页（停掉轮询、开机日志与电流动画），再让手机侧脱离会话去删 ----
 async function uninstallNow() {
   if (!await confirmDlg("立即卸载 XRouter",
-    "将停止虚拟机并删除全部数据：OpenWrt 系统盘、设置、VPN 配置与日志，模块随即从管理器列表中消失，无需重启。已导出到 Download 的日志 / 诊断包会保留。此操作不可撤销。",
+    "将停止服务并删除全部数据：OpenWrt 系统盘、设置、VPN 配置与日志，模块随即从管理器列表中消失，无需重启。已导出到 Download 的日志 / 诊断包会保留。此操作不可撤销。",
     "卸载", true)) return;
   gone = true;
   clearTimeout(timer); clearTimeout(soonTimer);
@@ -714,6 +1014,8 @@ function bind() {
   $("hsnet-clear").addEventListener("click", () => { $("in-hsnet").value = ""; $("hsnet-err").textContent = ""; });
   $("btn-luci").addEventListener("click", () => xr("luci"));
   $("btn-import").addEventListener("click", importVpn);
+  $("btn-vpn-start").addEventListener("click", () => actVpn("enable"));
+  $("btn-vpn-stop").addEventListener("click", () => actVpn("disable"));
   $("btn-share-path").addEventListener("click", pickSharePath);
   $("sel-access").addEventListener("change", (e) => setKey("XR_EXPOSE", e.target.value));
   $("sel-cpu").addEventListener("change", (e) => pickRestartKey("VM_CPUS", e.target, "CPU ", (v) => `${v} 核`));

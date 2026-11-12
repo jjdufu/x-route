@@ -35,7 +35,7 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh) && !xrsh.includes(`if [ "\${1:-}" = ${s} ]`)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
@@ -188,6 +188,7 @@ if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" 
 if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
 // 启动中：电源按钮淡出（150-250ms 交叉淡化）后出现瀑布，没有转圈；瀑布文字只有「正在启动」
 { const m = /\.starting\.power-wrap \{([^}]*)\}/.exec(css); if (!m || !/opacity: 0/.test(m[1]) || !/visibility: hidden/.test(m[1])) fail("启动中应隐藏电源按钮"); }
+if (!html.includes('class="chip-svg"') || !html.includes('id="power"') || html.includes('class="ring"') || /data-icon="power_settings_new"/.test(html)) fail("首页应为可点芯片，不得保留圆形电源键");
 { const ds = [...css.matchAll(/\.(?:power-wrap|boot|st-layer|st-wrap|bg-layer) \{[^}]*transition:([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)s/g)].map((x) => +x[1]).filter((x) => x > 0.1));
   if (!ds.length || ds.some((x) => x < 0.15 || x > 0.25)) fail(`交叉淡化应 150-250ms: ${ds}`); }
 if (!/\.boot\.on \{/.test(css) || !/classList\.(add|toggle)\("on"/.test(main)) fail("瀑布应淡入淡出");
@@ -213,6 +214,8 @@ if (!/\.pcb-flow \{[^}]*display: none; \}/.test(css)) fail("开机中不应有�
 if (!/class="shell nostate/.test(html) || !/localStorage/.test(main) || !/\.nostate/.test(css)) fail("重新打开不应闪「已停止」");
 // 组网页按隧道列表渲染（单条保持原样）；系统盘运行中置灰
 if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !/function renderVpn/.test(main)) fail("组网页应按列表渲染");
+if (!html.includes('id="btn-vpn-start"') || !html.includes('id="btn-vpn-stop"') || !html.includes('id="vpn-actions"')) fail("组网页应有 OpenVPN 启动 / 停止按钮");
+if (!/function actVpn/.test(main) || !/xr\("vpn-enable"/.test(main) || !/xr\("vpn-disable"/.test(main)) fail("组网启停应调用 xr vpn-enable / vpn-disable");
 const vt = L.vpnTunnels({ status: "up", addr: "10.8.0.5/24", routes_active: ["10.8.0.0/24", "192.168.50.0/24", "192.168.31.0/24"],
   tunnels: [{ dev: "tun0", name: "home", status: "up", addr: "10.8.0.5/24", routes: ["10.8.0.0/24", "192.168.31.0/24"] }, { dev: "tun1", name: "office", status: "up", addr: "10.9.0.6/24", routes: ["192.168.50.0/24"] }] });
 eq(vt.map((t) => [t.name, t.addr, t.routes]), [["home", "10.8.0.5", ["10.8.0.0/24", "192.168.31.0/24"]], ["office", "10.9.0.6", ["192.168.50.0/24"]]], "vpnTunnels 多隧道");
@@ -226,6 +229,7 @@ if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随
 // 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜；元素启动时一次建好
 const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
 { const k = kf("pcbFlow"); if (!k || /opacity|left|top|width|height|stroke|filter|shadow|background/.test(k.replace(/@keyframes \w+/, ""))) fail("pcbFlow 只能改 transform"); }
+{ const k = kf("chipFlow"); if (!k || /opacity|left|top|width|height|filter|shadow|background|transform|scale/.test(k.replace(/@keyframes \w+/, ""))) fail("chipFlow 只能改 stroke-dashoffset"); }
 if (!/\.running \.pcb-flow \{ display: block; \}/.test(css)) fail("电流只在运行中流动");
 if (/filter|box-shadow|blur/.test(blk(".pf i"))) fail("电流不能发光");
 if (!/\.page:not\(\.on\) \.pf i, \.hid \.pf i \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");

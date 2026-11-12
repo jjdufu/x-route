@@ -73,14 +73,14 @@ s="$($XR status-json)"
 chk 'echo "$s" | J "d[\"vpn\"][\"status\"]==\"up\" and d[\"vpn\"][\"addr\"]==\"10.8.0.5\" and d[\"vpn\"][\"routes_active\"]==[\"10.8.0.0/24\"] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"] and d[\"vm\"][\"running\"] is True and d[\"vm\"][\"last_good_match\"] is True" | grep -qx True'
 # IPv6：客侧未上报时为 null 且不能切换；上报后读实际状态；切换写控制命令、等客侧确认、再同步手机侧
 chk 'echo "$s" | J "d[\"ipv6\"] is None" | grep -qx True'
-out="$(XR_IPV6_WAIT=1 $XR ipv6 on)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "虚拟机未就绪"'
+out="$(XR_IPV6_WAIT=1 $XR ipv6 on)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "服务未就绪"'
 echo 0 > "$RUN/guest/guest/ipv6"
 chk '$XR status-json | J "d[\"ipv6\"] is False" | grep -qx True'
 ( sleep 2; echo 1 > "$RUN/guest/guest/ipv6" ) &
 : > "$T/net.calls"; out="$($XR ipv6 on)"
 chk '[ "$out" = "{\"ok\":true}" ] && grep -q "^on [0-9]*$" "$RUN/guest/host/ipv6.cmd" && grep -qx "net sync" "$T/net.calls"'
 chk '$XR status-json | J "d[\"ipv6\"] is True" | grep -qx True'
-out="$(XR_IPV6_WAIT=1 $XR ipv6 off)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "虚拟机未响应" && grep -q "^off " "$RUN/guest/host/ipv6.cmd"'
+out="$(XR_IPV6_WAIT=1 $XR ipv6 off)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "服务未响应" && grep -q "^off " "$RUN/guest/host/ipv6.cmd"'
 out="$($XR ipv6 maybe)"; chk '[ $? -eq 2 ]'
 : > "$T/net.calls"; $XR sync >/dev/null
 # 从内部存储导入占位 ovpn（无密钥）；运行中写入控制目录（带时间戳，重复导入也会重载），不得写入日志
@@ -99,6 +99,26 @@ printf '%s\n' "tun0|xrouter|10.8.0.5/24|1342|10.8.0.0/24,192.168.9.0/24" "tun1|o
 chk '$XR status-json | J "[t[\"name\"] for t in d[\"vpn\"][\"tunnels\"]]==[\"home\",\"office\"] and d[\"vpn\"][\"tunnels\"][1][\"mtu\"]==1322 and d[\"vpn\"][\"tunnels\"][0][\"routes\"]==[\"10.8.0.0/24\",\"192.168.9.0/24\"]" | grep -qx True'
 rm -f "$RUN/guest/guest/openvpn.tunnels"
 chk '$XR status-json | J "len(d[\"vpn\"][\"tunnels\"])==1 and d[\"vpn\"][\"tunnels\"][0][\"name\"]==\"home\"" | grep -qx True'
+# OpenVPN 启停与持久开关（导入默认开启）
+chk '[ "$(cat "$XR_DATA/config/openvpn.enabled")" = 1 ]'
+chk '$XR status-json | J "d[\"vpn\"][\"configured\"] is True and d[\"vpn\"][\"enabled\"] is True" | grep -qx True'
+echo up > "$RUN/guest/guest/openvpn.status"
+( sleep 1; echo down > "$RUN/guest/guest/openvpn.status" ) &
+chk '$XR vpn-disable | grep -q "\"ok\":true"'
+wait
+chk '[ "$(cat "$XR_DATA/config/openvpn.enabled")" = 0 ] && grep -q "^disable [0-9]*$" "$RUN/guest/host/openvpn.cmd"'
+chk '$XR status-json | J "d[\"vpn\"][\"enabled\"] is False" | grep -qx True'
+echo down > "$RUN/guest/guest/openvpn.status"
+( sleep 1; echo connecting > "$RUN/guest/guest/openvpn.status" ) &
+out="$($XR vpn-enable)"
+chk '[ "$out" = "{\"ok\":true}" ] && grep -q "^enable [0-9]*$" "$RUN/guest/host/openvpn.cmd" && [ "$(cat "$XR_DATA/config/openvpn.enabled")" = 1 ]'
+wait
+echo down > "$RUN/guest/guest/openvpn.status"
+out="$(XR_VPN_WAIT=1 $XR vpn-enable)"
+chk '[ $? -ne 0 ] && echo "$out" | grep -q "未响应"'
+mv -f "$XR_DATA/config/openvpn.ovpn" "$XR_DATA/config/openvpn.ovpn.bak"
+out="$($XR vpn-enable)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "未导入配置"'
+mv -f "$XR_DATA/config/openvpn.ovpn.bak" "$XR_DATA/config/openvpn.ovpn"
 # 累计流量分来源：写 host/acct.cmd，虚拟机回 guest/acct（首行回显 ts）
 ( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/acct.cmd" 2>/dev/null)"; if [ -n "$c" ]; then printf 'ts=%s\n1 2 3 4 5 6 7 8\n' "${c#* }" > "$RUN/guest/guest/acct"; break; fi; sleep 0.1; i=$((i+1)); done ) &
 out="$($XR traffic-split)"

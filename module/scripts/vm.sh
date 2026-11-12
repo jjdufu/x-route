@@ -45,7 +45,7 @@ ready_channel() {
 fuse_watch() {
   load_config; t=0
   while [ "$t" -lt "${READY_TIMEOUT_SEC}" ]; do
-    vm_running || { rm -f "${FUSE}"; sync; vm_fail "就绪前 crosvm 已退出，详见 vmm.log" "虚拟机启动中退出"; return; }
+    vm_running || { rm -f "${FUSE}"; sync; vm_fail "就绪前 crosvm 已退出，详见 vmm.log" "启动中退出"; return; }
     ready_seen && break
     sleep 1; t=$((t+1)); boot_progress "$t"
   done
@@ -54,10 +54,10 @@ fuse_watch() {
   blog net "重建转发 / NAT / 接管规则"
   sh "${MODDIR}/scripts/net.sh" sync
   blog net "网络规则就绪，接管：$(cat "${RUN}/net.gw" 2>/dev/null || echo off)"
-  load_config; diag_snap_bg "虚拟机就绪"
+  load_config; diag_snap_bg "服务就绪"
   t=0
   while [ "$t" -lt "${STABLE_SEC}" ]; do
-    vm_running || { rm -f "${FUSE}"; sync; vm_fail "稳定期内 crosvm 退出" "虚拟机意外退出"; return; }
+    vm_running || { rm -f "${FUSE}"; sync; vm_fail "稳定期内 crosvm 退出" "服务意外退出"; return; }
     sleep 5; t=$((t+5))
   done
   rm -f "${FUSE}"; config_hash > "${LAST_GOOD}"; sync
@@ -106,11 +106,7 @@ vm_start_exec() {
     "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot" "${RUN}/guest/host/acct.cmd" "${RUN}/guest/guest/acct" \
     "${RUN}/guest/guest/openvpn.tunnels"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
-  if [ -f "${XR_DATA}/config/openvpn.ovpn" ]; then
-    cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
-    echo enable > "${RUN}/guest/host/openvpn.cmd"
-    blog vpn "下发 OpenVPN 配置"
-  fi
+  vpn_boot_prepare
 
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
   params="${params} xr.ip=${XR_NET_PREFIX}.254/24 xr.gw=${XR_NET_PREFIX}.1 xr.dns=$(echo "${XR_DNS}" | tr ' ' ',')"
@@ -144,7 +140,7 @@ vm_start_exec() {
   blog vm "crosvm pid $(cat "${PID_F}")，等待内核输出"
   sleep 2
   if ! vm_running; then
-    vm_fail "crosvm 立即退出，详见 vmm.log" "虚拟机无法启动"; rm -f "${FUSE}" "${PID_F}"; sync; wakelock_off
+    vm_fail "crosvm 立即退出，详见 vmm.log" "无法启动"; rm -f "${FUSE}" "${PID_F}"; sync; wakelock_off
     [ "${VM_NET}" = 1 ] && sh "${MODDIR}/scripts/net.sh" down
     return 1
   fi
@@ -227,6 +223,20 @@ vm_stop() {
 }
 
 # ---- 磁盘 ----
+# 开机按持久开关下发 OpenVPN：openvpn.enabled=0 时发 disable，缺省或为 1 时发 enable
+vpn_boot_prepare() {
+  [ -f "${XR_DATA}/config/openvpn.ovpn" ] || return 0
+  mkdir -p "${RUN}/guest/host"
+  cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"
+  if [ "$(cat "${XR_DATA}/config/openvpn.enabled" 2>/dev/null)" = 0 ]; then
+    echo disable > "${RUN}/guest/host/openvpn.cmd"
+    blog vpn "OpenVPN 保持停止"
+  else
+    echo enable > "${RUN}/guest/host/openvpn.cmd"
+    blog vpn "下发 OpenVPN 配置"
+  fi
+}
+
 disk_expand() { # $1=新大小(MB)，必须大于当前大小，VM 必须已停止
   vm_running && { log_err vm "请先停止 VM"; return 1; }
   is_uint "$1" || return 1

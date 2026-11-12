@@ -87,7 +87,7 @@ final class Notifier {
         // 只创建不更新：已存在时不覆盖用户在系统设置里对该渠道的修改。
         NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "XRouter 运行状态",
                 NotificationManager.IMPORTANCE_DEFAULT);
-        ch.setDescription("虚拟机运行状态与累计流量");
+        ch.setDescription("XRouter 运行状态与累计流量");
         ch.setShowBadge(false);
         ch.setSound(null, null);
         ch.enableVibration(false);

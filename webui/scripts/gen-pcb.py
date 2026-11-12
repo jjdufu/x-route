@@ -3,7 +3,7 @@
 
 两层，都是静态 SVG（data URI，浏览器只栅格化一次），红 / 绿各一份，状态切换只交叉淡入淡出不重绘：
 - 整页底纹（.bg-red / .bg-green）：可无缝平铺的稀疏走线、过孔与贴片元件，铺满整个界面，透明度很低，不抢内容；
-- 电源按钮周围（.st-red / .st-green）：中央芯片（四边各 9 个引脚）、每个引脚引出带 45° 折角的扇出走线、
+- 电源按钮周围（.st-red / .st-green）：中央由可点芯片 SVG 覆盖，底层保留四边引脚、每个引脚引出带 45° 折角的扇出走线、
   过孔、总线组与贴片元件，越靠近按钮越密；边缘由 CSS 径向遮罩淡出，与整页底纹融为一体（没有硬边）。
 - 未启动 / 失败：红色，每条走线断开一小段（「断电」），完全静态；
 - 运行中：绿色，走线接通；另由 pcb.js 列出的 8 段直线走线叠加电流脉冲（HTML 元素，只做 transform 动画），流向芯片 / 按钮。
@@ -144,11 +144,7 @@ def svg(color, broken):
         else:
             parts.append(f"<rect x='{fmt(cx - 3)}' y='{fmt(cy - h / 2 - 3)}' width='6' height='3'/><rect x='{fmt(cx - 3)}' y='{fmt(cy + h / 2)}' width='6' height='3'/>")
     g.append(f"<g fill='{color}' fill-opacity='.22'>" + "".join(parts) + "</g>")
-    # 芯片：外框、内框、引脚、角标
-    g.append(f"<rect x='{fmt(X0)}' y='{fmt(Y0)}' width='{CHIP}' height='{CHIP}' rx='12' fill='%23000' fill-opacity='.45' "
-             f"stroke='{color}' stroke-opacity='.55' stroke-width='1.5'/>")
-    g.append(f"<rect x='{fmt(X0 + 8)}' y='{fmt(Y0 + 8)}' width='{CHIP - 16}' height='{CHIP - 16}' rx='8' fill='none' "
-             f"stroke='{color}' stroke-opacity='.22' stroke-dasharray='2 4'/>")
+    # 芯片本体改由首页可点 SVG 绘制；这里只保留引脚，与扇出走线对齐
     pr = []
     for (px, py), v, _, _ in pins():
         if v[0]:
@@ -158,7 +154,6 @@ def svg(color, broken):
             y = py if v[1] < 0 else py - PIN_LEN
             pr.append(f"<rect x='{fmt(px - 2)}' y='{fmt(y)}' width='4' height='{PIN_LEN}' rx='1'/>")
     g.append(f"<g fill='{color}' fill-opacity='.5'>" + "".join(pr) + "</g>")
-    g.append(f"<circle cx='{fmt(X0 + 14)}' cy='{fmt(Y0 + 14)}' r='3' fill='{color}' fill-opacity='.5'/>")
     g.append("</svg>")
     return "".join(g)
 

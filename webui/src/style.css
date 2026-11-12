@@ -146,15 +146,14 @@ md-icon { --md-icon-size: 22px; flex: none; }
 
 .alert { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 20px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 
-/* 首页舞台：电源按钮周围是整页电路板最密的一块（芯片、引脚扇出走线、45° 折角、过孔、总线、贴片元件），
+/* 首页舞台：可点芯片在整页电路板最密处（引脚扇出走线、45° 折角、过孔、总线、贴片元件），
    边缘由静态径向遮罩淡出、融进整页底纹（没有方块和硬边）：
-   - 未启动 / 失败 / 停止中：红色，走线断开，全静态；
-   - 开机中：电路板变暗，按钮淡出，瀑布式开机日志淡入；
-   - 运行中：绿色，8 条走线（四边中线 + 四角斜线）上有电流脉冲流向中间的芯片（电源按钮压在芯片上）。
-   红 / 绿两层只做透明度交叉淡入淡出；脉冲是 HTML 元素，只做 transform 动画（合成层，不重绘、不重排），
-   不在首页或页面不可见时暂停；无发光、模糊、滤镜。 */
+   - 未启动 / 失败：红色断开走线，裂纹芯片静止；
+   - 开机中：电路板变暗，芯片淡出，瀑布式开机日志淡入；
+   - 运行中：绿色，芯片内部与外侧走线有电流（外侧 8 条脉冲只做 transform）。
+   红 / 绿两层只做透明度交叉淡入淡出；无发光、模糊、滤镜。 */
 .power-area { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 0 0 8px; }
-.stage { position: relative; width: 100%; height: 252px; display: grid; place-items: center; }
+.stage { position: relative; width: 100%; height: 252px; display: grid; place-items: center; overflow: visible; }
 .st-wrap { position: absolute; inset: 0; z-index: -1; pointer-events: none; transition: opacity .2s ease-out; }
 .st-layer, .pcb-flow {
   position: absolute; left: 50%; top: 50%;
@@ -175,30 +174,60 @@ md-icon { --md-icon-size: 22px; flex: none; }
 }
 @keyframes pcbFlow { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 .page:not(.on) .pf i, .hid .pf i { animation-play-state: paused; }
-/* 电源按钮：按钮本身就是状态 */
-.power-wrap { position: relative; width: 148px; height: 148px; display: grid; place-items: center; }
+/* 可点芯片：200px 与底层 PCB 引脚 1:1 对齐。按下 120ms 缩放反馈。无大圆圈、无转圈环。 */
+.power-wrap { position: relative; width: 200px; height: 200px; display: grid; place-items: center; overflow: visible;
+  transition: opacity .24s cubic-bezier(0.05, 0.7, 0.1, 1), transform .24s cubic-bezier(0.05, 0.7, 0.1, 1), visibility 0s linear 0s; }
 .power {
-  position: relative; width: 120px; height: 120px; border-radius: 50%; border: 0; cursor: pointer;
-  display: grid; place-items: center; outline: none;
-  background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant);
-  transition: background .15s, color .15s, transform .1s;
+  position: relative; width: 200px; height: 200px; border: 0; border-radius: 18px; cursor: pointer;
+  display: grid; place-items: center; outline: none; padding: 0;
+  background: transparent; color: inherit; overflow: visible;
+  transition: transform .12s cubic-bezier(0.2, 0, 0, 1);
   --md-ripple-hover-color: currentColor; --md-ripple-pressed-color: currentColor;
+  --md-focus-ring-shape: 18px;
 }
 .power:active { transform: scale(.96); }
-.power md-icon { --md-icon-size: 56px; }
-.power:disabled { cursor: default; }
-/* 按钮 ↔ 开机日志：交叉淡入淡出。启动：按钮 180ms 淡出（略缩小），日志稍后 200ms 淡入；
-   结束：日志 180ms 淡出，按钮稍后 200ms 淡入。没有转圈、弹跳或呼吸光 */
-.power-wrap { transition: opacity .2s ease-out .06s, transform .2s ease-out .06s, visibility 0s linear 0s; }
+.power:disabled { cursor: default; transform: none; }
+.chip-svg { width: 200px; height: 200px; display: block; overflow: visible; }
+/* 启动中：芯片 240ms 略缩并淡出（emphasized-decelerate），随后瀑布淡入 */
 .starting.power-wrap { opacity: 0; transform: scale(.94); visibility: hidden; pointer-events: none;
-  transition: opacity .18s ease-in, transform .18s ease-in, visibility 0s linear .18s; }
-.ring { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .12s; pointer-events: none; }
-.ring circle { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 120 300; }
-.stopping .ring { opacity: 1; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-/* 运行中只变绿，不要呼吸光或持续发光 */
-.running .power { background: #1d3a26; color: var(--xr-ok); }
-.failed .power { background: #3d1c1a; color: var(--xr-bad); }
+  transition: opacity .24s cubic-bezier(0.05, 0.7, 0.1, 1), transform .24s cubic-bezier(0.05, 0.7, 0.1, 1), visibility 0s linear .24s; }
+
+/* 裂纹 / 完整两层：默认裂纹（停止、失败）；运行中显示完整芯片 */
+.chip-pins { fill: #6a6d73; }
+.die-fill { fill: #2a2e33; }
+.die-edge { stroke: #3a3f46; stroke-width: 1.6; }
+.die-pad { stroke: #3d4248; stroke-width: .8; stroke-dasharray: 2 3; }
+.chip-cracked .frag.f1 { transform: translate(-6px, -7px) rotate(-4deg); }
+.chip-cracked .frag.f2 { transform: translate(7px, -8px) rotate(5deg); }
+.chip-cracked .frag.f3 { transform: translate(-8px, 3px) rotate(-3deg); }
+.chip-cracked .frag.f4 { transform: translate(-5px, 8px) rotate(4deg); }
+.chip-cracked .frag.f5 { transform: translate(5px, 5px) rotate(3deg); }
+.chip-cracked .frag.f-loose { transform: translate(16px, 18px) rotate(14deg); }
+.chip-cracked { opacity: 1; }
+.chip-intact { opacity: 0; visibility: hidden; }
+.running .chip-cracked { opacity: 0; visibility: hidden; }
+.running .chip-intact { opacity: 1; visibility: visible; }
+.running .chip-pins { fill: #4a5c52; }
+.die-live { fill: #0c1611; }
+.die-live-pad { stroke: #1c4a32; stroke-width: .8; }
+.die-edge-live { stroke: #57e389; stroke-width: 1.6; fill: none; }
+.core-outer { fill: #163d28; stroke: #7bd88f; stroke-width: 1.2; }
+.core-inner { fill: #d6ffe4; }
+.chip-flow-g, .chip-flow { fill: none; stroke: #7dffb0; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+.chip-flow { stroke-dasharray: 8 20; animation: chipFlow 2.2s linear infinite; }
+@keyframes chipFlow { to { stroke-dashoffset: -28; } }
+.page:not(.on) .chip-flow, .hid .chip-flow { animation-play-state: paused; }
+
+/* 愈合 / 停机过渡：两层短暂同时可见，电流待过渡结束后再走 */
+.healing .chip-cracked { opacity: 1; visibility: visible; }
+.healing .chip-intact { opacity: 0; visibility: visible; }
+.healing .chip-flow, .shutdown .chip-flow { animation: none; }
+.running.healing .pcb-flow, .shutdown .pcb-flow { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .power:active { transform: none; }
+  .chip-flow { animation: none; }
+}
 /* 瀑布式开机日志：固定行池（BOOT_ROWS 个行元素，只改文字），每帧按积压滚动小数行（translate3d），
    只走合成层，不触发页面重排；上下静态渐隐 */
 .boot { position: absolute; inset: 0; overflow: hidden; pointer-events: none; contain: strict;
