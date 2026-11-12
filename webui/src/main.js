@@ -19,6 +19,7 @@ import { exec, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import "./pcb.css";
 import { PCB_W, PCB_H, PCB_TRACES, PCB_VIAS, PCB_PINS } from "./pcb.js";
+import { attachFrame, updateFrame } from "./frame.js";
 import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
@@ -31,7 +32,16 @@ const $ = (id) => document.getElementById(id);
 // 只在值真的变化时写 DOM：5 秒一次的状态刷新大多数时候什么都不改，不触发样式重算与重排
 const txt = (el, v) => { v = String(v); if (el.textContent !== v) el.textContent = v; };
 const cls = (el, v) => { if (el.className !== v) el.className = v; };
-const prop = (el, k, v) => { if (el[k] !== v) el[k] = v; };
+const prop = (el, k, v) => {
+  if (!el) return;
+  if (el[k] !== v) el[k] = v;
+  if (k === "selected") {
+    const wrap = el.closest && el.closest(".neo-toggle-wrap");
+    if (wrap) wrap.classList.toggle("on", !!v);
+    const tog = el.parentElement && el.parentElement.querySelector && el.parentElement.querySelector(".neo-toggle");
+    if (tog) tog.classList.toggle("on", !!v);
+  }
+};
 const hide = (el, v) => { if (el.hidden !== v) el.hidden = v; };
 const tog = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
 let status = null;
@@ -398,29 +408,30 @@ function mountPcb() {
   const gGlow = svgEl("g", { class: "pcb-glow" });
   const gGreen = svgEl("g", { class: "pcb-green" });
   const gPulse = svgEl("g", { class: "pcb-pulse" });
-  const maxD = Math.max(...PCB_TRACES.map((t) => t.dist), 1);
+  const gVias = svgEl("g", { class: "pcb-vias" });
   PCB_TRACES.forEach((t, i) => {
-    const distN = t.dist / maxD;
-    const t0 = +(distN * 0.72).toFixed(3);
-    const t1 = +Math.min(1, t0 + 0.28).toFixed(3);
+    const delay = t.delay != null ? t.delay : +((i * 0.017) % 0.36).toFixed(3);
     gRed.append(svgEl("path", { class: "tr-r", d: t.d }));
     const glow = svgEl("path", { class: "tr-glow", d: t.d });
     const gr = svgEl("path", { class: "tr-g", d: t.d });
-    glow.dataset.t0 = gr.dataset.t0 = String(t0);
-    glow.dataset.t1 = gr.dataset.t1 = String(t1);
+    glow.dataset.delay = gr.dataset.delay = String(delay);
     gGlow.append(glow); gGreen.append(gr);
-    if (t.kind === "pin" || t.kind === "corner" || t.kind === "beam") {
-      gPulse.append(svgEl("path", { class: "tr-pulse", d: t.d, style: `--t:${((i * 0.11) % 1.4).toFixed(2)}s` }));
+    if (t.kind === "pin" || t.kind === "branch") {
+      gPulse.append(svgEl("path", { class: "tr-pulse", d: t.d, style: `--t:${((i * 0.13) % 1.6).toFixed(2)}s` }));
     }
   });
-  const gVias = svgEl("g", { class: "pcb-vias" });
-  for (const v of PCB_VIAS) gVias.append(svgEl("circle", { class: "pcb-via", cx: v.x, cy: v.y, r: 2.4 }));
+  PCB_VIAS.forEach((v, i) => {
+    const delay = PCB_TRACES[Math.min(i, PCB_TRACES.length - 1)]?.delay ?? 0;
+    const c = svgEl("circle", { class: "pcb-via", cx: v.x, cy: v.y, r: 2.3 });
+    c.dataset.delay = String(delay);
+    gVias.append(c);
+  });
   svg.append(gPins, gRed, gGlow, gGreen, gPulse, gVias);
   svg.querySelectorAll(".tr-g, .tr-glow, .tr-r, .tr-pulse").forEach((path) => {
     const len = path.getTotalLength();
     path.dataset.len = String(len);
     if (path.classList.contains("tr-r")) {
-      path.style.strokeDasharray = `${len * 0.32} 8 ${len}`;
+      path.style.strokeDasharray = `${len * 0.28} 7 ${len}`;
       path.style.strokeDashoffset = "0";
     } else if (path.classList.contains("tr-pulse")) {
       path.style.strokeDasharray = "10 46";
@@ -431,28 +442,86 @@ function mountPcb() {
   });
   applyRepair(0);
 }
+function frontLocal(p, delay) {
+  if (p <= delay) return 0;
+  const span = Math.max(0.18, 1 - delay);
+  return Math.min(1, (p - delay) / span);
+}
 function applyRepair(p) {
   repairP = Math.max(0, Math.min(1, p));
   const svg = $("pcb-svg");
   if (!svg) return;
   svg.querySelectorAll(".tr-g, .tr-glow").forEach((el) => {
     const len = +el.dataset.len || 0;
-    const t0 = +el.dataset.t0 || 0;
-    const t1 = +el.dataset.t1 || 1;
-    let local = 0;
-    if (repairP <= t0) local = 0;
-    else if (repairP >= t1) local = 1;
-    else local = (repairP - t0) / (t1 - t0);
+    const local = frontLocal(repairP, +el.dataset.delay || 0);
     el.style.strokeDashoffset = String(len * (1 - local));
   });
-  svg.querySelectorAll(".tr-r").forEach((el) => { el.style.opacity = String(0.72 * (1 - repairP)); });
-  svg.classList.toggle("charging", repairP > 0.02 && repairP < 0.995);
-  svg.classList.toggle("flowing", repairP >= 0.995);
+  svg.querySelectorAll(".tr-r").forEach((el) => { el.style.opacity = String(0.7 * (1 - repairP)); });
+  svg.querySelectorAll(".pcb-via").forEach((el) => {
+    const local = frontLocal(repairP, +el.dataset.delay || 0);
+    el.style.opacity = String(local >= 0.97 ? 1 : 0.12 + local * 0.2);
+    el.classList.toggle("lit", local >= 0.97);
+  });
+  const charging = repairP > 0.02 && repairP < 0.995;
+  const flowing = repairP >= 0.995;
+  svg.classList.toggle("charging", charging);
+  svg.classList.toggle("flowing", flowing);
+  if (flowing) startComets(); else stopComets();
+  if (repairP <= 0.02) startSparks(); else stopSparks();
   if ($("power-wrap") && !chipLock) {
     if (repairP <= 0.1) { fragRest(false); $("power-wrap").classList.remove("healed"); }
     else if (repairP >= 0.42) { fragRest(true); $("power-wrap").classList.add("healed"); }
   }
 }
+let cometTimer = 0, sparkTimer = 0;
+function stopComets() { clearTimeout(cometTimer); cometTimer = 0; }
+function stopSparks() { clearTimeout(sparkTimer); sparkTimer = 0; }
+function startComets() {
+  if (cometTimer || prefersReduce()) return;
+  const tick = () => {
+    cometTimer = 0;
+    const svg = $("pcb-svg");
+    if (!svg || !svg.classList.contains("flowing") || document.hidden) return;
+    const pulses = [...svg.querySelectorAll(".tr-pulse")].filter((el) => !el.dataset.busy);
+    const n = Math.min(pulses.length, 1 + (Math.random() < 0.35 ? 1 : 0));
+    for (let i = 0; i < n; i++) {
+      const el = pulses[Math.floor(Math.random() * pulses.length)];
+      if (!el || el.dataset.busy) continue;
+      const len = +el.dataset.len || 80;
+      el.dataset.busy = "1";
+      el.style.opacity = "1";
+      el.style.strokeDasharray = `11 ${Math.max(80, len)}`;
+      const dur = 720 + Math.random() * 680;
+      const anim = el.animate(
+        [{ strokeDashoffset: "0" }, { strokeDashoffset: String(-len) }],
+        { duration: dur, easing: "linear" }
+      );
+      anim.onfinish = () => { el.style.opacity = "0"; delete el.dataset.busy; };
+    }
+    // 过孔轻微闪烁
+    svg.querySelectorAll(".pcb-via.lit").forEach((v) => {
+      if (Math.random() < 0.18) v.animate([{ opacity: 1 }, { opacity: 0.55 }, { opacity: 1 }], { duration: 320 });
+    });
+    cometTimer = setTimeout(tick, 480 + Math.random() * 820);
+  };
+  cometTimer = setTimeout(tick, 360);
+}
+function startSparks() {
+  if (sparkTimer || prefersReduce()) return;
+  const tick = () => {
+    sparkTimer = 0;
+    const svg = $("pcb-svg");
+    if (!svg || repairP > 0.05 || document.hidden) return;
+    const reds = [...svg.querySelectorAll(".tr-r")];
+    if (reds.length) {
+      const el = reds[Math.floor(Math.random() * reds.length)];
+      el.animate([{ opacity: 0.7 }, { opacity: 1 }, { opacity: 0.7 }], { duration: 180 });
+    }
+    sparkTimer = setTimeout(tick, 1800 + Math.random() * 2200);
+  };
+  sparkTimer = setTimeout(tick, 1200);
+}
+
 function repairCap(phase, step) {
   if (phase === "running") return 1;
   if (phase === "starting") return (step || 0) >= 1 ? 0.84 : 0.58;
@@ -510,6 +579,7 @@ function renderPower(d) {
     : "power-wrap " + v.phase;
   cls($("power-wrap"), wrapCls);
   cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红线裂纹，启动中由内向外修复，运行中绿流
+  updateFrame($("stage"), { kind: "stage", tone: (v.phase === "running" || v.phase === "starting") ? "green" : "cyan" });
   cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped) || !!chipLock);
   const tripped = d.vm && d.vm.tripped !== null && d.vm.tripped !== undefined;
@@ -929,7 +999,7 @@ function goPage(i) {
   pages[i].animate([{ opacity: 0, transform: `translate3d(${dir * 28}px,0,0)` }, { opacity: 1, transform: "none" }],
     { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" });
   tog($("bg"), "dim", i !== 0);
-  if (i === 0 && boot) bootPaint(boot);   // 回到首页：补上不在首页时攒下的日志
+  syncTabFrames();
   // 先让切页这一帧画出来，再去读流量（不和切页抢同一帧）
   if (i === 2) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }
@@ -955,19 +1025,63 @@ function bindPager() {
   pager.addEventListener("touchcancel", () => { track = false; }, { passive: true });
 }
 
+function syncToggle(sw) {
+  if (!sw) return;
+  const on = !!sw.selected;
+  const wrap = sw.closest && sw.closest(".neo-toggle-wrap");
+  if (wrap) wrap.classList.toggle("on", on);
+  const tog = sw.parentElement && sw.parentElement.querySelector(".neo-toggle");
+  if (tog) tog.classList.toggle("on", on);
+}
 function bindRowSwitch(row, sw, onChange) {
+  const go = () => { syncToggle(sw); onChange(); };
   row.addEventListener("click", (e) => {
     if (sw.disabled) return;
-    if (e.target !== sw) { e.preventDefault(); sw.selected = !sw.selected; }
-    onChange();
+    if (e.target !== sw && !(e.target.closest && e.target.closest(".neo-toggle-wrap"))) {
+      e.preventDefault(); sw.selected = !sw.selected;
+    }
+    go();
   });
   sw.addEventListener("click", (e) => e.stopPropagation());
-  sw.addEventListener("change", onChange);
+  sw.addEventListener("change", go);
+  syncToggle(sw);
+}
+
+
+function mountFrames() {
+  const card = (id, tone) => { const n = $(id); if (n) attachFrame(n, { kind: "card", tone, notch: true }); };
+  card("card-run", "cyan");
+  card("row-autostart", "magenta");
+  card("btn-luci", "cyan");
+  if ($("stage")) attachFrame($("stage"), { kind: "stage", tone: "cyan" });
+  const hud = document.querySelector(".hud-frame");
+  if (hud) attachFrame(hud, { kind: "screen", tone: "cyan" });
+  document.querySelectorAll(".card.list, .vpn-card").forEach((el, i) => {
+    if (el.closest && el.classList.contains("neo-card") && (el.id === "card-run" || el.id === "row-autostart" || el.id === "btn-luci")) return;
+    if (el.id === "card-run" || el.id === "row-autostart" || el.id === "btn-luci") return;
+    attachFrame(el, { kind: "card", tone: i % 2 ? "magenta" : "cyan", notch: true });
+  });
+  document.querySelectorAll("md-primary-tab").forEach((tab, i) => {
+    attachFrame(tab, { kind: "hex", tone: i === 0 ? "green" : "cyan", ticks: i === 0 });
+  });
+  document.querySelectorAll("md-dialog").forEach((d) => {
+    d.addEventListener("open", () => {
+      const box = (d.shadowRoot && (d.shadowRoot.querySelector(".container") || d.shadowRoot.querySelector("[part='container']"))) || d;
+      attachFrame(box, { kind: "dialog", tone: "cyan", chamfer: 12 });
+    });
+  });
+}
+function syncTabFrames() {
+  document.querySelectorAll("md-primary-tab").forEach((tab) => {
+    const on = tab.getAttribute("aria-selected") === "true" || tab.hasAttribute("active") || tab.active === true;
+    updateFrame(tab, { kind: "hex", tone: on ? "green" : "cyan", ticks: !!on });
+  });
 }
 
 function bind() {
   document.querySelectorAll("md-icon[data-icon]").forEach(icon);
   mountPcb();
+  mountFrames();
   bindPager();
   goPage(0);
   $("power").addEventListener("click", power);

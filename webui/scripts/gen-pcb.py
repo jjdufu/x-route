@@ -232,115 +232,109 @@ def tile_svg(color, broken):
     return "".join(g)
 
 
-def bus_lines():
-    bus = []
-    for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
-        ox = 0 if sx < 0 else W
-        oy = 0 if sy < 0 else H
-        for k in range(6):
-            y = oy - sy * (8 + k * 5)
-            x_a = ox - sx * 2
-            x_b = ox - sx * (28 + k * 5)
-            x_c = x_b - sx * 10
-            bus.append([(x_a, y), (x_b, y), (x_c, y - sy * 10), (x_c - sx * 22, y - sy * 10)])
-    return bus
-
-
-def ring_paths():
-    """芯片周围同心圆角方环，营造参考图里的多层焊盘圈。"""
-    out = []
-    for i, pad in enumerate((18, 32, 48, 66)):
-        x, y = X0 - pad, Y0 - pad
-        w, h = CHIP + pad * 2, CHIP + pad * 2
-        r = 16 + i * 2
-        # 从靠近芯片上沿中点起笔，顺时针一圈，便于由内向外显现
-        d = (f"M{fmt(CX)} {fmt(y)} "
-             f"H{fmt(x + w - r)} A{r} {r} 0 0 1 {fmt(x + w)} {fmt(y + r)} "
-             f"V{fmt(y + h - r)} A{r} {r} 0 0 1 {fmt(x + w - r)} {fmt(y + h)} "
-             f"H{fmt(x + r)} A{r} {r} 0 0 1 {fmt(x)} {fmt(y + h - r)} "
-             f"V{fmt(y + r)} A{r} {r} 0 0 1 {fmt(x + r)} {fmt(y)} Z")
-        out.append({"d": d, "dist": 20 + i * 14, "kind": "ring"})
-    return out
-
-
-def beam_paths():
-    """运行态左右能量束：穿过芯片中线的长水平线。"""
-    out = []
-    for dy, dist in ((0, 210), (-16, 230), (16, 230), (-32, 250), (32, 250)):
-        y = CY + dy
-        # 左、右两段，从芯片边向外
-        out.append({"d": path_d([(X0 - 10, y), (8, y)]), "dist": dist, "kind": "beam"})
-        out.append({"d": path_d([(X1 + 10, y), (W - 8, y)]), "dist": dist, "kind": "beam"})
-    return out
-
-
-def branch_traces():
-    """额外曼哈顿分支，填满舞台中段，走线更密。"""
-    r = random.Random(42)
-    out = []
-    for i in range(36):
-        ang_q = i % 4
-        v = [(-1, 0), (1, 0), (0, -1), (0, 1)][ang_q]
-        f = (0, 1) if v[0] else (1, 0)
-        # 从芯片外沿附近出发
-        off = (i // 4 - 4) * 11
-        if v[0]:
-            p0 = (X0 - 12 if v[0] < 0 else X1 + 12, CY + off)
-        else:
-            p0 = (CX + off, Y0 - 12 if v[1] < 0 else Y1 + 12)
-        s1 = 18 + (i % 5) * 10
-        a = (p0[0] + v[0] * s1, p0[1] + v[1] * s1)
-        turn = (12 + (i % 6) * 8) * (1 if i % 2 == 0 else -1)
-        b = (a[0] + v[0] * abs(turn) * 0.3 + f[0] * turn, a[1] + v[1] * abs(turn) * 0.3 + f[1] * turn)
-        c = to_edge(b, v)
-        pts = [p0, a, b, c]
-        out.append({"d": path_d(pts), "dist": round(math.hypot(p0[0] - CX, p0[1] - CY) + 20, 1), "kind": "branch"})
-        # 折角过孔稍后再收集
-        out[-1]["_via"] = (round(b[0], 1), round(b[1], 1))
-    return out
-
-
 def traces_export():
-    """舞台可动画走线：路径从芯片引脚向外，供 stroke-dashoffset 由内向外修复。"""
+    """真实 PCB 走线：每边引脚成束，先直行、再 45° 折、再直行，偶尔二次折弯，末端过孔。无同心环、无横贯光束。"""
     items = []
-    for pin in pins():
-        pts = trace(pin)
-        px, py = pts[0]
+    vias = []
+    pr = []
+    r = random.Random(20261112)
+
+    def add_via(x, y):
+        vias.append({"x": round(x, 1), "y": round(y, 1)})
+
+    def clip_len(p, v, want, margin=8):
+        """沿 v 最多走 want，不穿出画布 margin。"""
+        x, y = p
+        ts = []
+        if v[0] > 1e-6: ts.append((W - margin - x) / v[0])
+        if v[0] < -1e-6: ts.append((margin - x) / v[0])
+        if v[1] > 1e-6: ts.append((H - margin - y) / v[1])
+        if v[1] < -1e-6: ts.append((margin - y) / v[1])
+        tmax = min([want] + [t for t in ts if t > 0], default=want)
+        return max(6, tmax)
+
+    def norm(v):
+        n = math.hypot(v[0], v[1]) or 1
+        return (v[0] / n, v[1] / n)
+
+    def route(px, py, vx, vy, fx, fy, o, idx, scale=1.0):
+        # 规则扇出：先法向短直行，非中心脚 45° 向外（离中心越远折得越开），再沿法向延伸。
+        # 方向对同一侧一致，避免交叉。
+        s1 = (10 + max(0, 4 - abs(o))) * scale
+        s1 = clip_len((px, py), (vx, vy), s1)
+        p1 = (px + vx * s1, py + vy * s1)
+        pts = [(px, py), p1]
+        if o == 0:
+            s2 = clip_len(p1, (vx, vy), (48 + (idx % 4) * 16) * scale)
+            p2 = (p1[0] + vx * s2, p1[1] + vy * s2)
+            pts.append(p2)
+            # 中心线偶尔末端轻折，避开正对的另一侧
+            if idx % 3 == 1:
+                side = 1 if (idx // 4) % 2 == 0 else -1
+                d3 = norm((vx + fx * side, vy + fy * side))
+                s3 = clip_len(p2, d3, 22 * scale)
+                if s3 >= 10:
+                    pts.append((p2[0] + d3[0] * s3, p2[1] + d3[1] * s3))
+        else:
+            # f 在 pins() 里已经指向远离中心
+            d45 = norm((vx + fx, vy + fy))
+            s45 = (8 + abs(o) * 7.5) * scale
+            s45 = clip_len(p1, d45, s45)
+            p2 = (p1[0] + d45[0] * s45, p1[1] + d45[1] * s45)
+            pts.append(p2)
+            # 再沿法向走：长度分层，短中长都有
+            layer = (abs(o) + idx) % 5
+            span = (24, 36, 52, 72, 100)[layer] * scale
+            s3 = clip_len(p2, (vx, vy), span)
+            if s3 >= 8:
+                p3 = (p2[0] + vx * s3, p2[1] + vy * s3)
+                pts.append(p3)
+                # 外侧脚再 45° 一次，把线送到画框附近
+                if abs(o) >= 3 and layer >= 2:
+                    d4 = d45
+                    s4 = clip_len(p3, d4, (18 + abs(o) * 6) * scale)
+                    if s4 >= 10:
+                        pts.append((p3[0] + d4[0] * s4, p3[1] + d4[1] * s4))
+        end = pts[-1]
+        if math.hypot(end[0] - CX, end[1] - CY) < CHIP / 2 + 16:
+            return None
+        return pts
+
+    for i, pin in enumerate(pins()):
+        (px, py), v, f, o = pin
+        pts = route(px, py, v[0], v[1], f[0], f[1], o, i)
+        if not pts:
+            continue
         items.append({
             "d": path_d(pts),
             "dist": round(math.hypot(px - CX, py - CY), 1),
             "kind": "pin",
+            "delay": round((i * 0.017 + (abs(o) * 0.012)) % 0.38, 3),
         })
-    for pts in corner_traces():
-        # corner_traces 是 [edge, chip]；改成从芯片向外
-        pts = list(reversed(pts))
-        px, py = pts[0]
+        add_via(*pts[-1])
+        if len(pts) >= 4 and rnd.random() < 0.28:
+            add_via(*pts[2])
+
+    # 每边再补少量伴线，总数控制在 40–60
+    extras = 0
+    companions = []
+    for (px, py), v, f, o in pins():
+        if abs(o) == 0 or abs(o) == 2 or abs(o) == PIN_N // 2:
+            # 在引脚旁偏移 4px 再走一条较短伴线
+            ox, oy = -v[1] * (4 if o >= 0 else -4), v[0] * (4 if o >= 0 else -4)
+            pts = route(px + ox, py + oy, v[0], v[1], f[0], f[1], o, 80 + extras)
+            extras += 1
+            if pts and extras <= 16:
+                companions.append((pts, px, py, o, extras))
+    for pts, px, py, o, k in companions:
         items.append({
             "d": path_d(pts),
-            "dist": round(math.hypot(px - CX, py - CY), 1),
-            "kind": "corner",
+            "dist": round(math.hypot(px - CX, py - CY) + 6, 1),
+            "kind": "branch",
+            "delay": round((0.08 + k * 0.02) % 0.4, 3),
         })
-    for pts in bus_lines():
-        # 总线在角落，离芯片更远，较晚接通
-        mid = pts[len(pts) // 2]
-        items.append({
-            "d": path_d(pts),
-            "dist": round(math.hypot(mid[0] - CX, mid[1] - CY), 1),
-            "kind": "bus",
-        })
-    items.extend(ring_paths())
-    items.extend(beam_paths())
-    vias = []
-    for b in branch_traces():
-        vx, vy = b.pop("_via")
-        vias.append({"x": vx, "y": vy})
-        items.append(b)
-    for t in (trace(p) for p in pins()):
-        if len(t) == 4:
-            vias.append({"x": round(t[2][0], 1), "y": round(t[2][1], 1)})
-        elif rnd.random() < 0.5:
-            vias.append({"x": round(t[1][0], 1), "y": round(t[1][1], 1)})
-    pr = []
+        add_via(*pts[-1])
+
     for (px, py), v, _, _ in pins():
         if v[0]:
             x = px if v[0] < 0 else px - PIN_LEN
@@ -349,6 +343,8 @@ def traces_export():
             y = py if v[1] < 0 else py - PIN_LEN
             pr.append({"x": round(px - 2, 1), "y": round(y, 1), "w": 4, "h": PIN_LEN})
     return items, vias, pr
+
+
 
 
 def js_obj(d):

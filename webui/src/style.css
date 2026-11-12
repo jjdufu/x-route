@@ -97,22 +97,9 @@ body { font: 15px/1.45 system-ui, "Noto Sans SC", sans-serif; overflow: hidden; 
   background: transparent;
   transition: opacity .12s;
 }
-.hud-frame { position: absolute; inset: 6px; z-index: 8; pointer-events: none; }
+.hud-frame { position: absolute; inset: 4px; z-index: 8; pointer-events: none; overflow: visible; background: none; filter: none; }
 .hud-frame::before, .hud-frame::after,
 .shell::before, .shell::after { content: none; }
-.hud-frame {
-  background:
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) top left / 22px 2px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) top left / 2px 22px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) top right / 22px 2px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) top right / 2px 22px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) bottom left / 22px 2px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) bottom left / 2px 22px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) bottom right / 22px 2px no-repeat,
-    linear-gradient(var(--xr-cyan), var(--xr-cyan)) bottom right / 2px 22px no-repeat;
-  opacity: .85;
-  filter: drop-shadow(0 0 4px rgba(0, 229, 255, .55));
-}
 .vis-hide { display: none !important; }
 /* 还没有状态（首次打开且无缓存）：按钮、舞台与状态标签先不画，拿到状态后淡入，不先闪「已停止」 */
 .nostate .power-area, .nostate .chip { opacity: 0; }
@@ -159,7 +146,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
   -webkit-background-clip: text; background-clip: text; color: transparent;
   -webkit-text-fill-color: transparent;
   position: relative; width: 100%;
-  filter: drop-shadow(0 0 10px rgba(57, 255, 136, .45)) drop-shadow(0 0 18px rgba(0, 229, 255, .28));
+  filter: drop-shadow(0 0 6px rgba(57, 255, 136, .32));
 }
 .title::before, .title::after {
   content: attr(data-text); position: absolute; left: 0; top: 0; width: 100%;
@@ -177,7 +164,7 @@ md-icon { --md-icon-size: 22px; flex: none; }
 .chip-off { color: var(--md-sys-color-on-surface-variant); }
 
 .tabs {
-  flex: none; padding: 6px 14px 8px;
+  flex: none; padding: 6px 16px 10px; overflow: visible;
   --md-primary-tab-container-color: transparent;
   --md-primary-tab-label-text-color: rgba(0, 229, 255, .7);
   --md-primary-tab-active-label-text-color: #d8ffe8;
@@ -216,7 +203,7 @@ md-primary-tab[active]::after, md-primary-tab[aria-selected="true"]::after {
 .pager { flex: 1; min-height: 0; position: relative; overflow: hidden; touch-action: pan-y; overscroll-behavior: none; }
 .page {
   position: absolute; inset: 0;
-  overflow-y: auto; overflow-x: hidden; padding: 8px 14px calc(48px + var(--bottom-inset));
+  overflow-y: auto; overflow-x: hidden; padding: 8px 14px calc(58px + var(--bottom-inset));
   display: flex; flex-direction: column; gap: 12px;
 }
 /* 隐藏页跳过渲染但保留滚动位置 */
@@ -343,23 +330,23 @@ md-primary-tab[active]::after, md-primary-tab[aria-selected="true"]::after {
 .pcb-svg {
   position: absolute; inset: -4%; width: 108%; height: 108%; margin: 0; left: -4%; top: -4%;
   overflow: visible;
-  -webkit-mask-image: radial-gradient(closest-side, #000 55%, rgba(0, 0, 0, .85) 86%, transparent 99%);
-  mask-image: radial-gradient(closest-side, #000 55%, rgba(0, 0, 0, .85) 86%, transparent 99%);
+  -webkit-mask-image: radial-gradient(closest-side, #000 78%, rgba(0, 0, 0, .85) 94%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 78%, rgba(0, 0, 0, .85) 94%, transparent 100%);
 }
 .stage.running .pcb-svg, .stage.starting .pcb-svg {
-  filter: drop-shadow(0 0 1.5px rgba(57, 255, 136, .7)) drop-shadow(0 0 6px rgba(57, 255, 136, .35));
+  filter: drop-shadow(0 0 1.1px rgba(57, 255, 136, .65)) drop-shadow(0 0 4px rgba(57, 255, 136, .28));
 }
 .tr-r { fill: none; stroke: #ff4d6d; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; opacity: .72; }
 .tr-g, .tr-glow, .tr-pulse { fill: none; stroke: #39ff88; stroke-linecap: round; stroke-linejoin: round; }
-.tr-g { stroke-width: 1.55; opacity: 1; }
-.tr-glow { stroke-width: 5.2; opacity: .32; }
+.tr-g { stroke-width: 1.25; opacity: 1; }
+.tr-glow { stroke-width: 3.2; opacity: .22; }
 .tr-pulse { stroke-width: 2; stroke-dasharray: 10 46; opacity: 0; }
 .pcb-via { fill: #000; stroke: #ff4d6d; stroke-width: 1.15; }
 .pcb-pin { fill: #ff4d6d; }
 .stage.running .pcb-via, .stage.starting .pcb-via { stroke: #39ff88; }
 .stage.running .pcb-pin, .stage.starting .pcb-pin { fill: #39ff88; }
-.pcb-svg.charging .tr-pulse, .pcb-svg.flowing .tr-pulse { opacity: .9; animation: pcbPulse 1.6s linear infinite; animation-delay: var(--t, 0s); }
-.pcb-svg.charging .tr-pulse { stroke: #7dffd0; }
+.pcb-svg.charging .tr-pulse { opacity: .7; animation: pcbPulse 1.6s linear infinite; animation-delay: var(--t, 0s); stroke: #7dffd0; }
+.pcb-svg.flowing .tr-pulse { opacity: 0; animation: pcbPulse 1.6s linear infinite; animation-delay: var(--t, 0s); }
 @keyframes pcbPulse { to { stroke-dashoffset: -56; } }
 .page:not(.on) .tr-pulse, .hid .tr-pulse { animation-play-state: paused; }
 .stage-hud {
@@ -586,4 +573,115 @@ md-switch {
   --md-switch-selected-track-outline-color: #39ff88;
   --md-switch-track-color: #14181c;
   --md-switch-handle-color: #8b96a3;
+}
+
+
+/* ---- v3 边框组件、扫描线、自定义开关 ---- */
+.scan {
+  position: fixed; inset: 0; z-index: 9; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .14) 2px 3px);
+  opacity: .22;
+}
+.xr-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 4; overflow: visible;
+  display: block;
+}
+.has-frame:not(.hud-frame):not(.stage) { position: relative; }
+.hud-frame.has-frame { position: absolute !important; inset: 4px; }
+/* 切角填充改到伪元素，避免 clip-path 裁掉外框描边 */
+.neo-card, .card, .stage {
+  overflow: visible;
+  clip-path: none;
+  background: transparent;
+  box-shadow: none;
+  filter: none;
+}
+.neo-card::before, .card::before, .stage::before {
+  content: ""; position: absolute; inset: 0; z-index: 0;
+  background: #071018;
+  clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 13px, 100% calc(100% - 13px), calc(100% - 13px) 100%, 13px 100%, 0 calc(100% - 13px), 0 13px);
+  pointer-events: none;
+}
+.stage::before { background: rgba(4, 10, 12, .72); }
+.neo-card > *:not(.xr-frame):not(.neo-hex), .card > *:not(.xr-frame):not(.neo-hex) { position: relative; z-index: 1; }
+.neo-hex { position: absolute !important; right: 16px; bottom: 4px; z-index: 2; }
+.stage > .st-wrap { position: absolute; inset: 0; z-index: 0; }
+.stage > .xr-frame { z-index: 3; }
+.stage > #chip, .stage > .stage-hud { z-index: 2; }
+.neo-mag::before { background: #0a0710; }
+
+md-tabs, .tabs, md-primary-tab { overflow: visible !important; }
+md-primary-tab {
+  clip-path: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  overflow: visible !important;
+}
+md-primary-tab > svg.xr-frame, .xr-frame {
+  width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important;
+}
+md-primary-tab::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: rgba(0, 16, 22, .72);
+  clip-path: polygon(20px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 20px 100%, 0 calc(100% - 20px), 0 20px);
+}
+md-primary-tab[active]::before, md-primary-tab[aria-selected="true"]::before {
+  background: rgba(6, 36, 18, .92);
+}
+md-primary-tab[active]::after, md-primary-tab[aria-selected="true"]::after { content: none; }
+
+/* 自定义霓虹拨杆：保留 md-switch 做状态，视觉用 .neo-toggle */
+.neo-toggle-wrap { position: relative; width: 46px; height: 24px; flex: none; display: inline-block; }
+.neo-toggle-wrap md-switch {
+  position: absolute; inset: 0; width: 46px; height: 24px; opacity: 0; pointer-events: auto; z-index: 3;
+  --md-switch-track-width: 46px; --md-switch-track-height: 24px;
+}
+.neo-toggle {
+  width: 46px; height: 24px; flex: none; position: relative;
+  display: inline-block;
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%);
+  background: #0a1014;
+  box-shadow: inset 0 0 0 1.2px rgba(0, 196, 216, .45);
+}
+.neo-toggle i {
+  position: absolute; top: 3px; left: 4px; width: 16px; height: 18px;
+  clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 4px 100%, 0 50%);
+  background: #6a7680;
+  transition: transform .16s ease-out, background .16s ease-out;
+  display: block;
+}
+:is(.neo-toggle-wrap, .neo-card, .item):has(md-switch[selected]) .neo-toggle,
+.neo-toggle-wrap.on .neo-toggle, .neo-toggle.on {
+  box-shadow: inset 0 0 0 1.3px #3dff8a, 0 0 8px rgba(61, 255, 138, .28);
+}
+:is(.neo-toggle-wrap, .neo-card, .item):has(md-switch[selected]) .neo-toggle i,
+.neo-toggle-wrap.on .neo-toggle i, .neo-toggle.on i {
+  transform: translateX(22px);
+  background: #3dff8a;
+  box-shadow: 0 0 6px rgba(61, 255, 138, .7);
+}
+
+/* 下拉：去圆角 Material 感，切角深色 + 青色描边 */
+.sel, .sel-full {
+  --md-outlined-select-text-field-container-shape: 0;
+  --md-outlined-select-text-field-outline-color: rgba(0, 196, 216, .55);
+  --md-outlined-select-text-field-focus-outline-color: #00d8ee;
+  --md-outlined-select-text-field-input-text-color: #d4eef2;
+  --md-outlined-select-text-field-container-color: rgba(4, 12, 16, .9);
+  --md-menu-container-color: #071018;
+  --md-menu-container-shape: 0;
+  --md-outlined-field-outline-width: 1px;
+}
+
+.running .core-inner { animation: coreIdle 3.8s ease-in-out infinite alternate; }
+@keyframes coreIdle { from { opacity: .65; } to { opacity: 1; } }
+
+.pcb-via { opacity: .2; }
+.pcb-via.lit { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .running .core-inner { animation: none; }
+  .neo-toggle i { transition: none; }
 }

@@ -11,6 +11,7 @@
 <body>
   <!-- 整页电路板背景：红 / 绿两层只做交叉淡入淡出；组网、设置页整体变弱 -->
   <div id="bg" class="bg stopped" aria-hidden="true"><div class="bg-layer bg-red"></div><div class="bg-layer bg-green"></div></div>
+  <div class="scan" aria-hidden="true"></div>
   <div class="shell nostate" unresolved>
     <div class="hud-frame" aria-hidden="true"></div>
     <header class="appbar">
@@ -353,7 +354,7 @@
           <div class="neo-mid">
             <div class="neo-title">开机自启 <span id="dot-as" class="neo-dot off"></span><span id="v-as-st">已关闭</span></div>
           </div>
-          <md-switch id="sw-autostart" icons></md-switch>
+          <span class="neo-toggle-wrap"><md-switch id="sw-autostart" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span>
           <span class="neo-hex">0xA702</span>
         </div>
 
@@ -387,9 +388,9 @@
           <div class="item"><md-icon data-icon="swap_horiz"></md-icon><span class="grow">运行模式</span><div id="seg-mode" class="seg"></div></div>
           <div class="item"><md-icon data-icon="admin_panel_settings"></md-icon><span class="grow">管理访问</span>
             <md-outlined-select id="sel-access" class="sel"></md-outlined-select></div>
-          <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">DHCP<span id="v-hotspot" class="sub"></span></span><md-switch id="sw-hotspot" icons></md-switch></div>
+          <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">DHCP<span id="v-hotspot" class="sub"></span></span><span class="neo-toggle-wrap"><md-switch id="sw-hotspot" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
           <div id="row-hs-net" class="item item-btn"><md-ripple></md-ripple><md-icon data-icon="lan"></md-icon><span class="grow">网关地址<span id="v-hs-net-cur" class="sub"></span></span><span id="v-hs-net" class="val">跟随安卓</span></div>
-          <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><md-switch id="sw-ipv6" icons></md-switch></div>
+          <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><span class="neo-toggle-wrap"><md-switch id="sw-ipv6" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
         </div>
 
         <div class="group-title">通知</div>
@@ -403,7 +404,7 @@
 
         <div class="group-title">存储共享</div>
         <div class="card list">
-          <div id="row-share" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="folder_shared"></md-icon><span class="grow">存储共享</span><md-switch id="sw-share" icons></md-switch></div>
+          <div id="row-share" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="folder_shared"></md-icon><span class="grow">存储共享</span><span class="neo-toggle-wrap"><md-switch id="sw-share" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
           <div class="item"><md-icon data-icon="lock"></md-icon><span class="grow">权限</span><div id="seg-share" class="seg"></div></div>
           <button id="btn-share-path" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="folder"></md-icon><span class="grow">目录</span><span id="v-share-path" class="val path">内部存储</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
         </div>
@@ -421,7 +422,7 @@
 
         <div class="group-title">日志</div>
         <div class="card list">
-          <div id="row-debug" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="receipt_long"></md-icon><span class="grow">调试模式</span><md-switch id="sw-debug" icons></md-switch></div>
+          <div id="row-debug" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="receipt_long"></md-icon><span class="grow">调试模式</span><span class="neo-toggle-wrap"><md-switch id="sw-debug" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
           <div class="item"><md-icon data-icon="schedule"></md-icon><span class="grow">自动关闭</span><md-outlined-select id="sel-debug-hours" class="sel"></md-outlined-select></div>
           <div class="actions">
             <md-filled-tonal-button id="btn-export"><md-icon slot="icon" data-icon="download"></md-icon><span id="btn-export-text">日志导出</span></md-filled-tonal-button>
