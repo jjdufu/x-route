@@ -237,13 +237,67 @@ def bus_lines():
     for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
         ox = 0 if sx < 0 else W
         oy = 0 if sy < 0 else H
-        for k in range(4):
+        for k in range(6):
             y = oy - sy * (8 + k * 5)
             x_a = ox - sx * 2
             x_b = ox - sx * (28 + k * 5)
             x_c = x_b - sx * 10
             bus.append([(x_a, y), (x_b, y), (x_c, y - sy * 10), (x_c - sx * 22, y - sy * 10)])
     return bus
+
+
+def ring_paths():
+    """芯片周围同心圆角方环，营造参考图里的多层焊盘圈。"""
+    out = []
+    for i, pad in enumerate((18, 32, 48, 66)):
+        x, y = X0 - pad, Y0 - pad
+        w, h = CHIP + pad * 2, CHIP + pad * 2
+        r = 16 + i * 2
+        # 从靠近芯片上沿中点起笔，顺时针一圈，便于由内向外显现
+        d = (f"M{fmt(CX)} {fmt(y)} "
+             f"H{fmt(x + w - r)} A{r} {r} 0 0 1 {fmt(x + w)} {fmt(y + r)} "
+             f"V{fmt(y + h - r)} A{r} {r} 0 0 1 {fmt(x + w - r)} {fmt(y + h)} "
+             f"H{fmt(x + r)} A{r} {r} 0 0 1 {fmt(x)} {fmt(y + h - r)} "
+             f"V{fmt(y + r)} A{r} {r} 0 0 1 {fmt(x + r)} {fmt(y)} Z")
+        out.append({"d": d, "dist": 20 + i * 14, "kind": "ring"})
+    return out
+
+
+def beam_paths():
+    """运行态左右能量束：穿过芯片中线的长水平线。"""
+    out = []
+    for dy, dist in ((0, 210), (-16, 230), (16, 230), (-32, 250), (32, 250)):
+        y = CY + dy
+        # 左、右两段，从芯片边向外
+        out.append({"d": path_d([(X0 - 10, y), (8, y)]), "dist": dist, "kind": "beam"})
+        out.append({"d": path_d([(X1 + 10, y), (W - 8, y)]), "dist": dist, "kind": "beam"})
+    return out
+
+
+def branch_traces():
+    """额外曼哈顿分支，填满舞台中段，走线更密。"""
+    r = random.Random(42)
+    out = []
+    for i in range(36):
+        ang_q = i % 4
+        v = [(-1, 0), (1, 0), (0, -1), (0, 1)][ang_q]
+        f = (0, 1) if v[0] else (1, 0)
+        # 从芯片外沿附近出发
+        off = (i // 4 - 4) * 11
+        if v[0]:
+            p0 = (X0 - 12 if v[0] < 0 else X1 + 12, CY + off)
+        else:
+            p0 = (CX + off, Y0 - 12 if v[1] < 0 else Y1 + 12)
+        s1 = 18 + (i % 5) * 10
+        a = (p0[0] + v[0] * s1, p0[1] + v[1] * s1)
+        turn = (12 + (i % 6) * 8) * (1 if i % 2 == 0 else -1)
+        b = (a[0] + v[0] * abs(turn) * 0.3 + f[0] * turn, a[1] + v[1] * abs(turn) * 0.3 + f[1] * turn)
+        c = to_edge(b, v)
+        pts = [p0, a, b, c]
+        out.append({"d": path_d(pts), "dist": round(math.hypot(p0[0] - CX, p0[1] - CY) + 20, 1), "kind": "branch"})
+        # 折角过孔稍后再收集
+        out[-1]["_via"] = (round(b[0], 1), round(b[1], 1))
+    return out
 
 
 def traces_export():
@@ -274,7 +328,13 @@ def traces_export():
             "dist": round(math.hypot(mid[0] - CX, mid[1] - CY), 1),
             "kind": "bus",
         })
+    items.extend(ring_paths())
+    items.extend(beam_paths())
     vias = []
+    for b in branch_traces():
+        vx, vy = b.pop("_via")
+        vias.append({"x": vx, "y": vy})
+        items.append(b)
     for t in (trace(p) for p in pins()):
         if len(t) == 4:
             vias.append({"x": round(t[2][0], 1), "y": round(t[2][1], 1)})

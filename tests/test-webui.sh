@@ -211,12 +211,14 @@ eq(L.splitLines({ ok: false }), null, "splitLines 失败");
 for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!html.includes(`id="${id}"`)) fail(`累计流量弹窗缺少 ${id}`);
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随启动阶段切换");
-// 电流动画：启动中电荷往复、运行中接通后流动，只改 stroke-dashoffset；不可见时暂停；无发光滤镜
+// 电流动画：启动中电荷往复、运行中接通后流动，只改 stroke-dashoffset；不可见时暂停；霓虹用描边和有限投影，不用 blur
 const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
 { const k = kf("pcbPulse"); if (!k || /opacity|left|top|width|height|filter|shadow|background|transform|scale/.test(k.replace(/@keyframes \w+/, ""))) fail("pcbPulse 只能改 stroke-dashoffset"); }
 { const k = kf("chipFlow"); if (!k || /opacity|left|top|width|height|filter|shadow|background|transform|scale/.test(k.replace(/@keyframes \w+/, ""))) fail("chipFlow 只能改 stroke-dashoffset"); }
 if (!/\.pcb-svg\.flowing \.tr-pulse/.test(css) || !/\.pcb-svg\.charging \.tr-pulse/.test(css)) fail("电流应只在修复/运行时流动");
-if (/filter|box-shadow|blur/.test(blk(".tr-pulse") + blk(".tr-g") + blk(".tr-glow"))) fail("电流不能发光滤镜");
+// 霓虹靠加粗半透明描边，以及芯片/舞台容器上有限的 drop-shadow / box-shadow；仍禁止 backdrop-filter 与 filter:blur。
+{ const trcss = blk(".tr-pulse") + blk(".tr-g") + blk(".tr-glow");
+  if (/backdrop-filter|filter:\s*blur/.test(trcss)) fail("电流不得使用大面积模糊滤镜"); }
 if (!/\.page:not\(\.on\) \.tr-pulse, \.hid \.tr-pulse \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
 { const n = (fs.readFileSync(W + "/src/pcb.js", "utf8").match(/kind:"pin"/g) || []).length; if (n < 20 || n > 80) fail("舞台走线数量应受控"); }
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画

@@ -12,15 +12,14 @@
   <!-- 整页电路板背景：红 / 绿两层只做交叉淡入淡出；组网、设置页整体变弱 -->
   <div id="bg" class="bg stopped" aria-hidden="true"><div class="bg-layer bg-red"></div><div class="bg-layer bg-green"></div></div>
   <div class="shell nostate" unresolved>
+    <div class="hud-frame" aria-hidden="true"></div>
     <header class="appbar">
-      <div class="hud-line" aria-hidden="true">
-        <span class="hud-hex hud-cyan">0x7A3F // XROUTER OS</span>
+      <div class="hud-line">
+        <span class="hud-hex hud-cyan">0x7A3F // XROUTER OS v3.7.0</span>
         <span class="hud-hex hud-mag">0xFF32</span>
       </div>
-      <div class="appbar-row">
-        <h1 class="title" data-text="XRouter">XRouter</h1>
-        <span id="chip" class="chip chip-off"><span class="dot"></span><span id="chip-text">已停止</span></span>
-      </div>
+      <h1 class="title" data-text="XRouter">XRouter</h1>
+      <span id="chip" class="chip chip-off vis-hide"><span class="dot"></span><span id="chip-text">已停止</span></span>
     </header>
 
     <md-tabs id="tabs" class="tabs" aria-label="页面">
@@ -327,36 +326,57 @@
             </div>
             <div id="power-err" class="power-err" hidden></div>
             <div id="stage-hud" class="stage-hud" aria-hidden="true">
-              <div id="stage-hud-ph" class="stage-hud-ph">STOPPED</div>
-              <div id="stage-hud-sub" class="stage-hud-sub">服务已停止</div>
+              <div id="stage-hud-ph" class="stage-hud-ph">◇ OFFLINE</div>
+              <div id="stage-hud-sub" class="stage-hud-sub">SERVICE STOPPED</div>
             </div>
           </div>
         </div>
 
-        <div id="row-autostart" class="card row-big" role="switch">
+        <article class="neo-card neo-cyan" id="card-run">
+          <span class="ico-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3"/><rect x="10" y="10" width="4" height="4" rx=".6"/></svg>
+          </span>
+          <div class="neo-mid">
+            <div class="neo-title">运行状态 <span id="dot-run" class="neo-dot off"></span><span id="v-run-st">已停止</span></div>
+            <div class="neo-kv"><span>运行时长</span><span id="v-uptime" class="val">—</span></div>
+            <div class="neo-kv"><span>上游网络</span><span id="v-up" class="val">—</span></div>
+          </div>
+          <md-icon id="i-up" data-icon="cloud_off" class="vis-hide"></md-icon>
+          <span class="neo-hex">0xA701</span>
+        </article>
+
+        <div id="row-autostart" class="neo-card neo-mag" role="switch">
           <md-ripple></md-ripple>
-          <md-icon data-icon="schedule"></md-icon>
-          <span class="grow">开机自启</span>
+          <span class="ico-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v5l3 2"/><circle cx="12" cy="13" r="8"/><path d="M12 3v2"/></svg>
+          </span>
+          <div class="neo-mid">
+            <div class="neo-title">开机自启 <span id="dot-as" class="neo-dot off"></span><span id="v-as-st">已关闭</span></div>
+          </div>
           <md-switch id="sw-autostart" icons></md-switch>
+          <span class="neo-hex">0xA702</span>
         </div>
 
-        <div class="card list">
-          <div class="item"><md-icon data-icon="router"></md-icon><span class="grow">运行时长</span><span id="v-uptime" class="val">—</span></div>
-          <div class="item"><md-icon id="i-up" data-icon="cloud_off"></md-icon><span class="grow">上游网络</span><span id="v-up" class="val">—</span></div>
-          <button id="btn-luci" class="item item-btn" type="button">
-            <md-ripple></md-ripple>
-            <md-icon data-icon="open_in_new"></md-icon><span class="grow">打开 LuCI</span><md-icon class="trail" data-icon="chevron_right"></md-icon>
-          </button>
-        </div>
+        <button id="btn-luci" class="neo-card neo-cyan neo-action" type="button">
+          <md-ripple></md-ripple>
+          <span class="ico-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5h5v5"/><path d="M19 5l-7 7"/><path d="M17 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5"/></svg>
+          </span>
+          <div class="neo-mid">
+            <div class="neo-title">打开 LuCI <span class="neo-dot ok"></span><span>管理界面</span></div>
+          </div>
+          <span class="neo-go">OPEN</span>
+          <span class="neo-hex">0xA703</span>
+        </button>
       </section>
 
       <!-- 组网：OpenVPN 隧道按列表渲染（每条各自状态、地址、自动同步的网段）；只有一条时与单卡片布局相同 -->
       <section class="page" id="page-link">
         <div id="vpn-list" class="vpn-list"></div>
         <div id="vpn-actions" class="actions">
-          <md-filled-tonal-button id="btn-vpn-start" disabled>启动</md-filled-tonal-button>
-          <md-outlined-button id="btn-vpn-stop" class="danger" disabled>停止</md-outlined-button>
-          <md-filled-tonal-button id="btn-import"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
+          <md-filled-tonal-button id="btn-vpn-start" class="neo-btn neo-btn-ok" disabled>启动</md-filled-tonal-button>
+          <md-outlined-button id="btn-vpn-stop" class="danger neo-btn neo-btn-bad" disabled>停止</md-outlined-button>
+          <md-filled-tonal-button id="btn-import" class="neo-btn neo-btn-cyan"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
         </div>
       </section>
 
@@ -417,6 +437,10 @@
         </div>
       </section>
     </main>
+    <div class="hud-rail" aria-hidden="true">
+      <span class="hud-hex hud-cyan" id="hud-left">UPSTREAM: —</span>
+      <span class="hud-hex hud-mag" id="hud-up">Uptime: 00:00:00</span>
+    </div>
   </div>
 
   <!-- 卸载后的静态页：模块目录随后被删除，页面不再有任何轮询或动画 -->
@@ -501,7 +525,7 @@
 
   <!-- 组网页的隧道卡片（每条隧道克隆一份） -->
   <template id="tpl-vpn">
-    <div class="card list vpn-card">
+    <div class="card list vpn-card neo-card neo-cyan">
       <div class="card-head"><md-icon data-icon="vpn_lock"></md-icon><span class="grow vpn-name">OpenVPN</span><span class="vpn-badge"><span class="dot"></span><span class="vpn-badge-text"></span></span></div>
       <div class="item vpn-st-row"><md-icon data-icon="link"></md-icon><span class="grow">连接状态</span><span class="val vpn-st">未连接</span></div>
       <div class="item vpn-addr-row"><md-icon data-icon="lan"></md-icon><span class="grow">隧道地址</span><span class="val mono vpn-addr">—</span></div>

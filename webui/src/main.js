@@ -409,7 +409,7 @@ function mountPcb() {
     glow.dataset.t0 = gr.dataset.t0 = String(t0);
     glow.dataset.t1 = gr.dataset.t1 = String(t1);
     gGlow.append(glow); gGreen.append(gr);
-    if (t.kind !== "bus") {
+    if (t.kind === "pin" || t.kind === "corner" || t.kind === "beam") {
       gPulse.append(svgEl("path", { class: "tr-pulse", d: t.d, style: `--t:${((i * 0.11) % 1.4).toFixed(2)}s` }));
     }
   });
@@ -449,8 +449,8 @@ function applyRepair(p) {
   svg.classList.toggle("charging", repairP > 0.02 && repairP < 0.995);
   svg.classList.toggle("flowing", repairP >= 0.995);
   if ($("power-wrap") && !chipLock) {
-    if (repairP <= 0.1) fragRest(false);
-    else if (repairP >= 0.58) fragRest(true);
+    if (repairP <= 0.1) { fragRest(false); $("power-wrap").classList.remove("healed"); }
+    else if (repairP >= 0.42) { fragRest(true); $("power-wrap").classList.add("healed"); }
   }
 }
 function repairCap(phase, step) {
@@ -486,15 +486,20 @@ function renderStageHud(v) {
   const ph = $("stage-hud-ph"), sub = $("stage-hud-sub"), hud = $("stage-hud");
   if (!ph || !sub) return;
   const map = {
-    stopped: ["STOPPED", "服务已停止"],
-    starting: ["BOOTING...", "正在启动服务"],
-    running: ["RUNNING", "服务运行中"],
-    stopping: ["STOPPING", "正在停止服务"],
-    failed: ["FAILED", ""],
+    stopped: ["◇ OFFLINE", "SERVICE STOPPED"],
+    starting: ["◇ BOOTING...", "INITIALIZING"],
+    running: ["◇ RUNNING", "SERVICE ONLINE"],
+    stopping: ["◇ STOPPING...", "SHUTTING DOWN"],
+    failed: ["◇ FAULT", ""],
   };
   const [a, b] = map[v.phase] || map.stopped;
-  txt(ph, a); txt(sub, b);
-  hide(hud, v.phase === "failed");
+  txt(ph, a); txt(sub, v.phase === "failed" ? (v.text || "FAULT") : b);
+  hide(hud, false);
+}
+function fmtClock(s) {
+  s = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
 // ---- 渲染 ----
@@ -515,7 +520,7 @@ function renderPower(d) {
   renderStageHud(v);
   chipFollow(v.phase);
   boardFollow(v);
-  cls($("chip"), "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
+  cls($("chip"), "chip vis-hide " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
   txt($("chip-text"), v.chip);
   tog(document.querySelector(".shell"), "nostate", false);   // 拿到状态（或上次缓存）才显示按钮与背景，不先闪「已停止」
 }
@@ -596,6 +601,16 @@ function render(d) {
   txt($("v-up"), kind);
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
   if ($("i-up").dataset.icon !== ic) setIcon($("i-up"), ic);
+  const v = vmView(d, pending);
+  const runMap = { running: ["运行中", "ok"], starting: ["启动中", "busy"], stopping: ["停止中", "busy"], failed: ["异常", "bad"] };
+  const [runL, runC] = runMap[v.phase] || ["已停止", "off"];
+  txt($("v-run-st"), runL);
+  if ($("dot-run")) cls($("dot-run"), "neo-dot " + runC);
+  const asOn = cfg.AUTOSTART === "1";
+  txt($("v-as-st"), asOn ? "已开启" : "已关闭");
+  if ($("dot-as")) cls($("dot-as"), "neo-dot " + (asOn ? "ok" : "off"));
+  txt($("hud-left"), "UPSTREAM: " + (kind === "—" ? "—" : kind.toUpperCase()));
+  txt($("hud-up"), "Uptime: " + (vm.running ? fmtClock(vm.uptime_s) : "00:00:00"));
 
   renderVpn(vpn);
 
@@ -998,10 +1013,37 @@ function edgeToEdge() {
   try { if (window.ksu && typeof window.ksu.enableEdgeToEdge === "function") window.ksu.enableEdgeToEdge(true); } catch { /* 旧管理器 */ }
 }
 
+function previewStatus(phase) {
+  const running = phase === "running";
+  const starting = phase === "starting";
+  const failed = phase === "failed";
+  return {
+    vm: { running: running || starting, state: running ? "stable" : starting ? "booting" : "off",
+      uptime_s: running ? 11520 : starting ? 12 : 0, error: failed ? "启动失败" : null, tripped: null },
+    net: { gw: running ? "on" : starting ? "off" : "block", up_if: running ? "wlan0" : "" },
+    config: { AUTOSTART: "1", XR_MODE: "global", XR_EXPOSE: "lan", VM_SHARE: "0", VM_CPUS: "2", VM_MEM_MB: "768", VM_DISK_SIZE_MB: "1024", XR_HOTSPOT_BRIDGE: "1" },
+    vpn: { configured: true, status: running ? "up" : "down", addr: running ? "10.8.0.5/24" : "", routes_active: running ? ["10.8.0.0/24"] : [] },
+    share: { rw_supported: true },
+    ipv6: true,
+  };
+}
+
+window.__xrPreviewSet = (phase, freeze) => {
+  render(previewStatus(phase));
+  if (freeze != null && freeze !== undefined) { repairTok++; cancelAnimationFrame(repairRaf); applyRepair(+freeze); }
+};
+
 (async () => {
   edgeToEdge();
   bind();
   await customElements.whenDefined("md-tabs");
+  const pv = typeof window !== "undefined" ? window.__XR_PREVIEW__ : null;
+  if (pv) {
+    render(previewStatus(pv.phase || "stopped"));
+    document.querySelector(".shell").removeAttribute("unresolved");
+    if (pv.freeze != null) { repairTok++; cancelAnimationFrame(repairRaf); applyRepair(+pv.freeze); }
+    return;
+  }
   const cached = loadCache();
   if (cached) render(cached);
   document.querySelector(".shell").removeAttribute("unresolved");
