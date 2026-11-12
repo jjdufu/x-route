@@ -20,7 +20,7 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
   VPN_TXT, labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  trafficLine, hsSubnetCheck, vpnProfiles, splitLines,
+  trafficLine, fmtSince, hsSubnetCheck, vpnProfiles, splitLines,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -44,6 +44,7 @@ const MODE_DESC = {
 let status = null;
 let pending = null;      // start | stop
 let pendingAt = 0;       // 发出操作的时间，用于兜底超时
+let statusFail = 0;      // 连续状态解析失败计数（容忍瞬时抖动）
 let ipv6Busy = false;
 let page = 0;
 let timer = null;
@@ -230,7 +231,7 @@ async function setKey(key, value) {
     return false;
   }
   e.doneAt = Date.now();
-  if (res.restart) snack("重启服务后生效");
+  if (res.restart) snack("重启后生效");
   refreshSoon();
   return true;
 }
@@ -260,19 +261,19 @@ function renderPower(d) {
   const gwHost = cfg.XR_NET_PREFIX ? `${cfg.XR_NET_PREFIX}.254` : "";
   if (v.phase === "running") {
     txt($("power-title"), "运行中");
-    txt($("power-sub"), `${modeLabel}${gwHost ? ` · 网关 ${gwHost}` : " · OpenWrt 路由已就绪"}`);
+    txt($("power-sub"), `${modeLabel}${gwHost ? ` · 网关 ${gwHost}` : ""}`);
   } else if (v.phase === "starting") {
     txt($("power-title"), v.text);
-    txt($("power-sub"), (v.step || 0) >= 1 ? "正在配置策略路由与网关转发…" : "正在引导 OpenWrt 路由系统…");
+    txt($("power-sub"), (v.step || 0) >= 1 ? "配置策略路由与网关转发" : "引导路由系统中");
   } else if (v.phase === "stopping") {
-    txt($("power-title"), "正在停止");
-    txt($("power-sub"), "正在安全停止服务并恢复本机网络…");
+    txt($("power-title"), "停止中");
+    txt($("power-sub"), "释放规则并恢复本机网络");
   } else if (v.phase === "failed") {
     txt($("power-title"), "异常");
-    txt($("power-sub"), tripped ? "检测到连续异常复位，请先确认上方提示" : "路由服务未能就绪，可检查配置后重试");
+    txt($("power-sub"), tripped ? "检测到连续异常复位，请先确认上方提示" : "服务未就绪，请检查配置后重试");
   } else {
     txt($("power-title"), "已停止");
-    txt($("power-sub"), "点击下方按钮启动 OpenWrt 路由服务");
+    txt($("power-sub"), "未运行 · 点击下方启动");
   }
 
   const err = $("power-err");
@@ -298,16 +299,16 @@ function renderPower(d) {
   prop($("power"), "disabled", inTransition || !!tripped);
   setIcon($("power-icon"), v.phase === "running" ? "stop" : v.phase === "failed" ? "refresh" : "play_arrow");
   txt($("power-btn-text"),
-    v.phase === "running" ? "停止服务"
-      : v.phase === "starting" ? "正在启动…"
-      : v.phase === "stopping" ? "正在停止…"
-      : v.phase === "failed" ? "重新启动" : "启动服务");
+    v.phase === "running" ? "停止"
+      : v.phase === "starting" ? "启动中"
+      : v.phase === "stopping" ? "停止中"
+      : v.phase === "failed" ? "重启" : "启动");
   prop($("btn-luci"), "disabled", v.phase !== "running");
 
   tog(document.querySelector(".shell"), "nostate", false);
 }
 
-// ---- 组网：多配置卡片列表渲染（导入即展示，点击对应配置直接启动 / 停止 / 删除） ----
+// ---- 异地组网：多配置卡片列表渲染（导入即展示，点击对应配置直接启动 / 停止 / 删除） ----
 const vpnCards = new Map();
 function vpnCard(key) {
   let c = vpnCards.get(key);
@@ -343,7 +344,7 @@ function renderVpn(vpn) {
     const rowBusy = !!(vpnBusy && vpnBusy.id === p.id);
     const visSt = rowBusy && vpnBusy.kind === "enable" ? "connecting" : p.status;
     const visTxt = rowBusy
-      ? (vpnBusy.kind === "enable" ? "正在启动" : vpnBusy.kind === "disable" ? "正在停止" : "正在删除")
+      ? (vpnBusy.kind === "enable" ? "启动中" : vpnBusy.kind === "disable" ? "停止中" : "删除中")
       : p.text;
     const activeOrEnabled = p.status === "up" || p.status === "connecting" || (vmOn && p.enabled);
 
@@ -352,11 +353,11 @@ function renderVpn(vpn) {
     txt(c.querySelector(".vpn-name"), p.name);
     txt(c.querySelector(".vpn-dev-sub"),
       !p.managed ? `外部隧道${p.dev ? ` · ${p.dev}` : ""}`
-        : rowBusy ? `${visTxt}…`
+        : rowBusy ? visTxt
         : p.dev ? `接口 ${p.dev}`
-        : !vmOn ? "需先在「状态」页启动路由服务"
+        : !vmOn ? "服务启动后可用"
         : p.enabled && p.status === "down" ? "已启用 · 等待重连"
-        : "已就绪 · 点击启动即可连接");
+        : "就绪 · 点击启动连接");
 
     cls(c.querySelector(".vpn-badge"), "vpn-badge " + visSt);
     txt(c.querySelector(".vpn-badge-text"), visTxt);
@@ -365,7 +366,7 @@ function renderVpn(vpn) {
 
     hide(c.querySelector(".vpn-addr-row"), !p.addr && p.status !== "up");
     txt(c.querySelector(".vpn-addr"), p.addr || "—");
-    txt(c.querySelector(".vpn-sync"), p.routes.length ? "已自动同步至本机" : "");
+    txt(c.querySelector(".vpn-sync"), p.routes.length ? "已同步至本机" : "");
     txt(c.querySelector(".vpn-routes"), p.routes.length ? p.routes.join("\n") : "无");
 
     const actBox = c.querySelector(".vpn-card-actions");
@@ -399,16 +400,16 @@ function renderVpn(vpn) {
   const activeCount = Array.isArray(vpn && vpn.routes_active) ? vpn.routes_active.length : 0;
 
   txt($("vpn-summary"),
-    !configured ? "导入配置文件后，点击对应配置即可运行或停止"
-      : !vmOn ? `已导入 ${list.length} 份配置 · 请先在「状态」页启动路由服务`
-      : upList.length ? `已连接 ${upList.length}/${list.length} 份配置${activeCount ? ` · 已同步 ${activeCount} 个网段` : ""}`
-      : connList.length ? `正在连接「${connList[0].name}」…`
-      : `已导入 ${list.length} 份配置 · 点击对应配置上的「启动」即可连接`);
+    !configured ? "导入配置后可按需独立启停"
+      : !vmOn ? `已导入 ${list.length} 份配置 · 服务启动后可用`
+      : upList.length ? `已连接 ${upList.length}/${list.length}${activeCount ? ` · 同步 ${activeCount} 个网段` : ""}`
+      : connList.length ? `连接中：${connList[0].name}`
+      : `已导入 ${list.length} 份配置 · 点击启动连接`);
 
-  // 底部导航栏与首页磁贴同步显示组网状态
-  prop($("nav-vpn"), "showBadge", st === "up");
-  txt($("v-home-vpn"), !configured ? "未导入" : upList.length === 1 ? upList[0].name : upList.length > 1 ? `${upList.length} 条已连接` : (VPN_TXT[st] || "未连接"));
-  txt($("v-home-routes"), activeCount ? `已同步 ${activeCount} 个网段` : configured ? `共 ${list.length} 份配置` : "点击导入配置");
+  // 底部导航栏与状态页指标同步显示组网状态
+  prop($("nav-net"), "showBadge", st === "up");
+  txt($("v-home-vpn"), !configured ? "未导入" : upList.length === 1 ? upList[0].name : upList.length > 1 ? `${upList.length} 条在线` : (VPN_TXT[st] || "未连接"));
+  txt($("v-home-routes"), activeCount ? `已同步 ${activeCount} 个网段` : configured ? `共 ${list.length} 份配置` : "未配置隧道");
 }
 
 function render(d) {
@@ -419,7 +420,7 @@ function render(d) {
   const sh = d.share || {};
   const cfg = d.config || {};
 
-  if (pending === "start" && (vm.running || vm.error)) pending = vm.running ? null : pending;
+  if (pending === "start" && (vm.running || (vm.error && Date.now() - pendingAt > 2500))) pending = null;
   if (pending === "stop" && !vm.running) pending = null;
   if (pending && Date.now() - pendingAt > (pending === "start" ? 120000 : 45000)) {
     snack(pending === "start" ? "启动超时" : "停止超时", true);
@@ -436,23 +437,40 @@ function render(d) {
   prop(as, "selected", asOn);
   prop(as, "disabled", tripped && !asOn);
   tog($("row-autostart"), "disabled", as.disabled);
-  txt($("v-as-st"), asOn ? "已开启 · 开机自动拉起路由服务" : "已关闭 · 需手动启动路由服务");
+  txt($("v-as-st"), asOn ? "开机自动拉起路由服务" : "需手动启动路由服务");
 
-  // 首页双列指标磁贴
+  // 状态页高密度双列指标
   txt($("v-uptime"), vm.running ? fmtUptime(vm.uptime_s) : "—");
   const v = vmView(d, pending);
-  const runMap = { running: "运行正常", starting: "正在启动", stopping: "正在停止", failed: "服务异常" };
+  const runMap = {
+    running: vm.state === "stable" ? "运行稳定" : "启动观察期",
+    starting: "启动中",
+    stopping: "停止中",
+    failed: "服务异常",
+  };
   txt($("v-run-st"), runMap[v.phase] || "已停止");
 
   const kind = vm.running ? upKind(net.up_if) : "—";
   txt($("v-up"), kind);
-  txt($("v-up-sub"), vm.running ? (net.up_if ? `接口 ${net.up_if}` : "未检测到上游") : "服务未运行");
+  txt($("v-up-sub"), vm.running ? (net.up_if ? `${net.up_if}${d.ipv6 === true ? " · IPv6" : ""}` : "未检测到上游") : "未运行");
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
   setIcon($("i-up"), ic);
 
   const curMode = cfg.XR_MODE || "global";
-  txt($("v-home-mode"), labelOf(MODE_OPTS, curMode) || "全局接管");
-  txt($("v-home-hs"), net.hotspot ? `DHCP 已接管 ${net.hotspot}` : cfg.XR_HOTSPOT_BRIDGE !== "0" ? "热点自动接管已开启" : "热点接管已关闭");
+  const hsAuto = cfg.XR_HOTSPOT_BRIDGE !== "0";
+  txt($("v-home-hs"),
+    !vm.running ? (hsAuto ? "自动接管" : "未开启")
+      : net.hotspot ? `已接管 ${net.hotspot}`
+      : hsAuto ? "待机中" : "未开启");
+  txt($("v-home-hs-sub"),
+    net.hotspot && net.hotspot_net ? `网段 ${net.hotspot_net}`
+      : hsAuto ? (cfg.XR_HOTSPOT_SUBNET ? `网关 ${cfg.XR_HOTSPOT_SUBNET}` : "跟随安卓网段")
+      : "仅转发内网流量");
+
+  if (!vm.running) {
+    for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "—");
+    txt($("tr-note"), "服务未运行");
+  }
 
   renderVpn(vpn);
 
@@ -464,15 +482,14 @@ function render(d) {
   prop(v6, "disabled", ipv6Busy || d.ipv6 === null || d.ipv6 === undefined);
   tog($("row-ipv6"), "disabled", v6.disabled);
 
-  prop($("sw-hotspot"), "selected", cfg.XR_HOTSPOT_BRIDGE !== "0");
+  prop($("sw-hotspot"), "selected", hsAuto);
   txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "由路由系统接管手机热点地址分配");
   txt($("v-hs-net"), cfg.XR_HOTSPOT_SUBNET || "跟随安卓");
   txt($("v-hs-net-cur"), net.hotspot && net.hotspot_net ? `当前 ${net.hotspot_net}` : "");
-  tog($("row-hs-net"), "disabled", cfg.XR_HOTSPOT_BRIDGE === "0");
-
-  seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (val) => setKey("XR_NOTIFY_TRAFFIC", val));
+  tog($("row-hs-net"), "disabled", !hsAuto);
 
   // 系统页
+  seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (val) => setKey("XR_NOTIFY_TRAFFIC", val));
   prop($("sw-share"), "selected", cfg.VM_SHARE === "1");
   seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (val) => setKey("VM_SHARE_MODE", val), sh.rw_supported ? [] : ["rw"]);
   txt($("v-share-path"), displayPath(cfg.VM_SHARE_PATH));
@@ -513,10 +530,13 @@ async function refreshOnce() {
   let d = null;
   try { d = JSON.parse(r.stdout); } catch { d = null; }
   if (!d) {
-    cls($("chip"), "chip chip-bad");
-    txt($("chip-text"), "异常");
+    if (!status || ++statusFail >= 2) {
+      cls($("chip"), "chip chip-bad");
+      txt($("chip-text"), "异常");
+    }
     return;
   }
+  statusFail = 0;
   for (const [k, e] of edits) if (e.doneAt !== null && t0 > e.doneAt) edits.delete(k);
   overlay(d);
   render(d);
@@ -543,7 +563,7 @@ function schedule() {
   timer = setTimeout(async () => {
     if (!document.hidden) {
       await refresh();
-      if (page === 1) loadTraffic();
+      if (page === 0) loadTraffic();
     }
     schedule();
   }, fast ? 1500 : 5000);
@@ -553,6 +573,7 @@ function schedule() {
 function act(kind) {
   pending = kind;
   pendingAt = Date.now();
+  if (kind === "start" && status && status.vm) status.vm.error = "";
   renderPower(status || {});
   schedule();
   (kind === "start" ? xr("start-bg") : xr("stop-bg")).then((r) => {
@@ -728,35 +749,29 @@ async function uninstallNow() {
   }
 }
 
-// ---- 累计流量：仅在进入「网络」页时按需读取 ----
-async function loadTraffic() {
-  const r = await xr("traffic");
-  if (gone) return;
-  $("v-traffic").textContent = trafficLine(lastJson(r.stdout), "total");
-}
-
-async function resetTraffic() {
-  if (!await confirmDlg("清零流量统计", "通知与此处的累计流量将从 0 重新计算", "清零", true)) return;
-  const r = await xr("traffic-reset");
-  const res = lastJson(r.stdout);
-  snack(res && res.ok ? "已清零" : "清零失败", !(res && res.ok));
-  loadTraffic();
-}
-
+// ---- 累计流量与分源监测：在「状态」页实时更新（分源采样限频 10 秒） ----
 let splitBusy = false;
-async function openTraffic() {
-  if (splitBusy) return;
+let splitAt = 0;
+
+async function loadTrafficSplit(force) {
+  if (gone || splitBusy) return;
+  if (!(status && status.vm && status.vm.running)) {
+    splitAt = 0;
+    for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "—");
+    txt($("tr-note"), "服务未运行");
+    return;
+  }
+  if (!force && Date.now() - splitAt < 10000) return;
   splitBusy = true;
-  for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "…");
-  txt($("tr-note"), "");
-  const shown = dialogResult($("dlg-traffic"));
+  splitAt = Date.now();
   const r = await xr("traffic-split");
   splitBusy = false;
+  if (gone) return;
   const res = lastJson(r.stdout);
   const l = splitLines(res);
   if (!l) {
     for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "—");
-    txt($("tr-note"), (res && res.error) || "读取失败");
+    txt($("tr-note"), (res && res.error) || "暂不可用");
   } else {
     txt($("tr-ph-total"), l.phone.total);
     txt($("tr-ph-wan"), l.phone.wan);
@@ -764,9 +779,27 @@ async function openTraffic() {
     txt($("tr-hs-total"), l.hotspot.total);
     txt($("tr-hs-wan"), l.hotspot.wan);
     txt($("tr-hs-lan"), l.hotspot.lan);
-    txt($("tr-note"), "本次运行以来，经 OpenWrt 转发的流量");
+    txt($("tr-note"), "本次运行转发统计");
   }
-  await shown;
+}
+
+async function loadTraffic(forceSplit) {
+  const r = await xr("traffic");
+  if (gone) return;
+  const tj = lastJson(r.stdout);
+  txt($("v-traffic"), trafficLine(tj, "total"));
+  txt($("v-tr-wan"), trafficLine(tj, "wan"));
+  txt($("v-tr-lan"), trafficLine(tj, "lan"));
+  txt($("v-tr-since"), fmtSince(tj && tj.since));
+  loadTrafficSplit(!!forceSplit);
+}
+
+async function resetTraffic() {
+  if (!await confirmDlg("清零流量统计", "通知与此处的累计流量将从 0 重新计算", "清零", true)) return;
+  const r = await xr("traffic-reset");
+  const res = lastJson(r.stdout);
+  snack(res && res.ok ? "已清零" : "清零失败", !(res && res.ok));
+  loadTraffic(true);
 }
 
 // ---- 日志与诊断导出 ----
@@ -777,7 +810,7 @@ async function exportLogs() {
   const diag = exportMode() === "diag";
   exportBusy = true;
   $("btn-export").disabled = true;
-  snack(diag ? "正在收集诊断信息…" : "正在打包日志…");
+  snack(diag ? "收集诊断中…" : "打包日志中…");
   const r = diag ? await xr("diag-export") : await xr("log-export");
   const res = lastJson(r.stdout);
   exportBusy = false;
@@ -787,7 +820,7 @@ async function exportLogs() {
 
 // ---- M3 页面切换：底部导航栏 + 横向轻扫手势，180ms 空间过渡 ----
 const PAGE_MS = 180;
-const PAGE_MAX = 3;
+const PAGE_MAX = 2;
 
 function syncAppbarScroll(activePage) {
   tog($("appbar"), "scrolled", !!activePage && activePage.scrollTop > 4);
@@ -809,7 +842,7 @@ function goPage(i) {
       { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" }
     );
   }
-  if (i === 1) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
+  if (i === 0) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }
 
 function bindPager() {
@@ -863,8 +896,6 @@ function bind() {
   $("btn-theme").addEventListener("click", cycleTheme);
   $("power").addEventListener("click", power);
   $("btn-ack").addEventListener("click", async () => { await xr("ack-trip"); await refresh(); });
-  $("tile-mode").addEventListener("click", () => goPage(1));
-  $("tile-vpn").addEventListener("click", () => goPage(2));
 
   bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));
   bindRowSwitch($("row-share"), $("sw-share"), () => setKey("VM_SHARE", $("sw-share").selected ? "1" : "0"));
@@ -886,7 +917,6 @@ function bind() {
   $("sel-access").addEventListener("change", (e) => setKey("XR_EXPOSE", e.target.value));
   $("sel-cpu").addEventListener("change", (e) => pickRestartKey("VM_CPUS", e.target, "CPU ", (v) => `${v} 核`));
   $("sel-mem").addEventListener("change", (e) => pickRestartKey("VM_MEM_MB", e.target, "内存", fmtSize));
-  $("row-traffic").addEventListener("click", openTraffic);
   $("btn-project").addEventListener("click", () => xr("project"));
   $("btn-expand").addEventListener("click", expandDisk);
   $("btn-reset").addEventListener("click", resetDisk);
@@ -895,7 +925,7 @@ function bind() {
 
   document.addEventListener("visibilitychange", () => {
     document.documentElement.classList.toggle("hid", document.hidden);
-    if (!document.hidden && !gone) { refresh(); schedule(); }
+    if (!document.hidden && !gone) { refresh(); if (page === 0) loadTraffic(); schedule(); }
   });
 }
 
@@ -921,7 +951,7 @@ function previewStatus(phase) {
       error: failed ? "180 秒内未就绪，请检查内核镜像" : null,
       tripped: null,
     },
-    net: { gw: running ? "on" : starting ? "off" : "block", up_if: running ? "wlan0" : "", hotspot: running ? "ap0" : "" },
+    net: { gw: running ? "on" : starting ? "off" : "block", up_if: running ? "wlan0" : "", hotspot: running ? "ap0" : "", hotspot_net: running ? "172.28.222.0/24" : "" },
     config: {
       AUTOSTART: "1", XR_MODE: "global", XR_EXPOSE: "lan", XR_NET_PREFIX: "172.28.221",
       VM_SHARE: "0", VM_CPUS: "2", VM_MEM_MB: "768", VM_DISK_SIZE_MB: "1024", XR_HOTSPOT_BRIDGE: "1",
@@ -960,8 +990,25 @@ function previewStatus(phase) {
   };
 }
 
+function previewTraffic(phase) {
+  txt($("v-tr-since"), "自 11-12 08:30");
+  txt($("v-traffic"), "↑426.8 MB ↓3.4 GB");
+  txt($("v-tr-wan"), "↑398.2 MB ↓3.1 GB");
+  txt($("v-tr-lan"), "↑28.6 MB ↓312.5 MB");
+  if (phase === "running") {
+    txt($("tr-ph-total"), "↑182.4 MB ↓1.9 GB");
+    txt($("tr-ph-wan"), "↑168.0 MB ↓1.8 GB");
+    txt($("tr-ph-lan"), "↑14.4 MB ↓96.2 MB");
+    txt($("tr-hs-total"), "↑244.4 MB ↓1.5 GB");
+    txt($("tr-hs-wan"), "↑230.2 MB ↓1.3 GB");
+    txt($("tr-hs-lan"), "↑14.2 MB ↓216.3 MB");
+    txt($("tr-note"), "本次运行转发统计");
+  }
+}
+
 window.__xrPreviewSet = (phase, pageIdx) => {
   render(previewStatus(phase));
+  previewTraffic(phase);
   if (typeof pageIdx === "number") goPage(pageIdx);
 };
 
@@ -972,6 +1019,7 @@ window.__xrPreviewSet = (phase, pageIdx) => {
   const pv = !isKsuWebui() ? (window.__XR_PREVIEW__ || { phase: "running" }) : null;
   if (pv) {
     render(previewStatus(pv.phase || "running"));
+    previewTraffic(pv.phase || "running");
     if (typeof pv.page === "number") goPage(pv.page);
     document.querySelector(".shell").removeAttribute("unresolved");
     return;
@@ -980,5 +1028,6 @@ window.__xrPreviewSet = (phase, pageIdx) => {
   if (cached) render(cached);
   document.querySelector(".shell").removeAttribute("unresolved");
   await refresh();
+  loadTraffic(true);
   schedule();
 })();

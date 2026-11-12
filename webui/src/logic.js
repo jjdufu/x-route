@@ -35,7 +35,7 @@ export const NOTIFY_OPTS = [
   { value: "lan", label: "内网" },
 ];
 export const VPN_TXT = { down: "未连接", connecting: "连接中", up: "已连接" };
-export const STEPS = ["正在启动", "网络就绪", "运行中"];
+export const STEPS = ["启动中", "网络就绪", "运行中"];
 
 export function shq(v) {
   return "'" + String(v).replace(/'/g, "'\\''") + "'";
@@ -77,15 +77,15 @@ export function vmView(d, pending) {
   const vm = (d && d.vm) || {}; const net = (d && d.net) || {}; const cfg = (d && d.config) || {};
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
   if (vm.running) {
-    if (pending === "stop") return { phase: "stopping", chip: "运行中", text: "正在停止" };
-    if (vm.state !== "ready" && vm.state !== "stable") return { phase: "starting", chip: "运行中", text: STEPS[0], step: 0 };
+    if (pending === "stop") return { phase: "stopping", chip: "停止中", text: "停止中" };
+    if (vm.state !== "ready" && vm.state !== "stable") return { phase: "starting", chip: "启动中", text: STEPS[0], step: 0 };
     if ((cfg.XR_MODE || "global") === "global" && cfg.VM_NET !== "0" && (net.gw || "off") === "off") {
-      return { phase: "starting", chip: "运行中", text: STEPS[1], step: 1 };
+      return { phase: "starting", chip: "启动中", text: STEPS[1], step: 1 };
     }
     return { phase: "running", chip: "运行中", text: STEPS[2], step: 2 };
   }
   if (tripped) return { phase: "failed", chip: "异常", text: "整机复位后自启已关闭" };
-  if (pending === "start") return { phase: "starting", chip: "已停止", text: STEPS[0], step: 0 };
+  if (pending === "start") return { phase: "starting", chip: "启动中", text: STEPS[0], step: 0 };
   if (vm.error) return { phase: "failed", chip: "异常", text: vm.error };
   return { phase: "stopped", chip: "已停止", text: "已停止" };
 }
@@ -193,6 +193,13 @@ export function trafficLine(d, mode) {
   if (!t) return "—";
   return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
 }
+export function fmtSince(ts) {
+  const n = Number(ts) || 0;
+  if (n < 1600000000) return "累计统计";
+  const dt = new Date(n * 1000);
+  const pad = (x) => String(x).padStart(2, "0");
+  return `自 ${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
 
 // 组网页配置卡片列表：后端 vpn.profiles 每项对应一份已导入配置（含独立 id、名称、启停状态、地址与网段），
 // 未导入任何配置时返回空列表（界面展示空状态引导），同时兼容客侧 LuCI 手工建立的额外隧道（managed: false）。
@@ -296,6 +303,7 @@ export function hsSubnetCheck(v) {
   if (!v) return { ok: true, value: "" };
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(v);
   if (!m) return { ok: false, error: "格式：地址/掩码，如 172.28.222.254/24" };
+  if (m.slice(1, 5).some((s) => s.length > 1 && s[0] === "0")) return { ok: false, error: "地址无效" };
   const o = m.slice(1, 5).map(Number); const len = Number(m[5]);
   if (o.some((x) => x > 255)) return { ok: false, error: "地址无效" };
   if (len < 16 || len > 30) return { ok: false, error: "掩码需在 16–30 之间" };

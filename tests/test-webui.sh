@@ -46,11 +46,12 @@ for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset
   if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 }
 
-// Material Design 3 导航栏与四页信息架构（状态 · 网络 · 组网 · 系统）
+// Material Design 3 导航栏与三页信息架构（状态 · 网络 · 系统）
 const navTabs = [...html.matchAll(/<md-navigation-tab[^>]*label="([^"]+)"/g)].map((m) => m[1]);
-eq(navTabs, ["状态", "网络", "组网", "系统"], "M3 底部导航栏");
+eq(navTabs, ["状态", "网络", "系统"], "M3 底部导航栏");
 const pages = [...html.matchAll(/<section class="page(?:\s+on)?" id="([^"]+)">/g)].map((m) => m[1]);
-eq(pages, ["page-home", "page-net", "page-link", "page-system"], "四页容器");
+eq(pages, ["page-home", "page-net", "page-system"], "三页容器");
+if (!/const PAGE_MAX = 2;/.test(main)) fail("PAGE_MAX 应为 2（对应三页）");
 if (html.includes("<md-tabs") || html.includes("<md-primary-tab")) fail("不应再使用旧顶部标签栏");
 if (html.indexOf('class="appbar"') > html.indexOf('id="pager"') || html.indexOf('id="pager"') > html.indexOf('id="nav"')) fail("布局顺序应为顶栏 -> 页面容器 -> 底部导航栏");
 
@@ -64,16 +65,29 @@ if (!css.includes("@media (prefers-color-scheme: dark)") || !css.includes(':root
 if (css.includes("breathe") || /animation:\s*breathe/.test(css) || css.includes("@keyframes breathe")) fail("不得保留呼吸光动画");
 if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得使用大面积模糊");
 
-// M3 主状态卡、双列磁贴与分组列表文案
+// M3 主状态卡、精简话术、高密度只读指标磁贴与页面分区归属
 if (!html.includes('id="hero-card"') || !html.includes('class="wave-svg"') || !html.includes('id="boot-steps"')) fail("状态页应有 M3 主状态卡与波浪进度");
-for (const t of ["开机自启", "运行时长", "上游网络", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
+for (const t of ["开机自启", "运行时长", "上游网络", "热点分流", "组网状态", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
+  "异地组网", "常规与通知", "流量监测", "公网流量", "内网流量", "手机流量", "热点流量",
   "存储共享", "目录", "资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "DHCP", "网关地址", "地址/掩码", "整机复位后自启已关闭",
   "关于", "项目地址", "https://github.com/jjdufu/x-route", "作者", "jjdufu", "卸载 XRouter", "立即卸载", "通知显示", "累计流量", "清零"]) {
   if (!html.includes(t)) fail(`缺少文案 ${t}`);
 }
-for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH", "虚拟机资源", "热点 DHCP", "热点网段", "网关地址/前缀", "op13"]) {
+for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH", "虚拟机资源", "热点 DHCP", "热点网段", "网关地址/前缀", "op13",
+  "启动服务", "正在启动", "正在停止", "重新启动", "流量与通知"]) {
   if (html.includes(t) || main.includes(t)) fail(`旧文案残留 ${t}`);
 }
+if (!html.includes('<span id="power-btn-text">启动</span>')) fail("主操作按钮初始文案应精简为「启动」");
+if (/<button[^>]*class="metric-tile"|tile-arrow/.test(html + css)) fail("状态页指标磁贴应为只读展示，无无效跳转箭头");
+if (!/flex-wrap:\s*nowrap/.test(css.slice(css.indexOf(".hero-actions {"), css.indexOf("}", css.indexOf(".hero-actions {"))))) fail("主状态卡双按钮在窄屏不应换行挤占");
+
+// 校验模块在三个页面的归属（流量监测在状态页、异地组网在网络页、开机自启与通知显示在系统页）
+const homeHtml = html.slice(html.indexOf('id="page-home"'), html.indexOf('id="page-net"'));
+const netHtml = html.slice(html.indexOf('id="page-net"'), html.indexOf('id="page-system"'));
+const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf("</main>"));
+if (!homeHtml.includes('id="v-traffic"') || !homeHtml.includes('id="v-tr-wan"') || !homeHtml.includes('id="tr-ph-total"') || html.includes('id="dlg-traffic"')) fail("详细流量监测应内嵌在状态页");
+if (!netHtml.includes('id="vpn-list"') || !netHtml.includes("异地组网")) fail("异地组网应合并在网络页");
+if (!sysHtml.includes('id="row-autostart"') || !sysHtml.includes('id="seg-notify"')) fail("开机自启与通知显示应位于系统页");
 
 // 页面切换：150-200ms 干脆横移淡入（WAAPI），无滚动吸附、无 smooth 滚动
 if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得使用滚动吸附动画");
@@ -98,9 +112,11 @@ eq([L.fmtBytes(0), L.fmtBytes(1023), L.fmtBytes(1536), L.fmtBytes(1288490189), L
 const tj = { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 1024 }, total: { up: 1024, down: 3072 } };
 eq([L.trafficLine(tj, "total"), L.trafficLine(tj, "wan"), L.trafficLine(tj, "lan"), L.trafficLine(null, "total")],
   ["↑1.0 KB ↓3.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB", "—"], "trafficLine");
+eq(L.fmtSince(0), "累计统计", "fmtSince 缺省");
+if (!/^自 \d\d-\d\d \d\d:\d\d$/.test(L.fmtSince(1731400000))) fail("fmtSince 时间格式");
 
-// 累计流量只在「网络」页（page === 1）按需读取，不在首页轮询
-if (!/page === 1\) loadTraffic\(\)/.test(main) || !/if \(i === 1\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("累计流量应只在网络页读取");
+// 流量监测在「状态」页（page === 0）按需轮询与切回刷新
+if (!/page === 0\) loadTraffic\(\)/.test(main) || !/if \(i === 0\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("流量监测应在状态页实时更新");
 
 // 日志统一：系统页「日志」分组按调试模式切换「日志导出 / 诊断导出」
 if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-kinds") || /xr\("log",|"log-clear"/.test(main)) fail("不应再有日志页与日志分类");
@@ -125,12 +141,12 @@ let threw = false; try { L.xrCmd("set;reboot"); } catch { threw = true; } if (!t
 eq(L.lastJson('x\n{"ok":true}'), { ok: true }, "lastJson");
 const st = (vm, net = {}, config = {}) => ({ vm, net: { gw: "block", ...net }, config: { XR_MODE: "global", ...config } });
 eq(L.vmView(st({ running: false, tripped: null })).phase, "stopped", "停止");
-eq(L.vmView(st({ running: false, tripped: null }), "start"), { phase: "starting", chip: "已停止", text: "正在启动", step: 0 }, "点击启动");
-eq(L.vmView(st({ running: true, state: "booting" })).text, "正在启动", "booting");
+eq(L.vmView(st({ running: false, tripped: null }), "start"), { phase: "starting", chip: "启动中", text: "启动中", step: 0 }, "点击启动");
+eq(L.vmView(st({ running: true, state: "booting" })).text, "启动中", "booting");
 eq(L.vmView(st({ running: true, state: "ready" }, { gw: "off" })).text, "网络就绪", "等待接管");
 eq(L.vmView(st({ running: true, state: "ready" }, { gw: "off" }, { XR_MODE: "bypass" })).phase, "running", "旁路就绪即运行");
 eq(L.vmView(st({ running: true, state: "stable" })), { phase: "running", chip: "运行中", text: "运行中", step: 2 }, "运行中");
-eq(L.vmView(st({ running: true, state: "stable" }), "stop").phase, "stopping", "停止中");
+eq(L.vmView(st({ running: true, state: "stable" }), "stop"), { phase: "stopping", chip: "停止中", text: "停止中" }, "停止中");
 eq(L.vmView(st({ running: false, error: "180 秒内未就绪" })), { phase: "failed", chip: "异常", text: "180 秒内未就绪" }, "失败原因");
 eq(L.vmView(st({ running: false, tripped: "2026-11-10" })).phase, "failed", "熔断");
 eq(L.fmtUptime(65), "1 分 5 秒", "uptime"); eq(L.fmtUptime(90061), "1 天 1 小时", "uptime 天");
@@ -162,7 +178,7 @@ eq([bt.rc, bt.mod.size, bt.mod.text ? 1 : 0, bt.con.size], [1, 120, 1, 30], "par
 eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
 eq(L.parseBootTail("garbage"), null, "parseBootTail 非法");
 for (const v of ["", "10.233.0.1/24", "192.168.77.254/24", "172.20.0.1/16", "10.9.9.1/30"]) eq(L.hsSubnetCheck(v).ok, true, `hsSubnetCheck ${v}`);
-for (const v of ["10.233.0.0/24", "10.233.0.255/24", "10.233.0.1/15", "10.233.0.1/31", "8.8.8.1/24", "100.64.0.1/24", "10.233.0.1", "10.233.0.300/24", "x"]) eq(L.hsSubnetCheck(v).ok, false, `hsSubnetCheck ${v}`);
+for (const v of ["10.233.0.0/24", "10.233.0.255/24", "10.233.0.1/15", "10.233.0.1/31", "8.8.8.1/24", "100.64.0.1/24", "10.233.0.1", "10.233.0.300/24", "010.233.0.1/24", "10.008.0.1/24", "x"]) eq(L.hsSubnetCheck(v).ok, false, `hsSubnetCheck ${v}`);
 const bb = L.newBootBuf();
 eq(L.feedBoot(bb, "mod", bt.mod.text), true, "feedBoot 有新行");
 L.feedBoot(bb, "con", bt.con.text);
@@ -177,11 +193,11 @@ if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" 
   if (!/gone = true;/.test(u) || !/if \(gone\) return Promise\.resolve\(\);/.test(main) || !/clearTimeout\(timer\);\n  if \(gone\) return;/.test(main)) fail("卸载后应停止一切轮询"); }
 if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
 
-// 组网页：导入即展示多配置卡片，每张卡片直接独立启动 / 停止 / 删除，无下拉框选择
-if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !html.includes('id="vpn-empty"') || !/function renderVpn/.test(main)) fail("组网页应支持空状态与多配置列表渲染");
+// 异地组网（合并在网络页）：导入即展示多配置卡片，每张卡片直接独立启动 / 停止 / 删除，无下拉框选择
+if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !html.includes('id="vpn-empty"') || !/function renderVpn/.test(main)) fail("异地组网应支持空状态与多配置列表渲染");
 if (!html.includes('class="btn-vpn-start"') || !html.includes('class="btn-vpn-stop"') || !html.includes('class="danger btn-vpn-del"')) fail("每张组网卡片应包含启动 / 停止 / 删除按钮");
 if (!/xr\("vpn-import", path, "0"\)/.test(main)) fail("WebUI 导入配置应默认传 0 以便在列表中按需启动");
-if (!/function actVpn/.test(main) || !/function delVpn/.test(main)) fail("组网页应支持按配置启停与删除");
+if (!/function actVpn/.test(main) || !/function delVpn/.test(main)) fail("异地组网应支持按配置启停与删除");
 
 eq(L.vpnProfiles({ configured: false, profiles: [], tunnels: [] }), [], "未导入配置时为空列表");
 const vp = L.vpnProfiles({
@@ -209,7 +225,7 @@ eq(vt.map((t) => [t.name, t.addr, t.routes]), [["home", "10.8.0.5", ["10.8.0.0/2
 const sl = L.splitLines({ ok: true, phone: { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 0 }, total: { up: 1024, down: 2048 } }, hotspot: { wan: { up: 0, down: 0 }, lan: { up: 0, down: 1024 }, total: { up: 0, down: 1024 } } });
 eq([sl.phone.total, sl.phone.wan, sl.hotspot.lan], ["↑1.0 KB ↓2.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB"], "splitLines");
 eq(L.splitLines({ ok: false }), null, "splitLines 失败");
-for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!html.includes(`id="${id}"`)) fail(`累计流量弹窗缺少 ${id}`);
+for (const id of ["v-tr-wan", "v-tr-lan", "tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!homeHtml.includes(`id="${id}"`)) fail(`状态页流量监测缺少 ${id}`);
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 
 process.exit(bad);

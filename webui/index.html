@@ -25,7 +25,7 @@
     </header>
 
     <main id="pager" class="pager">
-      <!-- 0. 状态（概览主卡 + 双列指标磁贴 + 快捷控制） -->
+      <!-- 0. 状态（主状态卡 + 高密度指标磁贴 + 详细流量监测） -->
       <section class="page on" id="page-home">
         <div class="page-inner">
           <div id="trip" class="alert-banner" hidden>
@@ -41,7 +41,7 @@
               </div>
               <div class="hero-copy">
                 <div id="power-title" class="hero-headline">已停止</div>
-                <div id="power-sub" class="hero-sub">点击下方按钮启动 OpenWrt 路由服务</div>
+                <div id="power-sub" class="hero-sub">未运行 · 点击下方启动</div>
               </div>
             </div>
 
@@ -55,7 +55,7 @@
                 </svg>
               </div>
               <div id="boot-steps" class="boot-steps">
-                <span class="step-pill" data-step="0">正在启动</span>
+                <span class="step-pill" data-step="0">启动中</span>
                 <span class="step-pill" data-step="1">网络就绪</span>
                 <span class="step-pill" data-step="2">运行中</span>
               </div>
@@ -66,7 +66,7 @@
                 <md-ripple></md-ripple>
                 <md-focus-ring></md-focus-ring>
                 <md-icon id="power-icon" class="filled" data-icon="play_arrow"></md-icon>
-                <span id="power-btn-text">启动服务</span>
+                <span id="power-btn-text">启动</span>
               </button>
               <button id="btn-luci" class="hero-btn hero-btn-secondary" type="button">
                 <md-ripple></md-ripple>
@@ -79,72 +79,110 @@
 
           <div class="tile-grid">
             <article class="metric-tile" id="tile-up">
-              <div class="tile-head">
+              <div class="tile-top">
                 <span class="tile-ico"><md-icon id="i-up" data-icon="cloud_off"></md-icon></span>
+                <span class="tile-label">上游网络</span>
               </div>
               <div class="tile-body">
-                <span class="tile-label">上游网络</span>
                 <span id="v-up" class="tile-val">—</span>
-                <span id="v-up-sub" class="tile-sub">未连接</span>
+                <span id="v-up-sub" class="tile-sub">未运行</span>
               </div>
             </article>
 
             <article class="metric-tile" id="tile-uptime">
-              <div class="tile-head">
+              <div class="tile-top">
                 <span class="tile-ico"><md-icon data-icon="schedule"></md-icon></span>
+                <span class="tile-label">运行时长</span>
               </div>
               <div class="tile-body">
-                <span class="tile-label">运行时长</span>
                 <span id="v-uptime" class="tile-val">—</span>
                 <span id="v-run-st" class="tile-sub">已停止</span>
               </div>
             </article>
 
-            <button id="tile-mode" class="metric-tile" type="button">
-              <md-ripple></md-ripple>
-              <div class="tile-head">
-                <span class="tile-ico"><md-icon data-icon="swap_horiz"></md-icon></span>
-                <md-icon class="tile-arrow" data-icon="chevron_right"></md-icon>
+            <article class="metric-tile" id="tile-hs">
+              <div class="tile-top">
+                <span class="tile-ico"><md-icon data-icon="wifi_tethering"></md-icon></span>
+                <span class="tile-label">热点分流</span>
               </div>
               <div class="tile-body">
-                <span class="tile-label">运行模式</span>
-                <span id="v-home-mode" class="tile-val">全局接管</span>
-                <span id="v-home-hs" class="tile-sub"></span>
+                <span id="v-home-hs" class="tile-val">自动接管</span>
+                <span id="v-home-hs-sub" class="tile-sub"></span>
               </div>
-            </button>
+            </article>
 
-            <button id="tile-vpn" class="metric-tile" type="button">
-              <md-ripple></md-ripple>
-              <div class="tile-head">
+            <article class="metric-tile" id="tile-vpn">
+              <div class="tile-top">
                 <span class="tile-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
-                <md-icon class="tile-arrow" data-icon="chevron_right"></md-icon>
+                <span class="tile-label">组网状态</span>
               </div>
               <div class="tile-body">
-                <span class="tile-label">组网状态</span>
-                <span id="v-home-vpn" class="tile-val">未连接</span>
+                <span id="v-home-vpn" class="tile-val">未导入</span>
                 <span id="v-home-routes" class="tile-sub"></span>
               </div>
-            </button>
+            </article>
           </div>
 
           <div class="section-block">
-            <div class="group-title">快捷设置</div>
-            <div class="m3-group">
-              <div id="row-autostart" class="item item-btn" role="switch">
-                <md-ripple></md-ripple>
-                <span class="item-ico"><md-icon data-icon="bolt"></md-icon></span>
-                <span class="grow">
-                  <span class="item-title">开机自启</span>
-                  <span id="v-as-st" class="sub">系统启动后自动拉起路由服务</span>
-                </span>
-                <md-switch id="sw-autostart" icons></md-switch>
-              </div>
+            <div class="section-head">
+              <div class="group-title">流量监测</div>
+              <span id="v-tr-since" class="group-meta">累计统计</span>
             </div>
+            <section class="traffic-card" aria-label="流量监测">
+              <div class="tr-hero">
+                <span class="tr-hero-ico"><md-icon data-icon="data_usage"></md-icon></span>
+                <div class="grow">
+                  <div class="tr-hero-label">累计流量</div>
+                  <div id="v-traffic" class="tr-hero-val">—</div>
+                </div>
+                <md-outlined-button id="btn-traffic-reset" class="danger tr-reset-btn">
+                  <md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零
+                </md-outlined-button>
+              </div>
+
+              <div class="tr-pair">
+                <div class="tr-pill">
+                  <div class="tr-pill-label"><md-icon data-icon="public"></md-icon>公网流量</div>
+                  <div id="v-tr-wan" class="tr-pill-val">—</div>
+                </div>
+                <div class="tr-pill">
+                  <div class="tr-pill-label"><md-icon data-icon="lan"></md-icon>内网流量</div>
+                  <div id="v-tr-lan" class="tr-pill-val">—</div>
+                </div>
+              </div>
+
+              <div class="tr-split">
+                <div class="tr-split-head">
+                  <span>分源明细</span>
+                  <span id="tr-note" class="tr-split-note">服务未运行</span>
+                </div>
+                <div class="tr-source">
+                  <div class="tr-source-top">
+                    <span class="tr-source-name"><md-icon data-icon="smartphone"></md-icon>手机流量</span>
+                    <span id="tr-ph-total" class="tr-source-total">—</span>
+                  </div>
+                  <div class="tr-source-sub">
+                    <span><em>公网</em><b id="tr-ph-wan">—</b></span>
+                    <span><em>内网</em><b id="tr-ph-lan">—</b></span>
+                  </div>
+                </div>
+                <div class="tr-source">
+                  <div class="tr-source-top">
+                    <span class="tr-source-name"><md-icon data-icon="wifi_tethering"></md-icon>热点流量</span>
+                    <span id="tr-hs-total" class="tr-source-total">—</span>
+                  </div>
+                  <div class="tr-source-sub">
+                    <span><em>公网</em><b id="tr-hs-wan">—</b></span>
+                    <span><em>内网</em><b id="tr-hs-lan">—</b></span>
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </section>
 
-      <!-- 1. 网络（运行模式、管理访问、热点与网关、IPv6、流量通知） -->
+      <!-- 1. 网络（运行模式、接入与热点、异地组网） -->
       <section class="page" id="page-net">
         <div class="page-inner">
           <div class="section-block">
@@ -198,64 +236,60 @@
           </div>
 
           <div class="section-block">
-            <div class="group-title">流量与通知</div>
-            <div class="m3-group">
-              <div class="item">
-                <span class="item-ico"><md-icon data-icon="public"></md-icon></span>
-                <span class="grow"><span class="item-title">通知显示</span></span>
-                <div id="seg-notify" class="seg seg-tight"></div>
-              </div>
-
-              <button id="row-traffic" class="item item-btn" type="button">
-                <md-ripple></md-ripple>
-                <span class="item-ico"><md-icon data-icon="data_usage"></md-icon></span>
-                <span class="grow">
-                  <span class="item-title">累计流量</span>
-                  <span class="sub">查看手机与热点分项流量统计</span>
-                </span>
-                <span id="v-traffic" class="val">—</span>
-                <md-icon class="trail" data-icon="chevron_right"></md-icon>
-              </button>
-
-              <div class="group-actions">
-                <md-outlined-button id="btn-traffic-reset" class="danger">
-                  <md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零
-                </md-outlined-button>
+            <div class="group-title">异地组网</div>
+            <div class="vpn-toolbar">
+              <div class="vpn-toolbar-head">
+                <span class="vpn-toolbar-ico"><md-icon class="filled" data-icon="hub"></md-icon></span>
+                <div class="grow">
+                  <div class="vpn-toolbar-title">组网配置</div>
+                  <div id="vpn-summary" class="vpn-toolbar-sub">支持导入多份配置，按需独立启停</div>
+                </div>
+                <md-filled-tonal-button id="btn-import">
+                  <md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置
+                </md-filled-tonal-button>
               </div>
             </div>
+
+            <div id="vpn-empty" class="vpn-empty">
+              <span class="vpn-empty-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
+              <div class="vpn-empty-copy">
+                <div class="vpn-empty-title">尚未导入组网配置</div>
+                <div class="vpn-empty-sub">导入配置文件后将显示在此处，支持多隧道独立启停与路由同步</div>
+              </div>
+            </div>
+
+            <div id="vpn-list" class="vpn-list" hidden></div>
           </div>
         </div>
       </section>
 
-      <!-- 2. 组网（异地组网配置导入 + 多配置卡片直接启停） -->
-      <section class="page" id="page-link">
-        <div class="page-inner">
-          <div class="vpn-toolbar">
-            <div class="vpn-toolbar-head">
-              <span class="vpn-toolbar-ico"><md-icon class="filled" data-icon="hub"></md-icon></span>
-              <div class="grow">
-                <div class="vpn-toolbar-title">异地组网</div>
-                <div id="vpn-summary" class="vpn-toolbar-sub">导入配置文件后，点击对应配置即可运行或停止</div>
-              </div>
-              <md-filled-tonal-button id="btn-import">
-                <md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置
-              </md-filled-tonal-button>
-            </div>
-          </div>
-
-          <div id="vpn-empty" class="vpn-empty">
-            <span class="vpn-empty-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
-            <div class="vpn-empty-title">尚未导入组网配置</div>
-            <div class="vpn-empty-sub">点击上方「导入配置」添加配置文件，导入后将直接显示在此列表中，可按需独立运行或停止</div>
-          </div>
-
-          <div id="vpn-list" class="vpn-list" hidden></div>
-        </div>
-      </section>
-
-      <!-- 3. 系统（存储共享、资源与系统盘、日志、关于） -->
+      <!-- 2. 系统（常规与通知、存储共享、资源、日志、关于） -->
       <section class="page" id="page-system">
         <div class="page-inner">
+          <div class="section-block">
+            <div class="group-title">常规与通知</div>
+            <div class="m3-group">
+              <div id="row-autostart" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="bolt"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">开机自启</span>
+                  <span id="v-as-st" class="sub">开机自动拉起路由服务</span>
+                </span>
+                <md-switch id="sw-autostart" icons></md-switch>
+              </div>
+
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="public"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">通知显示</span>
+                  <span class="sub">常驻通知展示的流量口径</span>
+                </span>
+                <div id="seg-notify" class="seg seg-tight"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="section-block">
             <div class="group-title">存储共享</div>
             <div class="m3-group">
@@ -381,20 +415,16 @@
       </section>
     </main>
 
-    <!-- M3 官方底部导航栏（4 目的地：状态 · 网络 · 组网 · 系统） -->
+    <!-- M3 官方底部导航栏（3 目的地：状态 · 网络 · 系统） -->
     <footer class="nav-wrap">
       <md-navigation-bar id="nav" class="navbar" aria-label="主导航">
         <md-navigation-tab label="状态" active>
           <md-icon slot="inactive-icon" data-icon="dashboard"></md-icon>
           <md-icon slot="active-icon" class="filled" data-icon="dashboard"></md-icon>
         </md-navigation-tab>
-        <md-navigation-tab label="网络">
+        <md-navigation-tab id="nav-net" label="网络">
           <md-icon slot="inactive-icon" data-icon="lan"></md-icon>
           <md-icon slot="active-icon" class="filled" data-icon="lan"></md-icon>
-        </md-navigation-tab>
-        <md-navigation-tab id="nav-vpn" label="组网">
-          <md-icon slot="inactive-icon" data-icon="vpn_lock"></md-icon>
-          <md-icon slot="active-icon" class="filled" data-icon="vpn_lock"></md-icon>
         </md-navigation-tab>
         <md-navigation-tab label="系统">
           <md-icon slot="inactive-icon" data-icon="tune"></md-icon>
@@ -440,29 +470,6 @@
       <md-text-button id="hsnet-clear" type="button">跟随安卓</md-text-button>
       <md-text-button form="dlg-hsnet-form" value="cancel">取消</md-text-button>
       <md-filled-button form="dlg-hsnet-form" value="ok">保存</md-filled-button>
-    </div>
-  </md-dialog>
-
-  <!-- 累计流量：手机本机 / 热点分开，口径与保活通知一致 -->
-  <md-dialog id="dlg-traffic" class="dlg">
-    <div slot="headline">累计流量</div>
-    <form slot="content" id="dlg-traffic-form" method="dialog" class="tr-dlg">
-      <div class="tr-group">
-        <div class="tr-title"><md-icon data-icon="smartphone"></md-icon>手机流量</div>
-        <div class="tr-row"><span>总流量</span><span id="tr-ph-total">—</span></div>
-        <div class="tr-row"><span>公网</span><span id="tr-ph-wan">—</span></div>
-        <div class="tr-row"><span>内网</span><span id="tr-ph-lan">—</span></div>
-      </div>
-      <div class="tr-group">
-        <div class="tr-title"><md-icon data-icon="wifi_tethering"></md-icon>热点流量</div>
-        <div class="tr-row"><span>总流量</span><span id="tr-hs-total">—</span></div>
-        <div class="tr-row"><span>公网</span><span id="tr-hs-wan">—</span></div>
-        <div class="tr-row"><span>内网</span><span id="tr-hs-lan">—</span></div>
-      </div>
-      <div id="tr-note" class="hint"></div>
-    </form>
-    <div slot="actions">
-      <md-text-button form="dlg-traffic-form" value="cancel">关闭</md-text-button>
     </div>
   </md-dialog>
 
