@@ -433,17 +433,12 @@ function renderPower(d) {
   cls($("power-wrap"), wrapCls);
   cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红色断电，启动中变暗叠开机日志，运行中绿色 + 电流
   cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
-  txt($("power-text"), v.text);
-  cls($("power-text"), "power-text " + v.phase);
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped) || !!chipLock);
-  const steps = $("power-steps");
-  hide(steps, v.phase !== "starting");
-  if (!steps.hidden) {
-    steps.querySelectorAll("[data-step]").forEach((s) => {
-      const i = Number(s.dataset.step);
-      cls(s, i < (v.step || 0) ? "done" : i === v.step ? "cur" : "");
-    });
-  }
+  const tripped = d.vm && d.vm.tripped !== null && d.vm.tripped !== undefined;
+  const err = $("power-err");
+  // 失败细节叠在舞台内，不占文档流；整机复位已有 #trip 卡片，这里不再重复
+  if (v.phase === "failed" && v.text && !tripped) { txt(err, v.text); hide(err, false); }
+  else { hide(err, true); txt(err, ""); }
   if (v.phase === "starting") bootOn();
   chipFollow(v.phase);
   if (v.phase !== "starting" && !chipLock) bootOff();

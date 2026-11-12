@@ -242,13 +242,13 @@ md-icon { --md-icon-size: 22px; flex: none; }
 }
 .boot.on { opacity: 1; visibility: visible; transition: opacity .2s ease-out .08s, visibility 0s linear 0s; }
 .boot-log > div { height: 14px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
-.power-text { font-size: 18px; font-weight: 600; text-align: center; padding: 0 24px; min-height: 26px; }
-.power-text.failed { color: var(--xr-bad); }
-.power-text.running { color: var(--xr-ok); }
-.steps { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--md-sys-color-outline); }
-.steps md-icon { --md-icon-size: 16px; }
-.steps .done { color: var(--md-sys-color-on-surface-variant); }
-.steps .cur { color: var(--md-sys-color-primary); font-weight: 600; }
+/* 失败错误叠在舞台底部空隙，绝对定位，不改变舞台高度、不推动芯片 */
+.power-err {
+  position: absolute; left: 20px; right: 20px; top: calc(50% + 104px);
+  margin: 0; padding: 0; pointer-events: none; z-index: 2;
+  font-size: 13px; font-weight: 600; line-height: 18px; text-align: center;
+  color: var(--xr-bad);
+}
 
 /* 分段选择 */
 .seg { display: inline-flex; background: var(--md-sys-color-surface-container-highest); border-radius: 18px; padding: 3px; gap: 2px; flex: none; }

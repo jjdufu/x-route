@@ -189,6 +189,10 @@ if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的
 // 启动中：电源按钮淡出（150-250ms 交叉淡化）后出现瀑布，没有转圈；瀑布文字只有「正在启动」
 { const m = /\.starting\.power-wrap \{([^}]*)\}/.exec(css); if (!m || !/opacity: 0/.test(m[1]) || !/visibility: hidden/.test(m[1])) fail("启动中应隐藏电源按钮"); }
 if (!html.includes('class="chip-svg"') || !html.includes('id="power"') || html.includes('class="ring"') || /data-icon="power_settings_new"/.test(html)) fail("首页应为可点芯片，不得保留圆形电源键");
+if (html.includes('id="power-text"') || html.includes('id="power-steps"') || /class="power-text"|class="steps"/.test(html)) fail("首页舞台不应有状态提示或步骤条");
+if (!html.includes('id="power-err"') || html.indexOf('id="power-err"') > html.indexOf('id="row-autostart"') || html.indexOf('id="power-err"') < html.indexOf('id="stage"')) fail("失败错误应叠在舞台内");
+if (!/\.stage \{[^}]*height:\s*\d+px/.test(css)) fail("舞台高度应固定");
+if (!/\.power-err \{[^}]*position:\s*absolute/.test(css)) fail("失败错误应为绝对定位以免挤动芯片");
 { const ds = [...css.matchAll(/\.(?:power-wrap|boot|st-layer|st-wrap|bg-layer) \{[^}]*transition:([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)s/g)].map((x) => +x[1]).filter((x) => x > 0.1));
   if (!ds.length || ds.some((x) => x < 0.15 || x > 0.25)) fail(`交叉淡化应 150-250ms: ${ds}`); }
 if (!/\.boot\.on \{/.test(css) || !/classList\.(add|toggle)\("on"/.test(main)) fail("瀑布应淡入淡出");

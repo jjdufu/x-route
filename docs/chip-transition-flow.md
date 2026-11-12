@@ -17,7 +17,7 @@
 | --- | --- | --- | --- | --- |
 | A 按下 | 指针按下芯片（无确认框） | 120ms | standard | 按钮 `scale(0.96)`，松手回 1 |
 | B 让位 | `phase=starting`（已发出 `start-bg`） | 240ms | emphasized-decelerate | 裂纹芯片略缩小并变暗淡出（`scale(0.94)` + opacity 0，随后 `visibility: hidden`）；舞台电路板变暗 |
-| C 日志入 | 与 B 尾部重叠约 80ms | 200ms | emphasized-decelerate | 瀑布日志在芯片原位淡入并略上滑到位；步骤条「正在启动 → 网络就绪 → 运行中」按 `vmView.step` 前进 |
+| C 日志入 | 与 B 尾部重叠约 80ms | 200ms | emphasized-decelerate | 瀑布日志在芯片原位淡入并略上滑到位；舞台下方不再显示状态文案或步骤条，以免改变舞台高度、推动芯片 |
 | D 启动中 | `phase=starting` 持续 | 不定 | — | 日志按现有 boot-tail 瀑布滚动；芯片保持隐藏；无转圈、无电流 |
 | E 日志收 | 进入 `phase=running` | 300ms | emphasized-accelerate | 日志向芯片中心收拢：上移并略缩小、淡出 |
 | F 愈合 | E 结束后 | 500ms | emphasized-decelerate | 芯片淡入出现；碎块滑回本体；裂纹沿路径用 `stroke-dashoffset` 收合愈合 |
@@ -44,11 +44,11 @@
 | F2 裂纹回 | 紧接 F1 | 200ms | emphasized-decelerate | 裂纹芯片淡入，碎块已在裂开位置 |
 | F3 闪红 | 紧接 F2 | 180ms × 2 | standard | 表面红走线短暂提高透明度再恢复（只改 opacity，无发光、模糊、阴影） |
 
-之后保持裂纹静止态。`stopped` 与 `failed` 的芯片造型相同，失败多一次闪红，文案走 `#power-text` 的错误色。
+之后保持裂纹静止态。`stopped` 与 `failed` 的芯片造型相同，失败多一次闪红；具体错误以舞台内绝对定位的 `#power-err` 显示，不占文档流。顶栏徽章仍为「异常」。整机复位走原有 `#trip` 卡片。
 
 ## 静止态
 
 - `stopped` / `failed`：深灰裂纹芯片，表面红走线在裂缝处断开，右下有脱落碎块；底图为红色断开走线，全静态。
 - `running`：完整芯片，内部电路可见，绿光沿内部路径流向引脚并接到外侧电流。
-- `starting`：芯片不可见，只显示瀑布与步骤条。
+- `starting`：芯片不可见，只显示瀑布日志。
 - `stopping`：过渡态，见上表；结束即为 `stopped` 静止态。
