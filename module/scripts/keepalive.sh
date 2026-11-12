@@ -18,19 +18,24 @@ cgroup_escape() {
   [ -n "$_pid" ] || return 1
   is_pid_running "$_pid" || return 1
   _root="${XR_CGROUP_ROOT}"
-  # 依次尝试：cgroup v2 根、system 片、uid_0；以及传统 memcg / cpuset
+  _v2_ok=0
+  for _f in "${_root}/cgroup.procs" "${_root}/system/cgroup.procs"; do
+    [ -w "$_f" ] || continue
+    echo "$_pid" > "$_f" 2>/dev/null && _v2_ok=1
+  done
+  if [ "$_v2_ok" = 0 ] && [ -w "${_root}/uid_0/cgroup.procs" ]; then
+    echo "$_pid" > "${_root}/uid_0/cgroup.procs" 2>/dev/null
+  fi
   for _f in \
-      "${_root}/cgroup.procs" \
-      "${_root}/system/cgroup.procs" \
-      "${_root}/uid_0/cgroup.procs" \
       /dev/memcg/system/cgroup.procs \
-      /dev/cpuset/foreground/cgroup.procs \
-      /dev/cpuset/foreground/tasks \
-      /dev/stune/foreground/cgroup.procs \
-      /dev/stune/foreground/tasks
+      /dev/cpuset/system-background/cgroup.procs \
+      /dev/cpuset/system-background/tasks \
+      /dev/cpuset/background/cgroup.procs \
+      /dev/cpuset/background/tasks \
+      /dev/stune/background/cgroup.procs \
+      /dev/stune/background/tasks
   do
     [ -w "$_f" ] || continue
-    # 只要有一处写入成功即记下，其余能写也写（cpu/mem 控制器可能分挂）
     echo "$_pid" > "$_f" 2>/dev/null || continue
   done
   echo -1000 > "${XR_PROC_BASE}/${_pid}/oom_score_adj" 2>/dev/null
@@ -47,7 +52,17 @@ xr_vm_alive() {
   _p="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
   [ -n "$_p" ] || return 1
   [ -d "${XR_PROC_BASE}/${_p}" ] || return 1
+  if [ "${XR_PROC_BASE}" = /proc ]; then
+    is_pid_running "$_p" || return 1
+  fi
   grep -q crosvm "${XR_PROC_BASE}/${_p}/cmdline" 2>/dev/null
+}
+
+# 主动停止流程是否仍在进行中（避免看门狗或守护进程在 crosvm 刚停、net down 尚未拆完的间隙误报异常）
+vm_stopping() {
+  [ -f "${RUN}/stopping" ] || return 1
+  _sp="$(cat "${RUN}/stopping" 2>/dev/null)"
+  is_pid_running "$_sp"
 }
 
 # 当前 cgroup 路径（去掉控制器前缀），供测试与日志
@@ -254,6 +269,15 @@ emergency_teardown() {
     rm -f "${RUN}/net.gw"   # 关机中 net.sh down 可能失败；不再反复判定为残留规则
     return 0
   fi
+  if [ -f "${RUN}/stopping" ]; then
+    vm_stopping && return 0
+    xr_vm_alive && { rm -f "${RUN}/stopping"; return 0; }
+    log_info daemon "补全未完成的停止清理"
+    rm -f "${RUN}/state" "${RUN}/crosvm.pid" "${RUN}/stopping" "${FUSE}" "${BOOT_LOG}"
+    routes_emergency_down
+    notify_cancel
+    return 0
+  fi
   # 同一原因只记一次（规则撤不掉时守护进程 / 看门狗每轮都会走到这里，不能刷屏）；下次启动虚拟机时重置
   if [ "$(cat "${RUN}/teardown.last" 2>/dev/null)" != "${_why}" ]; then
     printf '%s\n' "${_why}" > "${RUN}/teardown.last"
@@ -273,6 +297,7 @@ emergency_teardown() {
 # xr0 已无载波或网卡不在，但接管规则还在
 stale_gateway() {
   [ -f "${RUN}/net.gw" ] || return 1
+  vm_stopping && return 1
   if xr_vm_alive; then
     _car="${XR_SYSNET:-/sys/class/net}/xr0/carrier"
     [ -f "$_car" ] && [ "$(cat "$_car" 2>/dev/null)" = 0 ] && return 0

@@ -38,7 +38,7 @@ chk '[ "$(cat "$T/start.rc")" = 0 ]'
 chk '[ -f "$RUN/daemon.pid" ] && [ -f "$RUN/daemon.ready" ]'
 dpid="$(cat "$RUN/daemon.pid")"
 cpid="$(cat "$RUN/crosvm.pid")"
-chk 'kill -0 "$dpid" 2>/dev/null && kill -0 "$cpid" 2>/dev/null'
+chk 'is_pid_running "$dpid" && is_pid_running "$cpid"'
 # crosvm / 守护进程都不应还在已退出的启动 shell 的进程组里
 # 守护进程 cmdline 应含 daemon.sh
 chk 'tr "\0" " " < "/proc/$dpid/cmdline" | grep -q daemon.sh'
@@ -51,13 +51,14 @@ chk '$XR running'
 # 2. 再次 start 视为已在运行
 chk '$XR start'
 
-# 3. stop 经守护进程，虚拟机结束；守护进程仍可留存以便再次启动
+# 3. stop 经守护进程，虚拟机结束；守护进程仍可留存以便再次启动，且 fuse_watch 退出不得误删 daemon.pid 或写 last_error
 $XR stop
-chk '! $XR running && [ ! -f "$RUN/crosvm.pid" ]'
-chk 'kill -0 "$dpid" 2>/dev/null'
+chk '! $XR running && [ ! -f "$RUN/crosvm.pid" ] && [ ! -f "$RUN/stopping" ] && [ ! -f "$RUN/last_error" ]'
+sleep 2
+chk 'is_pid_running "$dpid" && [ "$(cat "$RUN/daemon.pid" 2>/dev/null)" = "$dpid" ]'
 
 # 4. 看门狗已在开机/ensure 路径拉起；再启动后模拟 crosvm 意外退出，须立刻撤路由并记原因
-chk '[ -f "$RUN/watchdog.pid" ] && kill -0 "$(cat "$RUN/watchdog.pid")" 2>/dev/null'
+chk '[ -f "$RUN/watchdog.pid" ] && is_pid_running "$(cat "$RUN/watchdog.pid")"'
 chk '$XR start'
 : > "$T/net.calls"
 cpid="$(cat "$RUN/crosvm.pid")"
@@ -74,8 +75,8 @@ dpid="$(cat "$RUN/daemon.pid")"
 n0="$(grep -c "异常退出" "$LOG")"
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; sys.powerctl) echo reboot,userrequested;; esac\n' > "$T/bin/getprop"
 kill "$(cat "$RUN/crosvm.pid")" 2>/dev/null
-w=0; while kill -0 "$dpid" 2>/dev/null && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
-chk '! kill -0 "$dpid" 2>/dev/null'
+w=0; while is_pid_running "$dpid" && [ "$w" -lt 15 ]; do sleep 1; w=$((w+1)); done
+chk '! is_pid_running "$dpid"'
 chk '[ "$(grep -c "异常退出" "$LOG")" = "$n0" ] && [ ! -f "$RUN/last_error" ]'
 chk '[ "$(grep -c "系统关机，服务随之停止" "$LOG")" = 1 ]'
 chk '! grep -v "^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9:]* \[" "$LOG" | grep -q .'
@@ -85,7 +86,7 @@ printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_avail
 echo still > "$T/data/log/module.log"
 MODDIR="$T/mod" sh "$T/mod/uninstall.sh"
 chk '[ ! -d "$XR_DATA" ]'
-chk '! kill -0 "$dpid" 2>/dev/null'
+chk '! is_pid_running "$dpid"'
 
 [ "$fail" = 0 ] && echo "test-daemon OK"
 exit "$fail"

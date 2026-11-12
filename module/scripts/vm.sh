@@ -43,6 +43,8 @@ ready_channel() {
 }
 
 fuse_watch() {
+  trap 'exit 0' TERM INT
+  trap - EXIT USR1 USR2
   load_config; t=0
   while [ "$t" -lt "${READY_TIMEOUT_SEC}" ]; do
     vm_running || { rm -f "${FUSE}"; sync; vm_fail "就绪前 crosvm 已退出，详见 vmm.log" "启动中退出"; return; }
@@ -70,7 +72,7 @@ vm_start_exec() {
   load_config
   vm_running && { log_info vm "已在运行"; return 0; }
   [ -f "${BOOT_LOG}" ] || : > "${BOOT_LOG}"
-  rm -f "${RUN}/teardown.last" "${RUN}/shutdown" "${RUN}/shutdown.noted"
+  rm -f "${RUN}/teardown.last" "${RUN}/shutdown" "${RUN}/shutdown.noted" "${RUN}/stopping"
   blog vm "准备启动：CPU ${VM_CPUS} 核 · 内存 ${VM_MEM_MB}MB · 系统盘 $([ "${VM_DISK_RW}" = 1 ] && echo 读写 || echo 只读)"
   rm -f "${RUN}/last_error"
   [ -f "${TRIPPED}" ] && { log_err vm "熔断未确认（xr ack-trip）"; return 1; }
@@ -80,6 +82,14 @@ vm_start_exec() {
   ce_ready || log_info vm "警告：手机未解锁（CE 不可用）"
   blog vm "内核 $(( $(stat -c %s "${IMG}/Image" 2>/dev/null || echo 0) / 1048576 ))MB · 系统盘 $(( $(stat -c %s "${ROOTFS}" 2>/dev/null || echo 0) / 1048576 ))MB · crosvm 就绪"
   mem="${VM_MEM_MB}"; [ "${mem}" -lt 384 ] && mem=512
+
+  mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
+  chmod 0700 "${RUN}/guest"
+  # 清理上一次运行的客侧上报状态，避免 net up 误装过期路由或 xrouter-vpn 读取旧时间戳造成时钟倒退
+  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt" \
+    "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot" "${RUN}/guest/host/acct.cmd" "${RUN}/guest/guest/acct" \
+    "${RUN}/guest/guest/openvpn.tunnels" "${RUN}/guest/guest/openvpn.status" "${RUN}/guest/guest/openvpn.addr" \
+    "${RUN}/guest/guest/openvpn.routes"
 
   net_args=""
   if [ "${VM_NET}" = 1 ]; then
@@ -99,19 +109,15 @@ vm_start_exec() {
   . "${MODDIR}/scripts/share.sh"   # 设置 share_spec、share_mode、share_wrap（09）
   share_prepare
   blog vm "共享目录：${share_mode} · 控制通道 virtiofs"
-  mkdir -p "${RUN}/guest/host" "${RUN}/guest/guest"
-  chmod 0700 "${RUN}/guest"
-  # IPv6 状态以虚拟机内 OpenWrt 的实际配置为准，每次开机由客侧重新上报
-  rm -f "${RUN}/guest/host/ipv6.cmd" "${RUN}/guest/guest/ipv6" "${RUN}/guest/host/diag.cmd" "${RUN}/guest/guest/diag.txt" \
-    "${RUN}/guest/host/hotspot.cmd" "${RUN}/guest/guest/hotspot" "${RUN}/guest/host/acct.cmd" "${RUN}/guest/guest/acct" \
-    "${RUN}/guest/guest/openvpn.tunnels"
   ctl_spec="${RUN}/guest:xrctl:type=fs:cache=auto:timeout=1"
   vpn_boot_prepare
 
+  _boot_ts="$(date +%s)"
+  echo "${_boot_ts}" > "${RUN}/guest/host/time"
   params="root=/dev/vda ${rootmode} rootwait console=ttyS0,115200 earlycon panic=5"
   params="${params} xr.ip=${XR_NET_PREFIX}.254/24 xr.gw=${XR_NET_PREFIX}.1 xr.dns=$(echo "${XR_DNS}" | tr ' ' ',')"
   params="${params} xr.ip6=${XR_NET6}::254/64 xr.gw6=${XR_NET6}::1"
-  params="${params} xr.share=${share_mode} xr.time=$(date +%s)"
+  params="${params} xr.share=${share_mode} xr.time=${_boot_ts}"
 
   : > "${CON_LOG}"; : > "${CTL_LOG}"; rm -f "${SOCK}" "${RUN}/state"
   dlog vm "启动参数：cpus=${VM_CPUS} mem=${mem} swiotlb=${VM_SWIOTLB_MB} net=${net_args:-无} disk=${rootmode} share=${share_mode} params=${params}"
@@ -153,12 +159,14 @@ vm_start_exec() {
 
 # ---- 停止 ----
 vm_stop_exec() {
+  echo "$$" > "${RUN}/stopping"
+  rm -f "${FUSE}"
   # 由 fuse_watch 自身调用时不能杀掉自己
   if [ "${XR_IN_WATCH:-0}" != 1 ]; then
     w="$(cat "${RUN}/fuse_watch.pid" 2>/dev/null)"; [ -n "$w" ] && kill "$w" 2>/dev/null
   fi
   p="$(cat "${PID_F}" 2>/dev/null)"
-  load_config; diag_snap "停止前" 5
+  load_config; diag_snap "停止前" 2
   if vm_running; then
     "${CROSVM}" stop "${SOCK}" >/dev/null 2>&1
     i=0; while vm_running && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
@@ -168,6 +176,7 @@ vm_stop_exec() {
   rm -f "${PID_F}" "${SOCK}" "${RUN}/state" "${RUN}/fuse_watch.pid" "${RUN}/share.mode" "${FUSE}" "${BOOT_LOG}"; sync
   sh "${MODDIR}/scripts/net.sh" down
   wakelock_off
+  rm -f "${RUN}/stopping"
   log_info vm "已停止"
 }
 
@@ -264,7 +273,9 @@ vpn_boot_prepare() {
       blog vpn "下发 OpenVPN 配置"
     else
       echo disable > "${RUN}/guest/host/openvpn.cmd"
-      blog vpn "OpenVPN 保持停止"
+      for _vp in "${VPN_DIR}"/*.ovpn; do
+        [ -s "$_vp" ] && { blog vpn "OpenVPN 保持停止"; break; }
+      done
     fi
     return 0
   fi

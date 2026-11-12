@@ -102,14 +102,15 @@ daemon_handle() {
   rc=0
   case "$cmd" in
     start) vm_start; rc=$? ;;
-    stop)  vm_stop; rc=$? ;;
+    stop)  DAEMON_STOPPING=1; vm_stop; rc=$?; DAEMON_STOPPING=0 ;;
     ping)  rc=0 ;;
     quit)
       DAEMON_QUITTING=1
       vm_stop
       acct_snapshot
       notify_cancel
-      rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready" "${RUN}/daemon.cmd"
+      [ "$(cat "${RUN}/daemon.pid" 2>/dev/null)" = "$$" ] && rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+      rm -f "${RUN}/daemon.cmd"
       echo 0 > "${RUN}/daemon.res"
       exit 0
       ;;
@@ -117,30 +118,40 @@ daemon_handle() {
     *) rc=2 ;;
   esac
   echo "$rc" > "${RUN}/daemon.res"
+  if [ "${DAEMON_DEFER_TERM:-0}" = 1 ]; then
+    DAEMON_QUITTING=1
+    log_info daemon "停止流程完成，响应 TERM 退出"
+    [ "$(cat "${RUN}/daemon.pid" 2>/dev/null)" = "$$" ] && rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+    exit 0
+  fi
   : > "${RUN}/notify.force"
   notify_update
 }
 
 _daemon_on_signal() {
-  [ "${DAEMON_QUITTING}" = 1 ] && return 0
+  [ "${DAEMON_QUITTING:-0}" = 1 ] && return 0
+  if [ "${DAEMON_STOPPING:-0}" = 1 ] && [ "$1" = TERM ] && ! sys_shutting_down; then
+    DAEMON_DEFER_TERM=1
+    return 0
+  fi
   DAEMON_QUITTING=1
   if [ "$1" = TERM ] || sys_shutting_down; then
     # TERM：关机时 init 群发，或卸载 / 人为结束。不算虚拟机崩溃：不写 last_error，虚拟机已不在时安静撤规则
     if sys_shutting_down; then shutdown_note daemon; else log_info daemon "收到 TERM，守护进程退出"; fi
-    if ! xr_vm_alive; then rm -f "${RUN}/state" "${RUN}/crosvm.pid"; routes_emergency_down; fi
+    if ! xr_vm_alive; then rm -f "${RUN}/state" "${RUN}/crosvm.pid" "${RUN}/stopping"; routes_emergency_down; fi
   else
     emergency_teardown "收到信号 $1"
   fi
-  rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+  [ "$(cat "${RUN}/daemon.pid" 2>/dev/null)" = "$$" ] && rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
   exit 0
 }
 
 _daemon_on_exit() {
   _rc=$?
-  [ "${DAEMON_QUITTING}" = 1 ] && return 0
+  [ "${DAEMON_QUITTING:-0}" = 1 ] && return 0
   DAEMON_QUITTING=1
   emergency_teardown "进程退出 rc=${_rc}"
-  rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+  [ "$(cat "${RUN}/daemon.pid" 2>/dev/null)" = "$$" ] && rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
 }
 
 daemon_loop() {
@@ -163,13 +174,22 @@ daemon_loop() {
     # 系统关机：不再巡检（init 正在结束所有进程，虚拟机退出是预期的），记一行后安静退出
     if sys_shutting_down; then
       DAEMON_QUITTING=1; shutdown_note daemon
-      rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
+      [ "$(cat "${RUN}/daemon.pid" 2>/dev/null)" = "$$" ] && rm -f "${RUN}/daemon.pid" "${RUN}/daemon.ready"
       exit 0
     fi
     cgroup_escape_tree
-    if [ -f "${RUN}/crosvm.pid" ] || [ -f "${RUN}/state" ]; then
+    if ! vm_stopping && { [ -f "${RUN}/crosvm.pid" ] || [ -f "${RUN}/state" ]; }; then
       if ! vm_running 2>/dev/null; then
         emergency_teardown "$(vm_exit_reason)"
+      elif [ "$(cat "${RUN}/state" 2>/dev/null)" = ready ] && ! is_pid_running "$(cat "${RUN}/fuse_watch.pid" 2>/dev/null)"; then
+        load_config
+        _cp="$(cat "${RUN}/crosvm.pid" 2>/dev/null)"
+        _st="$(awk '{print $22}' "/proc/${_cp}/stat" 2>/dev/null)"
+        _now="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+        if [ -n "$_st" ] && [ -n "$_now" ] && [ $(( _now - _st / 100 )) -ge "${STABLE_SEC:-180}" ]; then
+          rm -f "${FUSE}" "${BOOT_LOG}"; config_hash > "${LAST_GOOD}"; sync
+          echo stable > "${RUN}/state"; log_info vm "稳定，熔断已解除，last_good 已更新"
+        fi
       fi
     fi
     if stale_gateway; then

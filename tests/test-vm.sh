@@ -20,8 +20,12 @@ sed -i 's/^READY_TIMEOUT_SEC=.*/READY_TIMEOUT_SEC="6"/; s/^STABLE_SEC=.*/STABLE_
 echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"; truncate -s 1M "$T/r"; gzip -c "$T/r" > "$IMG/openwrt-rootfs.img.gz"
 VM="sh $T/mod/scripts/vm.sh"
 
-# 1. 正常启动 -> 就绪 -> 稳定 -> last_good
+# 1. 正常启动 -> 就绪 -> 稳定 -> last_good（且刷新 host/time、清理上一次客侧 openvpn 残留）
+mkdir -p "$RUN/guest/host" "$RUN/guest/guest"
+echo 1000000000 > "$RUN/guest/host/time"
+echo up > "$RUN/guest/guest/openvpn.status"
 $VM start; chk '[ $? -eq 0 ]'
+chk '[ "$(cat "$RUN/guest/host/time")" -gt 1700000000 ] && [ ! -f "$RUN/guest/guest/openvpn.status" ]'
 chk 'grep -qx -- "--no-balloon" "$T/args" && grep -qx -- "--protected-vm-without-firmware" "$T/args"'
 chk 'grep -qx -- "--swiotlb" "$T/args" && grep -qx "64" "$T/args" && grep -qx "768" "$T/args"'
 chk 'grep -q "hardware=virtio-console" "$T/args" && grep -q "xr.ip=172.29.233.254/24 xr.gw=172.29.233.1 xr.dns=223.5.5.5,119.29.29.29 xr.ip6=fd7a:7872:e9::254/64 xr.gw6=fd7a:7872:e9::1 xr.share=off" "$T/args"'

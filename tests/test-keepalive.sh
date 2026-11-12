@@ -59,9 +59,11 @@ echo 1234 > "$T/proc/1234/oom_score_adj"
 # shellcheck disable=SC2329
 is_pid_running() { [ "$1" = 1234 ] || [ -d "$T/proc/$1" ]; }
 chk 'cgroup_in_apps 1234'
+mkdir -p "$T/cg/uid_0"; : > "$T/cg/uid_0/cgroup.procs"
 cgroup_escape 1234
 chk 'grep -qx 1234 "$T/cg/cgroup.procs"'
 chk 'grep -qx 1234 "$T/cg/system/cgroup.procs"'
+chk '! grep -qx 1234 "$T/cg/uid_0/cgroup.procs"'
 chk '[ "$(cat "$T/proc/1234/oom_score_adj")" = -1000 ]'
 # 脱离后 /proc/cgroup 若已变到根，则不再视为 apps
 echo "0::/" > "$T/proc/1234/cgroup"
@@ -92,6 +94,19 @@ chk 'grep -qx "net down" "$T/net.calls" && ! stale_gateway'
 # 关机标记粘住：getprop 之后失败也仍视为关机
 rm -f "$T/bin/getprop"; chk 'sys_shutting_down'
 rm -f "$RUN/shutdown" "$RUN/shutdown.noted"; chk '! sys_shutting_down'
+
+# 3d. 主动停止过程中（run/stopping 指向存活进程）看门狗不误判残留；停止进程被中断后安静补全清理且不写 last_error
+rm -f "$RUN/last_error"; : > "$T/net.calls"; echo block > "$RUN/net.gw"
+echo 1234 > "$RUN/stopping"
+n0="$(grep -c "异常退出" "$LOG")"
+chk '! stale_gateway'
+emergency_teardown "主动停止中"
+chk '[ ! -f "$RUN/last_error" ] && [ ! -s "$T/net.calls" ]'
+echo 99999 > "$RUN/stopping"
+chk 'stale_gateway'
+emergency_teardown "停止被中断"
+chk '[ "$(grep -c "异常退出" "$LOG")" = "$n0" ] && [ ! -f "$RUN/last_error" ] && [ ! -f "$RUN/stopping" ] && grep -qx "net down" "$T/net.calls"'
+rm -f "$RUN/net.gw"
 
 # 4. 虚拟机还在时不撤路由
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
