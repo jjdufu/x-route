@@ -3,351 +3,410 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#010609" />
+  <meta name="description" content="XRouter OpenWrt 路由与异地组网管理界面" />
+  <meta name="color-scheme" content="light dark" />
+  <meta id="meta-theme" name="theme-color" content="#f8fafd" />
   <title>XRouter</title>
   <script type="module" src="./src/main.js"></script>
 </head>
 <body>
-  <!-- 整页电路板背景：红 / 绿两层只做交叉淡入淡出；组网、设置页整体变弱 -->
-  <div id="bg" class="bg stopped" aria-hidden="true"><div class="bg-layer bg-red"></div><div class="bg-layer bg-green"></div></div>
-  <div class="scan" aria-hidden="true"></div>
   <div class="shell nostate" unresolved>
-    <div class="hud-frame" aria-hidden="true"></div>
-    <header class="appbar">
-      <div class="hud-line">
-        <span class="hud-hex hud-cyan">0x7A3F // XROUTER OS v3.7.0</span>
-        <span class="hud-hex hud-mag">0xFF32</span>
+    <header id="appbar" class="appbar">
+      <span class="brand-mark" aria-hidden="true">
+        <md-icon class="filled" data-icon="router"></md-icon>
+      </span>
+      <div class="appbar-titles">
+        <h1 class="title">XRouter</h1>
+        <span id="chip" class="chip"><span class="dot"></span><span id="chip-text">已停止</span></span>
       </div>
-      <h1 class="title" data-text="XRouter">XRouter</h1>
-      <span id="chip" class="chip chip-off vis-hide"><span class="dot"></span><span id="chip-text">已停止</span></span>
+      <md-icon-button id="btn-theme" aria-label="切换主题">
+        <md-icon id="i-theme" data-icon="brightness_auto"></md-icon>
+      </md-icon-button>
     </header>
 
-    <md-tabs id="tabs" class="tabs" aria-label="页面">
-      <md-primary-tab data-page="0"><md-icon slot="icon" data-icon="dashboard"></md-icon>主页</md-primary-tab>
-      <md-primary-tab data-page="1"><md-icon slot="icon" data-icon="hub"></md-icon>组网</md-primary-tab>
-      <md-primary-tab data-page="2"><md-icon slot="icon" data-icon="settings"></md-icon>设置</md-primary-tab>
-    </md-tabs>
-
     <main id="pager" class="pager">
-      <!-- 主页 -->
+      <!-- 0. 状态（概览主卡 + 双列指标磁贴 + 快捷控制） -->
       <section class="page on" id="page-home">
-        <div id="trip" class="card alert" hidden>
-          <md-icon data-icon="warning"></md-icon>
-          <span class="grow">整机复位后自启已关闭</span>
-          <md-filled-tonal-button id="btn-ack">确认</md-filled-tonal-button>
-        </div>
+        <div class="page-inner">
+          <div id="trip" class="alert-banner" hidden>
+            <md-icon class="filled" data-icon="warning"></md-icon>
+            <span class="grow">整机复位后自启已关闭</span>
+            <md-filled-tonal-button id="btn-ack">确认</md-filled-tonal-button>
+          </div>
 
-        <div class="power-area">
-          <!-- 舞台：可点芯片在电路板最密处。停止/失败为裂纹芯片与红色断开走线；
-               启动中走线由芯片向外红改绿修复；运行中绿流。见 docs/chip-transition-flow.md -->
-          <div id="stage" class="stage stopped">
-            <div class="st-wrap" aria-hidden="true">
-              <svg id="pcb-svg" class="pcb-svg" viewBox="0 0 480 320"></svg>
+          <section id="hero-card" class="hero-card stopped" aria-label="服务状态">
+            <div class="hero-top">
+              <div id="hero-emblem" class="hero-emblem" aria-hidden="true">
+                <md-icon id="hero-icon" data-icon="power_settings_new"></md-icon>
+              </div>
+              <div class="hero-copy">
+                <div id="power-title" class="hero-headline">已停止</div>
+                <div id="power-sub" class="hero-sub">点击下方按钮启动 OpenWrt 路由服务</div>
+              </div>
             </div>
-            <div id="power-wrap" class="power-wrap stopped">
-              <button id="power" class="power" type="button" aria-label="电源">
+
+            <div id="power-err" class="hero-err" hidden></div>
+
+            <div id="hero-progress" class="hero-progress" hidden>
+              <div class="wave-wrap" aria-hidden="true">
+                <svg class="wave-svg" viewBox="0 0 320 14" preserveAspectRatio="none">
+                  <line class="wave-track" x1="2" y1="7" x2="318" y2="7" />
+                  <path class="wave-active" d="M 0 7 Q 8 2, 16 7 T 32 7 T 48 7 T 64 7 T 80 7 T 96 7 T 112 7 T 128 7 T 144 7 T 160 7 T 176 7 T 192 7 T 208 7 T 224 7 T 240 7 T 256 7 T 272 7 T 288 7 T 304 7 T 320 7" />
+                </svg>
+              </div>
+              <div id="boot-steps" class="boot-steps">
+                <span class="step-pill" data-step="0">正在启动</span>
+                <span class="step-pill" data-step="1">网络就绪</span>
+                <span class="step-pill" data-step="2">运行中</span>
+              </div>
+            </div>
+
+            <div class="hero-actions">
+              <button id="power" class="hero-btn hero-btn-primary" type="button">
                 <md-ripple></md-ripple>
                 <md-focus-ring></md-focus-ring>
-                <svg class="chip-svg" viewBox="0 0 200 200" aria-hidden="true">
-                  <defs>
-                    <clipPath id="chip-die"><path d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/></clipPath><clipPath id="f1"><polygon points="34,34 112,34 100,58 86,72 70,64 48,52 34,62"/></clipPath><clipPath id="f2"><polygon points="112,34 166,34 166,78 138,86 118,70 100,58"/></clipPath><clipPath id="f3"><polygon points="34,62 48,52 70,64 86,72 92,96 78,124 52,118 34,128"/></clipPath><clipPath id="f4"><polygon points="34,128 52,118 78,124 88,150 70,166 34,166"/></clipPath><clipPath id="f5"><polygon points="92,96 86,72 100,58 118,70 138,86 166,78 166,136 150,144 120,136 88,150 78,124"/></clipPath><clipPath id="f-loose"><polygon points="150,144 166,136 166,166 140,166 148,152"/></clipPath>
-                  </defs>
-                  <g class="chip-pins"><rect class="pin" x="26" y="46" width="8" height="4" rx="1"/><rect class="pin" x="166" y="46" width="8" height="4" rx="1"/><rect class="pin" x="46" y="26" width="4" height="8" rx="1"/><rect class="pin" x="46" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="59" width="8" height="4" rx="1"/><rect class="pin" x="166" y="59" width="8" height="4" rx="1"/><rect class="pin" x="59" y="26" width="4" height="8" rx="1"/><rect class="pin" x="59" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="72" width="8" height="4" rx="1"/><rect class="pin" x="166" y="72" width="8" height="4" rx="1"/><rect class="pin" x="72" y="26" width="4" height="8" rx="1"/><rect class="pin" x="72" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="85" width="8" height="4" rx="1"/><rect class="pin" x="166" y="85" width="8" height="4" rx="1"/><rect class="pin" x="85" y="26" width="4" height="8" rx="1"/><rect class="pin" x="85" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="98" width="8" height="4" rx="1"/><rect class="pin" x="166" y="98" width="8" height="4" rx="1"/><rect class="pin" x="98" y="26" width="4" height="8" rx="1"/><rect class="pin" x="98" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="111" width="8" height="4" rx="1"/><rect class="pin" x="166" y="111" width="8" height="4" rx="1"/><rect class="pin" x="111" y="26" width="4" height="8" rx="1"/><rect class="pin" x="111" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="124" width="8" height="4" rx="1"/><rect class="pin" x="166" y="124" width="8" height="4" rx="1"/><rect class="pin" x="124" y="26" width="4" height="8" rx="1"/><rect class="pin" x="124" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="137" width="8" height="4" rx="1"/><rect class="pin" x="166" y="137" width="8" height="4" rx="1"/><rect class="pin" x="137" y="26" width="4" height="8" rx="1"/><rect class="pin" x="137" y="166" width="4" height="8" rx="1"/><rect class="pin" x="26" y="150" width="8" height="4" rx="1"/><rect class="pin" x="166" y="150" width="8" height="4" rx="1"/><rect class="pin" x="150" y="26" width="4" height="8" rx="1"/><rect class="pin" x="150" y="166" width="4" height="8" rx="1"/></g>
-                  <g class="chip-cracked">
-                    <g class="chip-die-frags" clip-path="url(#chip-die)">
-                      <g class="frag f1" data-dx="-6" data-dy="-7" data-rot="-4" clip-path="url(#f1)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/><path class="die-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g><g class="frag f2" data-dx="7" data-dy="-8" data-rot="5" clip-path="url(#f2)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/><path class="die-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g><g class="frag f3" data-dx="-8" data-dy="3" data-rot="-3" clip-path="url(#f3)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/><path class="die-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g><g class="frag f4" data-dx="-5" data-dy="8" data-rot="4" clip-path="url(#f4)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/><path class="die-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g><g class="frag f5" data-dx="5" data-dy="5" data-rot="3" clip-path="url(#f5)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/><path class="die-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g>
-                    </g>
-                    <g class="frag f-loose" data-dx="16" data-dy="18" data-rot="14" clip-path="url(#f-loose)"><path class="die-fill" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/><path class="die-edge" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/>
-                <g class="traces-red" fill="none" stroke="#c0473c" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M50 52 H78 V70"/>
-                  <path d="M58 52 V44"/>
-                  <path d="M90 48 H120 V66 H136"/>
-                  <path d="M110 48 V40"/>
-                  <path d="M46 90 H70 V110 H90"/>
-                  <path d="M70 98 H58"/>
-                  <path d="M48 150 H78 V138"/>
-                  <path d="M100 88 V118 H128 V138 H150"/>
-                  <path d="M128 118 H140"/>
-                  <path d="M154 92 V80 H140"/>
-                  <path d="M150 152 H160 V160"/>
-                  <path d="M88 150 H100 V166"/>
-                </g>
-                <g class="vias-red" fill="#c0473c">
-                  <circle cx="50" cy="52" r="1.7"/><circle cx="78" cy="70" r="1.7"/>
-                  <circle cx="90" cy="48" r="1.7"/><circle cx="136" cy="66" r="1.7"/>
-                  <circle cx="46" cy="90" r="1.7"/><circle cx="90" cy="110" r="1.7"/>
-                  <circle cx="48" cy="150" r="1.7"/><circle cx="100" cy="88" r="1.7"/>
-                  <circle cx="150" cy="138" r="1.7"/><circle cx="154" cy="92" r="1.7"/>
-                  <circle cx="160" cy="160" r="1.7"/><circle cx="100" cy="166" r="1.7"/>
-                </g>
-                </g>
-                <path class="crack-lines" fill="none" stroke="#0b0c0e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
-                  d="M112 34 L100 58 L86 72 L70 64 L48 52 L34 62
-                     M86 72 L92 96 L78 124 L52 118 L34 128
-                     M78 124 L88 150 L70 166
-                     M100 58 L118 70 L138 86 L166 78
-                     M138 86 L166 136 L150 144 L120 136 L88 150
-                     M150 144 L148 152 L140 166"/>
-                <path class="crack-gap" fill="#0b0c0e" fill-opacity=".85"
-                  d="M96 100 L102 108 L98 116 L90 112 Z"/>
-
-                  </g>
-                  <g class="chip-intact">
-                    <path class="die-live" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z"/>
-                    <path class="die-live-pad" d="M54 42 H146 L158 54 V146 L146 158 H54 L42 146 V54 Z" fill="none"/>
-                    <path class="core-frame" d="M76 68 H124 L132 76 V124 L124 132 H76 L68 124 V76 Z" fill="none"/>
-                    <path class="core-frame-in" d="M80 72 H120 L128 80 V120 L120 128 H80 L72 120 V80 Z" fill="none"/>
-                    <g class="chip-flow-g">
-                      <path class="chip-flow" data-flow="frame" pathLength="100" d="M76 68 H124 L132 76 V124 L124 132 H76 L68 124 V76 Z"/>
-                      <path class="chip-flow" data-flow="frame-in" pathLength="100" d="M80 72 H120 L128 80 V120 L120 128 H80 L72 120 V80 Z"/>
-                    </g>
-                    <g class="chip-core">
-                      <path class="core-outer" d="M88 86 H112 L114 88 V112 L112 114 H88 L86 112 V88 Z"/>
-                      <path class="core-inner" d="M92 90 H108 L110 92 V108 L108 110 H92 L90 108 V92 Z"/>
-                    </g>
-                    <path class="die-edge-live" d="M48 34 H152 L166 48 V152 L152 166 H48 L34 152 V48 Z" fill="none"/>
-                  </g>
-                </svg>
+                <md-icon id="power-icon" class="filled" data-icon="play_arrow"></md-icon>
+                <span id="power-btn-text">启动服务</span>
+              </button>
+              <button id="btn-luci" class="hero-btn hero-btn-secondary" type="button">
+                <md-ripple></md-ripple>
+                <md-focus-ring></md-focus-ring>
+                <md-icon data-icon="open_in_new"></md-icon>
+                <span>打开 LuCI</span>
               </button>
             </div>
-            <div id="power-err" class="power-err" hidden></div>
-            <div id="stage-hud" class="stage-hud" aria-hidden="true">
-              <div id="stage-hud-ph" class="stage-hud-ph">◇ OFFLINE</div>
-              <div id="stage-hud-sub" class="stage-hud-sub">SERVICE STOPPED</div>
+          </section>
+
+          <div class="tile-grid">
+            <article class="metric-tile" id="tile-up">
+              <div class="tile-head">
+                <span class="tile-ico"><md-icon id="i-up" data-icon="cloud_off"></md-icon></span>
+              </div>
+              <div class="tile-body">
+                <span class="tile-label">上游网络</span>
+                <span id="v-up" class="tile-val">—</span>
+                <span id="v-up-sub" class="tile-sub">未连接</span>
+              </div>
+            </article>
+
+            <article class="metric-tile" id="tile-uptime">
+              <div class="tile-head">
+                <span class="tile-ico"><md-icon data-icon="schedule"></md-icon></span>
+              </div>
+              <div class="tile-body">
+                <span class="tile-label">运行时长</span>
+                <span id="v-uptime" class="tile-val">—</span>
+                <span id="v-run-st" class="tile-sub">已停止</span>
+              </div>
+            </article>
+
+            <button id="tile-mode" class="metric-tile" type="button">
+              <md-ripple></md-ripple>
+              <div class="tile-head">
+                <span class="tile-ico"><md-icon data-icon="swap_horiz"></md-icon></span>
+                <md-icon class="tile-arrow" data-icon="chevron_right"></md-icon>
+              </div>
+              <div class="tile-body">
+                <span class="tile-label">运行模式</span>
+                <span id="v-home-mode" class="tile-val">全局接管</span>
+                <span id="v-home-hs" class="tile-sub"></span>
+              </div>
+            </button>
+
+            <button id="tile-vpn" class="metric-tile" type="button">
+              <md-ripple></md-ripple>
+              <div class="tile-head">
+                <span class="tile-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
+                <md-icon class="tile-arrow" data-icon="chevron_right"></md-icon>
+              </div>
+              <div class="tile-body">
+                <span class="tile-label">组网状态</span>
+                <span id="v-home-vpn" class="tile-val">未连接</span>
+                <span id="v-home-routes" class="tile-sub"></span>
+              </div>
+            </button>
+          </div>
+
+          <div class="section-block">
+            <div class="group-title">快捷设置</div>
+            <div class="m3-group">
+              <div id="row-autostart" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="bolt"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">开机自启</span>
+                  <span id="v-as-st" class="sub">系统启动后自动拉起路由服务</span>
+                </span>
+                <md-switch id="sw-autostart" icons></md-switch>
+              </div>
             </div>
           </div>
         </div>
-
-        <article class="neo-card neo-cyan" id="card-run">
-          <span class="ico-badge" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3"/><rect x="10" y="10" width="4" height="4" rx=".6"/></svg>
-          </span>
-          <div class="neo-mid">
-            <div class="neo-title">运行状态 <span id="dot-run" class="neo-dot off"></span><span id="v-run-st">已停止</span></div>
-            <div class="neo-kv"><span>运行时长</span><span id="v-uptime" class="val">—</span></div>
-            <div class="neo-kv"><span>上游网络</span><span id="v-up" class="val">—</span></div>
-          </div>
-          <md-icon id="i-up" data-icon="cloud_off" class="vis-hide"></md-icon>
-          <span class="neo-hex">0xA701</span>
-        </article>
-
-        <div id="row-autostart" class="neo-card neo-mag" role="switch">
-          <md-ripple></md-ripple>
-          <span class="ico-badge" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v5l3 2"/><circle cx="12" cy="13" r="8"/><path d="M12 3v2"/></svg>
-          </span>
-          <div class="neo-mid">
-            <div class="neo-title">开机自启 <span id="dot-as" class="neo-dot off"></span><span id="v-as-st">已关闭</span></div>
-          </div>
-          <span class="neo-toggle-wrap"><md-switch id="sw-autostart" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span>
-          <span class="neo-hex">0xA702</span>
-        </div>
-
-        <button id="btn-luci" class="neo-card neo-cyan neo-action" type="button">
-          <md-ripple></md-ripple>
-          <span class="ico-badge" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5h5v5"/><path d="M19 5l-7 7"/><path d="M17 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5"/></svg>
-          </span>
-          <div class="neo-mid">
-            <div class="neo-title">打开 LuCI <span class="neo-dot ok"></span><span>管理界面</span></div>
-          </div>
-          <span class="neo-go">OPEN</span>
-          <span class="neo-hex">0xA703</span>
-        </button>
       </section>
 
-      <!-- 组网：OpenVPN 隧道按列表渲染（每条各自状态、地址、自动同步的网段）；只有一条时与单卡片布局相同 -->
+      <!-- 1. 网络（运行模式、管理访问、热点与网关、IPv6、流量通知） -->
+      <section class="page" id="page-net">
+        <div class="page-inner">
+          <div class="section-block">
+            <div class="group-title">运行模式</div>
+            <div id="seg-mode" class="mode-cards" role="radiogroup" aria-label="运行模式"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="group-title">接入与热点</div>
+            <div class="m3-group">
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="admin_panel_settings"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">管理访问</span>
+                  <span class="sub">限制可访问管理后台的来源</span>
+                </span>
+                <md-outlined-select id="sel-access" class="sel" aria-label="管理访问"></md-outlined-select>
+              </div>
+
+              <div id="row-hotspot" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="wifi"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">DHCP</span>
+                  <span id="v-hotspot" class="sub"></span>
+                </span>
+                <md-switch id="sw-hotspot" icons></md-switch>
+              </div>
+
+              <button id="row-hs-net" class="item item-btn" type="button">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="lan"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">网关地址</span>
+                  <span id="v-hs-net-cur" class="sub"></span>
+                </span>
+                <span id="v-hs-net" class="val">跟随安卓</span>
+                <md-icon class="trail" data-icon="chevron_right"></md-icon>
+              </button>
+
+              <div id="row-ipv6" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="language"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">IPv6</span>
+                  <span class="sub">启用 IPv6 路由与转发</span>
+                </span>
+                <md-switch id="sw-ipv6" icons></md-switch>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="group-title">流量与通知</div>
+            <div class="m3-group">
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="public"></md-icon></span>
+                <span class="grow"><span class="item-title">通知显示</span></span>
+                <div id="seg-notify" class="seg seg-tight"></div>
+              </div>
+
+              <button id="row-traffic" class="item item-btn" type="button">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="data_usage"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">累计流量</span>
+                  <span class="sub">查看手机与热点分项流量统计</span>
+                </span>
+                <span id="v-traffic" class="val">—</span>
+                <md-icon class="trail" data-icon="chevron_right"></md-icon>
+              </button>
+
+              <div class="group-actions">
+                <md-outlined-button id="btn-traffic-reset" class="danger">
+                  <md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零
+                </md-outlined-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 组网（异地组网配置导入 + 多配置卡片直接启停） -->
       <section class="page" id="page-link">
-        <div id="vpn-list" class="vpn-list"></div>
-        <div id="vpn-actions" class="actions">
-          <md-filled-tonal-button id="btn-vpn-start" class="neo-btn neo-btn-ok" disabled>启动</md-filled-tonal-button>
-          <md-outlined-button id="btn-vpn-stop" class="danger neo-btn neo-btn-bad" disabled>停止</md-outlined-button>
-          <md-filled-tonal-button id="btn-import" class="neo-btn neo-btn-cyan"><md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置</md-filled-tonal-button>
+        <div class="page-inner">
+          <div class="vpn-toolbar">
+            <div class="vpn-toolbar-head">
+              <span class="vpn-toolbar-ico"><md-icon class="filled" data-icon="hub"></md-icon></span>
+              <div class="grow">
+                <div class="vpn-toolbar-title">异地组网</div>
+                <div id="vpn-summary" class="vpn-toolbar-sub">导入配置文件后，点击对应配置即可运行或停止</div>
+              </div>
+              <md-filled-tonal-button id="btn-import">
+                <md-icon slot="icon" data-icon="upload_file"></md-icon>导入配置
+              </md-filled-tonal-button>
+            </div>
+          </div>
+
+          <div id="vpn-empty" class="vpn-empty">
+            <span class="vpn-empty-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
+            <div class="vpn-empty-title">尚未导入组网配置</div>
+            <div class="vpn-empty-sub">点击上方「导入配置」添加配置文件，导入后将直接显示在此列表中，可按需独立运行或停止</div>
+          </div>
+
+          <div id="vpn-list" class="vpn-list" hidden></div>
         </div>
       </section>
 
-      <!-- 设置 -->
-      <section class="page" id="page-settings">
-        <div class="group-title">网络</div>
-        <div class="card list">
-          <div class="item"><md-icon data-icon="swap_horiz"></md-icon><span class="grow">运行模式</span><div id="seg-mode" class="seg"></div></div>
-          <div class="item"><md-icon data-icon="admin_panel_settings"></md-icon><span class="grow">管理访问</span>
-            <md-outlined-select id="sel-access" class="sel"></md-outlined-select></div>
-          <div id="row-hotspot" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="wifi"></md-icon><span class="grow">DHCP<span id="v-hotspot" class="sub"></span></span><span class="neo-toggle-wrap"><md-switch id="sw-hotspot" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
-          <div id="row-hs-net" class="item item-btn"><md-ripple></md-ripple><md-icon data-icon="lan"></md-icon><span class="grow">网关地址<span id="v-hs-net-cur" class="sub"></span></span><span id="v-hs-net" class="val">跟随安卓</span></div>
-          <div id="row-ipv6" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="language"></md-icon><span class="grow">IPv6</span><span class="neo-toggle-wrap"><md-switch id="sw-ipv6" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
-        </div>
+      <!-- 3. 系统（存储共享、资源与系统盘、日志、关于） -->
+      <section class="page" id="page-system">
+        <div class="page-inner">
+          <div class="section-block">
+            <div class="group-title">存储共享</div>
+            <div class="m3-group">
+              <div id="row-share" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="folder_shared"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">存储共享</span>
+                  <span class="sub">挂载手机目录至路由系统</span>
+                </span>
+                <md-switch id="sw-share" icons></md-switch>
+              </div>
 
-        <div class="group-title">通知</div>
-        <div class="card list">
-          <div class="item"><md-icon data-icon="public"></md-icon><span class="grow">通知显示</span><div id="seg-notify" class="seg seg-tight"></div></div>
-          <button id="row-traffic" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="data_usage"></md-icon><span class="grow">累计流量</span><span id="v-traffic" class="val">—</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
-          <div class="actions">
-            <md-outlined-button id="btn-traffic-reset" class="danger"><md-icon slot="icon" data-icon="delete_sweep"></md-icon>清零</md-outlined-button>
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="lock"></md-icon></span>
+                <span class="grow"><span class="item-title">权限</span></span>
+                <div id="seg-share" class="seg"></div>
+              </div>
+
+              <button id="btn-share-path" class="item item-btn" type="button">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="folder"></md-icon></span>
+                <span class="grow"><span class="item-title">目录</span></span>
+                <span id="v-share-path" class="val path">内部存储</span>
+                <md-icon class="trail" data-icon="chevron_right"></md-icon>
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div class="group-title">存储共享</div>
-        <div class="card list">
-          <div id="row-share" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="folder_shared"></md-icon><span class="grow">存储共享</span><span class="neo-toggle-wrap"><md-switch id="sw-share" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
-          <div class="item"><md-icon data-icon="lock"></md-icon><span class="grow">权限</span><div id="seg-share" class="seg"></div></div>
-          <button id="btn-share-path" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="folder"></md-icon><span class="grow">目录</span><span id="v-share-path" class="val path">内部存储</span><md-icon class="trail" data-icon="chevron_right"></md-icon></button>
-        </div>
+          <div class="section-block">
+            <div class="group-title">资源</div>
+            <div class="m3-group">
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="memory"></md-icon></span>
+                <span class="grow"><span class="item-title">CPU</span></span>
+                <md-outlined-select id="sel-cpu" class="sel" aria-label="CPU"></md-outlined-select>
+              </div>
 
-        <div class="group-title">资源</div>
-        <div class="card list">
-          <div class="item"><md-icon data-icon="memory"></md-icon><span class="grow">CPU</span><md-outlined-select id="sel-cpu" class="sel"></md-outlined-select></div>
-          <div class="item"><md-icon data-icon="developer_board"></md-icon><span class="grow">内存</span><md-outlined-select id="sel-mem" class="sel"></md-outlined-select></div>
-          <div id="row-disk" class="item"><md-icon data-icon="hard_drive"></md-icon><span class="grow">系统盘<span id="v-disk-sub" class="sub"></span></span><span id="v-disk" class="val">—</span></div>
-          <div id="disk-actions" class="actions">
-            <md-outlined-button id="btn-expand"><md-icon slot="icon" data-icon="expand_content"></md-icon>扩容</md-outlined-button>
-            <md-outlined-button id="btn-reset" class="danger"><md-icon slot="icon" data-icon="restart_alt"></md-icon>重置</md-outlined-button>
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="developer_board"></md-icon></span>
+                <span class="grow"><span class="item-title">内存</span></span>
+                <md-outlined-select id="sel-mem" class="sel" aria-label="内存"></md-outlined-select>
+              </div>
+
+              <div id="row-disk" class="item">
+                <span class="item-ico"><md-icon data-icon="hard_drive"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">系统盘</span>
+                  <span id="v-disk-sub" class="sub"></span>
+                </span>
+                <span id="v-disk" class="val">—</span>
+              </div>
+
+              <div id="disk-actions" class="group-actions">
+                <md-outlined-button id="btn-expand">
+                  <md-icon slot="icon" data-icon="expand_content"></md-icon>扩容
+                </md-outlined-button>
+                <md-outlined-button id="btn-reset" class="danger">
+                  <md-icon slot="icon" data-icon="restart_alt"></md-icon>重置
+                </md-outlined-button>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="group-title">日志</div>
-        <div class="card list">
-          <div id="row-debug" class="item item-btn" role="switch"><md-ripple></md-ripple><md-icon data-icon="receipt_long"></md-icon><span class="grow">调试模式</span><span class="neo-toggle-wrap"><md-switch id="sw-debug" icons></md-switch><span class="neo-toggle" aria-hidden="true"><i></i></span></span></div>
-          <div class="item"><md-icon data-icon="schedule"></md-icon><span class="grow">自动关闭</span><md-outlined-select id="sel-debug-hours" class="sel"></md-outlined-select></div>
-          <div class="actions">
-            <md-filled-tonal-button id="btn-export"><md-icon slot="icon" data-icon="download"></md-icon><span id="btn-export-text">日志导出</span></md-filled-tonal-button>
+          <div class="section-block">
+            <div class="group-title">日志</div>
+            <div class="m3-group">
+              <div id="row-debug" class="item item-btn" role="switch">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="receipt_long"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">调试模式</span>
+                  <span class="sub">记录详细运行快照供排障</span>
+                </span>
+                <md-switch id="sw-debug" icons></md-switch>
+              </div>
+
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="schedule"></md-icon></span>
+                <span class="grow"><span class="item-title">自动关闭</span></span>
+                <md-outlined-select id="sel-debug-hours" class="sel" aria-label="自动关闭"></md-outlined-select>
+              </div>
+
+              <div class="group-actions">
+                <md-filled-tonal-button id="btn-export">
+                  <md-icon slot="icon" data-icon="download"></md-icon>
+                  <span id="btn-export-text">日志导出</span>
+                </md-filled-tonal-button>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="group-title">关于</div>
-        <div class="card list">
-          <button id="btn-project" class="item item-btn" type="button"><md-ripple></md-ripple><md-icon data-icon="code"></md-icon><span class="grow">项目地址<span class="sub mono-sub">https://github.com/jjdufu/x-route</span></span><md-icon class="trail" data-icon="open_in_new"></md-icon></button>
-          <div class="item"><md-icon data-icon="person"></md-icon><span class="grow">作者</span><span class="val">jjdufu</span></div>
-          <div class="item"><md-icon data-icon="delete_sweep"></md-icon><span class="grow">卸载 XRouter<span class="sub">删除全部数据，无需重启</span></span>
-            <md-outlined-button id="btn-uninstall" class="danger">立即卸载</md-outlined-button></div>
+          <div class="section-block">
+            <div class="group-title">关于</div>
+            <div class="m3-group">
+              <button id="btn-project" class="item item-btn" type="button">
+                <md-ripple></md-ripple>
+                <span class="item-ico"><md-icon data-icon="code"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">项目地址</span>
+                  <span class="sub mono-sub">https://github.com/jjdufu/x-route</span>
+                </span>
+                <md-icon class="trail" data-icon="open_in_new"></md-icon>
+              </button>
+
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="person"></md-icon></span>
+                <span class="grow"><span class="item-title">作者</span></span>
+                <span class="val">jjdufu</span>
+              </div>
+
+              <div class="item">
+                <span class="item-ico"><md-icon data-icon="delete_sweep"></md-icon></span>
+                <span class="grow">
+                  <span class="item-title">卸载 XRouter</span>
+                  <span class="sub">删除全部数据，无需重启</span>
+                </span>
+                <md-outlined-button id="btn-uninstall" class="danger">立即卸载</md-outlined-button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
-    <div class="hud-rail" aria-hidden="true">
-      <span class="hud-hex hud-cyan" id="hud-left">UPSTREAM: —</span>
-      <span class="hud-hex hud-mag" id="hud-up">Uptime: 00:00:00</span>
-    </div>
+
+    <!-- M3 官方底部导航栏（4 目的地：状态 · 网络 · 组网 · 系统） -->
+    <footer class="nav-wrap">
+      <md-navigation-bar id="nav" class="navbar" aria-label="主导航">
+        <md-navigation-tab label="状态" active>
+          <md-icon slot="inactive-icon" data-icon="dashboard"></md-icon>
+          <md-icon slot="active-icon" class="filled" data-icon="dashboard"></md-icon>
+        </md-navigation-tab>
+        <md-navigation-tab label="网络">
+          <md-icon slot="inactive-icon" data-icon="lan"></md-icon>
+          <md-icon slot="active-icon" class="filled" data-icon="lan"></md-icon>
+        </md-navigation-tab>
+        <md-navigation-tab id="nav-vpn" label="组网">
+          <md-icon slot="inactive-icon" data-icon="vpn_lock"></md-icon>
+          <md-icon slot="active-icon" class="filled" data-icon="vpn_lock"></md-icon>
+        </md-navigation-tab>
+        <md-navigation-tab label="系统">
+          <md-icon slot="inactive-icon" data-icon="tune"></md-icon>
+          <md-icon slot="active-icon" class="filled" data-icon="tune"></md-icon>
+        </md-navigation-tab>
+      </md-navigation-bar>
+    </footer>
   </div>
 
   <!-- 卸载后的静态页：模块目录随后被删除，页面不再有任何轮询或动画 -->
   <div id="gone" class="gone" hidden>
-    <md-icon data-icon="check_circle"></md-icon>
+    <md-icon class="filled" data-icon="check_circle"></md-icon>
     <div class="gone-title">已卸载</div>
     <div id="gone-text" class="gone-text">XRouter 正在后台清理并从模块列表移除，无需重启。可以关闭此页面。</div>
   </div>
@@ -366,8 +425,15 @@
   <md-dialog id="dlg-hsnet" class="dlg">
     <div slot="headline">网关地址</div>
     <form slot="content" id="dlg-hsnet-form" method="dialog" class="hsnet">
-      <label class="field"><span>地址/掩码</span>
-        <input id="in-hsnet" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="172.28.222.254/24"></label>
+      <md-outlined-text-field
+        id="in-hsnet"
+        class="hsnet-field"
+        label="地址/掩码"
+        placeholder="172.28.222.254/24"
+        inputmode="decimal"
+        autocomplete="off"
+        spellcheck="false">
+      </md-outlined-text-field>
       <div id="hsnet-err" class="hint bad"></div>
     </form>
     <div slot="actions">
@@ -425,14 +491,48 @@
     </div>
   </md-dialog>
 
-  <!-- 组网页的隧道卡片（每条隧道克隆一份） -->
+  <!-- 组网页的配置卡片（每份导入配置独立渲染一张卡片，可直接运行 / 停止 / 删除） -->
   <template id="tpl-vpn">
-    <div class="card list vpn-card neo-card neo-cyan">
-      <div class="card-head"><md-icon data-icon="vpn_lock"></md-icon><span class="grow vpn-name">OpenVPN</span><span class="vpn-badge"><span class="dot"></span><span class="vpn-badge-text"></span></span></div>
-      <div class="item vpn-st-row"><md-icon data-icon="link"></md-icon><span class="grow">连接状态</span><span class="val vpn-st">未连接</span></div>
-      <div class="item vpn-addr-row"><md-icon data-icon="lan"></md-icon><span class="grow">隧道地址</span><span class="val mono vpn-addr">—</span></div>
-      <div class="item item-top"><md-icon data-icon="alt_route"></md-icon><span class="grow">路由网段<span class="sub vpn-sync"></span></span><span class="val mono vpn-routes">无</span></div>
-    </div>
+    <article class="vpn-card">
+      <div class="card-head">
+        <span class="item-ico vpn-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
+        <div class="grow vpn-head-copy">
+          <div class="vpn-name">未命名配置</div>
+          <div class="vpn-dev-sub"></div>
+        </div>
+        <span class="vpn-badge"><span class="dot"></span><span class="vpn-badge-text">未连接</span></span>
+      </div>
+      <div class="item vpn-st-row">
+        <span class="item-ico"><md-icon data-icon="link"></md-icon></span>
+        <span class="grow"><span class="item-title">连接状态</span></span>
+        <span class="val vpn-st">未连接</span>
+      </div>
+      <div class="item vpn-addr-row">
+        <span class="item-ico"><md-icon data-icon="lan"></md-icon></span>
+        <span class="grow"><span class="item-title">隧道地址</span></span>
+        <span class="val mono vpn-addr">—</span>
+      </div>
+      <div class="item item-top">
+        <span class="item-ico"><md-icon data-icon="alt_route"></md-icon></span>
+        <span class="grow">
+          <span class="item-title">路由网段</span>
+          <span class="sub vpn-sync"></span>
+        </span>
+        <span class="val mono vpn-routes">无</span>
+      </div>
+      <div class="vpn-card-actions">
+        <md-outlined-button class="danger btn-vpn-del">
+          <md-icon slot="icon" data-icon="delete_sweep"></md-icon>删除
+        </md-outlined-button>
+        <div class="grow"></div>
+        <md-filled-button class="btn-vpn-start">
+          <md-icon slot="icon" class="filled" data-icon="play_arrow"></md-icon>启动
+        </md-filled-button>
+        <md-filled-tonal-button class="btn-vpn-stop" hidden>
+          <md-icon slot="icon" class="filled" data-icon="stop"></md-icon>停止
+        </md-filled-tonal-button>
+      </div>
+    </article>
   </template>
 
   <div id="snack" class="snack" role="status"></div>

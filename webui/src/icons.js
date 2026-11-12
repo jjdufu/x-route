@@ -46,4 +46,13 @@ export const ICONS = {
   smartphone: "\u{e7ba}",
   wifi_tethering: "\u{e1e2}",
   data_usage: "\u{eff2}",
+  play_arrow: "\u{e037}",
+  stop: "\u{e047}",
+  refresh: "\u{e5d5}",
+  dark_mode: "\u{e51c}",
+  light_mode: "\u{e518}",
+  brightness_auto: "\u{e1ab}",
+  tune: "\u{e429}",
+  shield: "\u{e9e0}",
+  bolt: "\u{ea0b}",
 };

@@ -1,2 +1,2 @@
 dashboard hub receipt_long settings power_settings_new schedule wifi signal_cellular_alt cloud_off open_in_new router warning vpn_lock upload_file link alt_route swap_horiz admin_panel_settings language folder_shared folder lock edit memory developer_board hard_drive expand_content restart_alt download delete_sweep description home chevron_right arrow_upward close check check_circle error lan public
- info code person smartphone wifi_tethering data_usage
+info code person smartphone wifi_tethering data_usage play_arrow stop refresh dark_mode light_mode brightness_auto tune shield bolt

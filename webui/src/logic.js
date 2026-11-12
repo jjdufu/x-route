@@ -194,9 +194,81 @@ export function trafficLine(d, mode) {
   return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
 }
 
-// 组网页隧道列表（按列表渲染，将来多份 OpenVPN 配置时每条一项）：后端 vpn.tunnels 优先；
-// 旧后端没有 tunnels 时由汇总字段拼出一项。未导入任何配置时也给一项占位（状态未连接、导入按钮在其下）。
-// 返回 [{ key, name, status, text, addr, routes }]；routes 只列已同步到手机的网段（routes_active），多隧道时按隧道归属
+// 组网页配置卡片列表：后端 vpn.profiles 每项对应一份已导入配置（含独立 id、名称、启停状态、地址与网段），
+// 未导入任何配置时返回空列表（界面展示空状态引导），同时兼容客侧 LuCI 手工建立的额外隧道（managed: false）。
+export function vpnProfiles(vpn) {
+  vpn = vpn || {};
+  const active = Array.isArray(vpn.routes_active) ? vpn.routes_active : [];
+  const matchRoutes = (own, fallbackAll) => {
+    if (own.length) return active.filter((a) => own.some((r) => r === a || `${r}/32` === a || `${r}/128` === a));
+    return fallbackAll ? active : [];
+  };
+  const out = [];
+  const usedDevs = new Set();
+
+  if (Array.isArray(vpn.profiles)) {
+    const upCount = vpn.profiles.filter((p) => p && p.status === "up").length;
+    for (const p of vpn.profiles) {
+      if (!p || !p.id) continue;
+      const st = VPN_TXT[p.status] ? p.status : "down";
+      const own = Array.isArray(p.routes) ? p.routes : [];
+      if (p.dev) usedDevs.add(p.dev);
+      out.push({
+        key: `p:${p.id}`,
+        id: p.id,
+        name: p.name || p.id,
+        enabled: !!p.enabled,
+        status: st,
+        text: VPN_TXT[st],
+        dev: p.dev || "",
+        addr: String(p.addr || "").replace(/\/\d+$/, ""),
+        routes: st === "up" ? matchRoutes(own, upCount <= 1) : [],
+        managed: true,
+      });
+    }
+  } else if (vpn.configured) {
+    const t0 = Array.isArray(vpn.tunnels) && vpn.tunnels[0];
+    const st = VPN_TXT[vpn.status] ? vpn.status : "down";
+    if (t0 && t0.dev) usedDevs.add(t0.dev);
+    out.push({
+      key: "p:legacy",
+      id: "",
+      name: (t0 && t0.name) || "OpenVPN",
+      enabled: vpn.enabled !== false,
+      status: st,
+      text: VPN_TXT[st],
+      dev: (t0 && t0.dev) || "",
+      addr: String((t0 && t0.addr) || vpn.addr || "").replace(/\/\d+$/, ""),
+      routes: st === "up" ? active : [],
+      managed: true,
+    });
+  }
+
+  if (Array.isArray(vpn.tunnels)) {
+    const totalTuns = vpn.tunnels.length;
+    vpn.tunnels.forEach((t, i) => {
+      if (!t || !t.dev || usedDevs.has(t.dev)) return;
+      const st = VPN_TXT[t.status] ? t.status : "up";
+      const own = Array.isArray(t.routes) ? t.routes : [];
+      out.push({
+        key: `t:${t.dev || i}`,
+        id: "",
+        name: t.name || t.dev,
+        enabled: true,
+        status: st,
+        text: VPN_TXT[st],
+        dev: t.dev,
+        addr: String(t.addr || "").replace(/\/\d+$/, ""),
+        routes: st === "up" ? matchRoutes(own, totalTuns <= 1 && out.length === 0) : [],
+        managed: false,
+      });
+    });
+  }
+
+  return out;
+}
+
+// 兼容旧测试与隧道视图：后端 vpn.tunnels 优先，未连接时回退单条汇总
 export function vpnTunnels(vpn) {
   vpn = vpn || {};
   const active = vpn.routes_active || [];

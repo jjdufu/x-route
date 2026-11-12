@@ -1,8 +1,6 @@
-// XRouter WebUI：只通过 kernelsu exec 调用 xr 命令行
-import "@material/web/tabs/tabs.js";
-import "@material/web/tabs/primary-tab.js";
-import { Tab, ANIMATE_INDICATOR } from "@material/web/tabs/internal/tab.js";
-import { EASING } from "@material/web/internal/motion/animation.js";
+// XRouter WebUI — Google Material Design 3 (M3 Navigation Bar + M3 Expressive Surfaces)
+import "@material/web/labs/navigationbar/navigation-bar.js";
+import "@material/web/labs/navigationtab/navigation-tab.js";
 import "@material/web/switch/switch.js";
 import "@material/web/button/filled-button.js";
 import "@material/web/button/filled-tonal-button.js";
@@ -15,16 +13,14 @@ import "@material/web/ripple/ripple.js";
 import "@material/web/focus/md-focus-ring.js";
 import "@material/web/select/outlined-select.js";
 import "@material/web/select/select-option.js";
+import "@material/web/textfield/outlined-text-field.js";
 import { exec, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
-import "./pcb.css";
-import { PCB_W, PCB_H, PCB_TRACES, PCB_VIAS, PCB_PINS } from "./pcb.js";
-import { attachFrame, updateFrame } from "./frame.js";
 import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
-  xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  trafficLine, hsSubnetCheck, vpnTunnels, splitLines,
+  VPN_TXT, labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
+  trafficLine, hsSubnetCheck, vpnProfiles, splitLines,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -32,44 +28,73 @@ const $ = (id) => document.getElementById(id);
 // 只在值真的变化时写 DOM：5 秒一次的状态刷新大多数时候什么都不改，不触发样式重算与重排
 const txt = (el, v) => { v = String(v); if (el.textContent !== v) el.textContent = v; };
 const cls = (el, v) => { if (el.className !== v) el.className = v; };
-const prop = (el, k, v) => {
-  if (!el) return;
-  if (el[k] !== v) el[k] = v;
-  if (k === "selected") {
-    const wrap = el.closest && el.closest(".neo-toggle-wrap");
-    if (wrap) wrap.classList.toggle("on", !!v);
-    const tog = el.parentElement && el.parentElement.querySelector && el.parentElement.querySelector(".neo-toggle");
-    if (tog) tog.classList.toggle("on", !!v);
-  }
-};
+const prop = (el, k, v) => { if (el && el[k] !== v) el[k] = v; };
 const hide = (el, v) => { if (el.hidden !== v) el.hidden = v; };
 const tog = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
+
+const REDUCE_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
+const DARK_MEDIA = window.matchMedia("(prefers-color-scheme: dark)");
+const prefersReduce = () => REDUCE_MOTION.matches;
+
+const MODE_DESC = {
+  global: "接管本机与热点全部流量",
+  bypass: "仅作局域网网关，不影响本机",
+};
+
 let status = null;
 let pending = null;      // start | stop
 let pendingAt = 0;       // 发出操作的时间，用于兜底超时
-let bgArmed = false;     // start-bg 已返回，之后读到的 bg.rc 才属于这次操作
 let ipv6Busy = false;
 let page = 0;
 let timer = null;
-let gone = false;         // 已请求立即卸载：停止一切轮询
-let vpnBusy = null;       // enable | disable
-let vpnBusyAt = 0;
-let vpnBusyFrom = "";
-let chipTok = 0;
-let chipRestPhase = null;
-let chipLock = null;      // heal | shutdown | fail
+let gone = false;        // 已请求立即卸载：停止一切轮询
+let vpnBusy = null;      // { id, kind, at }
+let themeMode = "auto";  // auto | light | dark
 
 export function icon(el) {
   el.textContent = ICONS[el.dataset.icon] || "";
 }
 export function setIcon(el, name) {
-  el.dataset.icon = name; icon(el);
+  if (el.dataset.icon === name && el.textContent) return;
+  el.dataset.icon = name;
+  icon(el);
 }
 
-// 卡顿根因：旧版管理器（SukiSU 2026-10 之前，含手机上的 v4.1.3）的 ksu.exec 是同步 JavascriptInterface：
-// 新建 root shell + 命令执行完才返回，期间 WebView 主线程（JS、样式、布局、输入）整个被堵住；
-// status-json 在手机上要 ~800ms，每 5 秒一次、每次点设置后再来一次，点击 / 切页 / 滑动自然一顿一顿。
-// ksu.spawn 只同步创建 shell（约 20ms），命令在后台线程跑、输出异步回调，所以优先用 spawn；没有时退回 exec。
+// ---- 明暗主题（默认跟随系统，支持顶栏一键切换） ----
+const THEME_KEY = "xr.theme";
+const THEME_CYCLE = ["auto", "light", "dark"];
+const THEME_NAMES = { auto: "跟随系统", light: "浅色模式", dark: "深色模式" };
+const THEME_ICONS = { auto: "brightness_auto", light: "light_mode", dark: "dark_mode" };
+
+function syncMetaTheme() {
+  const dark = themeMode === "dark" || (themeMode === "auto" && DARK_MEDIA.matches);
+  const meta = $("meta-theme");
+  if (meta) meta.content = dark ? "#111318" : "#f8fafd";
+}
+
+function applyTheme(mode, notify) {
+  themeMode = THEME_CYCLE.includes(mode) ? mode : "auto";
+  if (themeMode === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = themeMode;
+  syncMetaTheme();
+  const ic = $("i-theme");
+  if (ic) setIcon(ic, THEME_ICONS[themeMode]);
+  try { localStorage.setItem(THEME_KEY, themeMode); } catch { /* 忽略存储异常 */ }
+  if (notify) snack(`外观：${THEME_NAMES[themeMode]}`);
+}
+
+function loadTheme() {
+  let saved = "auto";
+  try { saved = localStorage.getItem(THEME_KEY) || "auto"; } catch { saved = "auto"; }
+  applyTheme(saved, false);
+}
+
+function cycleTheme() {
+  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(themeMode) + 1) % THEME_CYCLE.length];
+  applyTheme(next, true);
+}
+
+// ---- 命令通道：优先 ksu.spawn（后台线程异步回调，不堵 WebView 主线程），旧环境回退 exec ----
 function runSpawn(cmd) {
   return new Promise((resolve) => {
     const out = []; const err = []; let done = false;
@@ -79,7 +104,7 @@ function runSpawn(cmd) {
     c.stdout.on("data", (d) => out.push(d));
     c.stderr.on("data", (d) => err.push(d));
     c.on("exit", (code) => end(Number(code) || 0));
-    c.on("error", (e) => { if (!done) { err.push(String(e && e.message || e)); end((e && e.exitCode) || 1); } });
+    c.on("error", (e) => { if (!done) { err.push(String((e && e.message) || e)); end((e && e.exitCode) || 1); } });
   });
 }
 const canSpawn = () => !!(globalThis.ksu && typeof globalThis.ksu.spawn === "function");
@@ -118,10 +143,11 @@ function confirmDlg(title, text, okLabel, danger) {
   return dialogResult($("dlg-confirm"));
 }
 
-// ---- 自定义分段选择 ----
+// ---- M3 分段药丸与模式选择卡 ----
 function seg(box, opts, current, onPick, disabled) {
-  if (box.dataset.sig === JSON.stringify([current, disabled || []])) return;
-  box.dataset.sig = JSON.stringify([current, disabled || []]);
+  const sig = JSON.stringify([current, disabled || []]);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
   box.replaceChildren(...opts.map((o) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -134,12 +160,46 @@ function seg(box, opts, current, onPick, disabled) {
   }));
 }
 
+function renderModeCards(box, opts, current, onPick) {
+  if (box.dataset.sig === current) return;
+  box.dataset.sig = current;
+  box.replaceChildren(...opts.map((o) => {
+    const on = o.value === current;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.role = "radio";
+    card.setAttribute("aria-checked", String(on));
+    card.className = "mode-card" + (on ? " on" : "");
+    card.innerHTML = "<md-ripple></md-ripple>";
+
+    const top = document.createElement("div");
+    top.className = "mode-card-top";
+    const title = document.createElement("span");
+    title.className = "mode-card-title";
+    title.textContent = o.label;
+    const chk = document.createElement("md-icon");
+    chk.className = "mode-check filled";
+    setIcon(chk, "check_circle");
+    top.append(title, chk);
+
+    const desc = document.createElement("span");
+    desc.className = "mode-card-desc";
+    desc.textContent = MODE_DESC[o.value] || "";
+
+    card.append(top, desc);
+    card.onclick = () => { if (!on) onPick(o.value); };
+    return card;
+  }));
+}
+
 function fillSelect(sel, opts, value) {
   if (!sel.dataset.filled) {
     sel.replaceChildren(...opts.map((o) => {
       const it = document.createElement("md-select-option");
       it.value = o.value;
-      const h = document.createElement("div"); h.slot = "headline"; h.textContent = o.label;
+      const h = document.createElement("div");
+      h.slot = "headline";
+      h.textContent = o.label;
       it.append(h);
       return it;
     }));
@@ -150,10 +210,8 @@ function fillSelect(sel, opts, value) {
   sel.updateComplete.then(() => { if (sel.value !== value) sel.select(value); });
 }
 
-// 乐观更新：先改本地状态并立即重绘（开关、文字当帧生效），xr set 在后台跑；失败再回滚并提示。
-// 保存后不立刻拉 status-json，而是合并到稍后的一次刷新（连点几个开关也只刷新一次）
-// 本地改动覆盖层：保存中、以及保存完成前就已发出的 status-json 返回的旧值，都不能把开关「弹回去」
-const edits = new Map();   // key -> { v, doneAt }（doneAt=null 表示 xr set 还在跑）
+// ---- 乐观更新：先改本地状态并立即重绘，xr set 在后台跑；失败再回滚并提示 ----
+const edits = new Map();   // key -> { v, doneAt }
 function overlay(d) {
   if (!d || !d.config) return;
   for (const [k, e] of edits) d.config[k] = e.v;
@@ -177,428 +235,80 @@ async function setKey(key, value) {
   return true;
 }
 
-
-// ---- 芯片过渡（docs/chip-transition-flow.md）：只用 transform / opacity / stroke-dashoffset ----
-const CHIP_REDUCE = window.matchMedia("(prefers-reduced-motion: reduce)");
-const EASE_DECEL = (EASING && EASING.EMPHASIZED_DECELERATE) || "cubic-bezier(0.05, 0.7, 0.1, 1)";
-const EASE_ACCEL = (EASING && EASING.EMPHASIZED_ACCELERATE) || "cubic-bezier(0.3, 0, 0.8, 0.15)";
-const EASE_STD = (EASING && EASING.STANDARD) || "cubic-bezier(0.2, 0, 0, 1)";
-const prefersReduce = () => CHIP_REDUCE.matches;
-
-function finishTree(el) {
-  if (!el) return;
-  el.getAnimations({ subtree: true }).forEach((a) => { try { a.finish(); } catch { try { a.cancel(); } catch { /* 已结束 */ } } });
-}
-
-function fragRest(assembled) {
-  const svg = document.querySelector(".chip-svg");
-  if (!svg) return;
-  svg.querySelectorAll(".frag").forEach((g) => {
-    g.style.transform = assembled
-      ? "translate(0, 0) rotate(0deg)"
-      : `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)`;
-  });
-  const cracks = svg.querySelector(".crack-lines");
-  const gap = svg.querySelector(".crack-gap");
-  if (cracks) {
-    const len = cracks.getTotalLength ? cracks.getTotalLength() : 400;
-    cracks.style.strokeDasharray = String(len);
-    cracks.style.strokeDashoffset = assembled ? String(len) : "0";
-    cracks.style.opacity = assembled ? "0" : "1";
-  }
-  if (gap) gap.style.opacity = assembled ? "0" : "1";
-}
-
-function clearFlowInline(svg) {
-  if (!svg) return;
-  svg.querySelectorAll(".chip-flow").forEach((p) => {
-    p.style.animation = "";
-    p.style.strokeDasharray = "";
-    p.style.strokeDashoffset = "";
-  });
-  const intact = svg.querySelector(".chip-intact");
-  const cracked = svg.querySelector(".chip-cracked");
-  if (intact) { intact.style.opacity = ""; intact.style.visibility = ""; }
-  if (cracked) { cracked.style.opacity = ""; cracked.style.visibility = ""; }
-  const red = svg.querySelector(".traces-red");
-  if (red) red.style.opacity = "";
-}
-
-function chipJump(phase) {
-  chipTok += 1;
-  chipLock = null;
-  const wrap = $("power-wrap");
-  finishTree(wrap);
-  fragRest(phase === "running");
-  clearFlowInline(wrap && wrap.querySelector(".chip-svg"));
-  if (wrap) wrap.className = "power-wrap " + phase;
-  chipRestPhase = phase;
-}
-
-function waitAnims(anims) {
-  return Promise.all(anims.filter(Boolean).map((a) => a.finished.catch(() => {})));
-}
-
-async function chipToRunning(from, live) {
-  if (from !== "starting") { chipJump("running"); return; }
-  if (prefersReduce()) { chipJump("running"); return; }
-  const wrap = $("power-wrap");
-  wrap.className = "power-wrap running healing";
-  fragRest(false);
-  const svg = wrap.querySelector(".chip-svg");
-  const frags = [...svg.querySelectorAll(".frag")];
-  const cracks = svg.querySelector(".crack-lines");
-  const gap = svg.querySelector(".crack-gap");
-  const len = cracks && cracks.getTotalLength ? cracks.getTotalLength() : 400;
-  if (cracks) { cracks.style.strokeDasharray = String(len); cracks.style.strokeDashoffset = "0"; cracks.style.opacity = "1"; }
-  const anims = frags.map((g) => g.animate(
-    [
-      { transform: `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)` },
-      { transform: "translate(0, 0) rotate(0deg)" },
-    ],
-    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
-  ));
-  if (cracks) anims.push(cracks.animate(
-    [{ strokeDashoffset: 0, opacity: 1 }, { strokeDashoffset: len, opacity: 0 }],
-    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
-  ));
-  if (gap) anims.push(gap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }));
-  await waitAnims(anims);
-  if (!live()) return;
-  const intact = svg.querySelector(".chip-intact");
-  const cracked = svg.querySelector(".chip-cracked");
-  const flows = [...svg.querySelectorAll(".chip-flow")];
-  flows.forEach((p) => { p.style.animation = "none"; p.style.strokeDasharray = "100"; p.style.strokeDashoffset = "100"; });
-  intact.style.visibility = "visible";
-  const fade = [
-    intact.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE_STD, fill: "forwards" }),
-    cracked.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: EASE_STD, fill: "forwards" }),
-  ];
-  flows.forEach((p, i) => {
-    fade.push(p.animate(
-      [{ strokeDashoffset: 100 }, { strokeDashoffset: 0 }],
-      { duration: 400, delay: Math.min(280, (i % 12) * 24), easing: EASE_STD, fill: "forwards" }
-    ));
-  });
-  await waitAnims(fade);
-  if (!live()) return;
-  finishTree(wrap);
-  clearFlowInline(svg);
-  fragRest(true);
-  chipLock = null;
-  wrap.className = "power-wrap running";
-  chipRestPhase = "running";
-}
-
-async function chipToStopped(from, live) {
-  if (from !== "running" && from !== "stopping") { chipJump("stopped"); return; }
-  const wrap = $("power-wrap");
-  wrap.className = "power-wrap stopping shutdown";
-  if (prefersReduce()) { chipJump("stopped"); return; }
-  const svg = wrap.querySelector(".chip-svg");
-  const flows = [...svg.querySelectorAll(".chip-flow")];
-  const shrink = flows.map((p, i) => {
-    p.style.animation = "none";
-    p.style.strokeDasharray = "100";
-    return p.animate(
-      [{ strokeDashoffset: 0 }, { strokeDashoffset: 100 }],
-      { duration: 400, delay: Math.min(200, (11 - (i % 12)) * 16), easing: EASE_STD, fill: "forwards" }
-    );
-  });
-  await waitAnims(shrink);
-  if (!live()) return;
-  const intact = svg.querySelector(".chip-intact");
-  const cracked = svg.querySelector(".chip-cracked");
-  fragRest(true);
-  const cracks = svg.querySelector(".crack-lines");
-  const gap = svg.querySelector(".crack-gap");
-  const len = cracks && cracks.getTotalLength ? cracks.getTotalLength() : 400;
-  if (cracks) { cracks.style.strokeDasharray = String(len); cracks.style.strokeDashoffset = String(len); cracks.style.opacity = "0"; }
-  cracked.style.visibility = "visible";
-  const open = [
-    intact.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }),
-    cracked.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: EASE_DECEL, fill: "forwards" }),
-  ];
-  if (cracks) open.push(cracks.animate(
-    [{ strokeDashoffset: len, opacity: 0 }, { strokeDashoffset: 0, opacity: 1 }],
-    { duration: 500, easing: EASE_DECEL, fill: "forwards" }
-  ));
-  if (gap) open.push(gap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, easing: EASE_DECEL, fill: "forwards" }));
-  svg.querySelectorAll(".frag").forEach((g) => {
-    open.push(g.animate(
-      [
-        { transform: "translate(0, 0) rotate(0deg)" },
-        { transform: `translate(${g.dataset.dx || 0}px, ${g.dataset.dy || 0}px) rotate(${g.dataset.rot || 0}deg)` },
-      ],
-      { duration: 500, easing: EASE_DECEL, fill: "forwards" }
-    ));
-  });
-  await waitAnims(open);
-  if (!live()) return;
-  finishTree(wrap);
-  clearFlowInline(svg);
-  fragRest(false);
-  chipLock = null;
-  wrap.className = "power-wrap stopped";
-  chipRestPhase = "stopped";
-}
-
-async function chipToFailed(from, live) {
-  if (!live()) return;
-  const wrap = $("power-wrap");
-  wrap.className = "power-wrap failed";
-  fragRest(false);
-  if (prefersReduce()) { chipJump("failed"); return; }
-  const red = wrap.querySelector(".traces-red");
-  if (red && live()) {
-    const a = red.animate(
-      [{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }],
-      { duration: 360, easing: EASE_STD }
-    );
-    await a.finished.catch(() => {});
-  }
-  if (!live()) return;
-  chipLock = null;
-  chipRestPhase = "failed";
-}
-
-function chipFollow(phase) {
-  if (chipRestPhase === null) { chipJump(phase); return; }
-  if (phase === chipRestPhase && !chipLock) return;
-  const tok = ++chipTok;
-  const live = () => tok === chipTok;
-  if (prefersReduce()) { chipJump(phase); return; }
-  if (phase === "starting") { chipJump("starting"); return; }
-  if (phase === "running") {
-    if (chipRestPhase === "starting") chipLock = "heal";
-    chipToRunning(chipRestPhase, live);
-    return;
-  }
-  if (phase === "stopping" || phase === "stopped") {
-    if (chipLock === "shutdown") return;
-    if (chipRestPhase === "stopped" && phase === "stopped") return;
-    chipLock = "shutdown";
-    chipToStopped(chipRestPhase, live);
-    return;
-  }
-  if (phase === "failed") {
-    chipLock = "fail";
-    chipToFailed(chipRestPhase, live);
-    return;
-  }
-  chipJump(phase);
-}
-
-
-// ---- 舞台走线修复：由芯片向外 stroke-dashoffset 红→绿；启动中电荷往复，到达 running 才走完 ----
-const NS = "http://www.w3.org/2000/svg";
-let repairP = 0, repairRaf = 0, repairTok = 0;
-function svgEl(name, attrs) {
-  const n = document.createElementNS(NS, name);
-  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, String(v));
-  return n;
-}
-function mountPcb() {
-  const svg = $("pcb-svg");
-  if (!svg || svg.childNodes.length) return;
-  svg.setAttribute("viewBox", `0 0 ${PCB_W} ${PCB_H}`);
-  const gPins = svgEl("g", { class: "pcb-pins" });
-  for (const p of PCB_PINS) gPins.append(svgEl("rect", { class: "pcb-pin", x: p.x, y: p.y, width: p.w, height: p.h, rx: 1 }));
-  const gRed = svgEl("g", { class: "pcb-red" });
-  const gGlow = svgEl("g", { class: "pcb-glow" });
-  const gGreen = svgEl("g", { class: "pcb-green" });
-  const gPulse = svgEl("g", { class: "pcb-pulse" });
-  const gVias = svgEl("g", { class: "pcb-vias" });
-  PCB_TRACES.forEach((t, i) => {
-    const delay = t.delay != null ? t.delay : +((i * 0.017) % 0.36).toFixed(3);
-    gRed.append(svgEl("path", { class: "tr-r", d: t.d }));
-    const glow = svgEl("path", { class: "tr-glow", d: t.d });
-    const gr = svgEl("path", { class: "tr-g", d: t.d });
-    glow.dataset.delay = gr.dataset.delay = String(delay);
-    gGlow.append(glow); gGreen.append(gr);
-    if (t.kind === "pin" || t.kind === "branch") {
-      gPulse.append(svgEl("path", { class: "tr-pulse", d: t.d, style: `--t:${((i * 0.13) % 1.6).toFixed(2)}s` }));
-    }
-  });
-  PCB_VIAS.forEach((v, i) => {
-    const delay = PCB_TRACES[Math.min(i, PCB_TRACES.length - 1)]?.delay ?? 0;
-    const c = svgEl("circle", { class: "pcb-via", cx: v.x, cy: v.y, r: 2.3 });
-    c.dataset.delay = String(delay);
-    gVias.append(c);
-  });
-  svg.append(gPins, gRed, gGlow, gGreen, gPulse, gVias);
-  svg.querySelectorAll(".tr-g, .tr-glow, .tr-r, .tr-pulse").forEach((path) => {
-    const len = path.getTotalLength();
-    path.dataset.len = String(len);
-    if (path.classList.contains("tr-r")) {
-      path.style.strokeDasharray = `${len * 0.28} 7 ${len}`;
-      path.style.strokeDashoffset = "0";
-    } else if (path.classList.contains("tr-pulse")) {
-      path.style.strokeDasharray = "10 46";
-    } else {
-      path.style.strokeDasharray = String(len);
-      path.style.strokeDashoffset = String(len);
-    }
-  });
-  applyRepair(0);
-}
-function frontLocal(p, delay) {
-  if (p <= delay) return 0;
-  const span = Math.max(0.18, 1 - delay);
-  return Math.min(1, (p - delay) / span);
-}
-function applyRepair(p) {
-  repairP = Math.max(0, Math.min(1, p));
-  const svg = $("pcb-svg");
-  if (!svg) return;
-  svg.querySelectorAll(".tr-g, .tr-glow").forEach((el) => {
-    const len = +el.dataset.len || 0;
-    const local = frontLocal(repairP, +el.dataset.delay || 0);
-    el.style.strokeDashoffset = String(len * (1 - local));
-  });
-  svg.querySelectorAll(".tr-r").forEach((el) => { el.style.opacity = String(0.7 * (1 - repairP)); });
-  svg.querySelectorAll(".pcb-via").forEach((el) => {
-    const local = frontLocal(repairP, +el.dataset.delay || 0);
-    el.style.opacity = String(local >= 0.97 ? 1 : 0.12 + local * 0.2);
-    el.classList.toggle("lit", local >= 0.97);
-  });
-  const charging = repairP > 0.02 && repairP < 0.995;
-  const flowing = repairP >= 0.995;
-  svg.classList.toggle("charging", charging);
-  svg.classList.toggle("flowing", flowing);
-  if (flowing) startComets(); else stopComets();
-  if (repairP <= 0.02) startSparks(); else stopSparks();
-  if ($("power-wrap") && !chipLock) {
-    if (repairP <= 0.1) { fragRest(false); $("power-wrap").classList.remove("healed"); }
-    else if (repairP >= 0.42) { fragRest(true); $("power-wrap").classList.add("healed"); }
-  }
-}
-let cometTimer = 0, sparkTimer = 0;
-function stopComets() { clearTimeout(cometTimer); cometTimer = 0; }
-function stopSparks() { clearTimeout(sparkTimer); sparkTimer = 0; }
-function startComets() {
-  if (cometTimer || prefersReduce()) return;
-  const tick = () => {
-    cometTimer = 0;
-    const svg = $("pcb-svg");
-    if (!svg || !svg.classList.contains("flowing") || document.hidden) return;
-    const pulses = [...svg.querySelectorAll(".tr-pulse")].filter((el) => !el.dataset.busy);
-    const n = Math.min(pulses.length, 1 + (Math.random() < 0.35 ? 1 : 0));
-    for (let i = 0; i < n; i++) {
-      const el = pulses[Math.floor(Math.random() * pulses.length)];
-      if (!el || el.dataset.busy) continue;
-      const len = +el.dataset.len || 80;
-      el.dataset.busy = "1";
-      el.style.opacity = "1";
-      el.style.strokeDasharray = `11 ${Math.max(80, len)}`;
-      const dur = 720 + Math.random() * 680;
-      const anim = el.animate(
-        [{ strokeDashoffset: "0" }, { strokeDashoffset: String(-len) }],
-        { duration: dur, easing: "linear" }
-      );
-      anim.onfinish = () => { el.style.opacity = "0"; delete el.dataset.busy; };
-    }
-    // 过孔轻微闪烁
-    svg.querySelectorAll(".pcb-via.lit").forEach((v) => {
-      if (Math.random() < 0.18) v.animate([{ opacity: 1 }, { opacity: 0.55 }, { opacity: 1 }], { duration: 320 });
-    });
-    cometTimer = setTimeout(tick, 480 + Math.random() * 820);
-  };
-  cometTimer = setTimeout(tick, 360);
-}
-function startSparks() {
-  if (sparkTimer || prefersReduce()) return;
-  const tick = () => {
-    sparkTimer = 0;
-    const svg = $("pcb-svg");
-    if (!svg || repairP > 0.05 || document.hidden) return;
-    const reds = [...svg.querySelectorAll(".tr-r")];
-    if (reds.length) {
-      const el = reds[Math.floor(Math.random() * reds.length)];
-      el.animate([{ opacity: 0.7 }, { opacity: 1 }, { opacity: 0.7 }], { duration: 180 });
-    }
-    sparkTimer = setTimeout(tick, 1800 + Math.random() * 2200);
-  };
-  sparkTimer = setTimeout(tick, 1200);
-}
-
-function repairCap(phase, step) {
-  if (phase === "running") return 1;
-  if (phase === "starting") return (step || 0) >= 1 ? 0.84 : 0.58;
-  return 0;
-}
-function animateRepair(target, ms) {
-  const tok = ++repairTok;
-  cancelAnimationFrame(repairRaf);
-  if (prefersReduce() || ms <= 0) { applyRepair(target); return; }
-  const from = repairP, t0 = performance.now();
-  const step = (now) => {
-    if (tok !== repairTok) return;
-    const k = Math.min(1, (now - t0) / ms);
-    applyRepair(from + (target - from) * k);
-    if (k < 1) repairRaf = requestAnimationFrame(step);
-  };
-  repairRaf = requestAnimationFrame(step);
-}
-function boardFollow(v) {
-  const cap = repairCap(v.phase, v.step);
-  if (prefersReduce()) { applyRepair(cap); return; }
-  if (v.phase === "starting") {
-    animateRepair(cap, Math.max(500, Math.abs(cap - repairP) * 4200));
-    return;
-  }
-  if (v.phase === "running") { animateRepair(1, Math.max(400, (1 - repairP) * 900)); return; }
-  if (v.phase === "stopping") { animateRepair(0, 2000); return; }
-  animateRepair(0, Math.max(240, repairP * 600));
-}
-function renderStageHud(v) {
-  const ph = $("stage-hud-ph"), sub = $("stage-hud-sub"), hud = $("stage-hud");
-  if (!ph || !sub) return;
-  const map = {
-    stopped: ["◇ OFFLINE", "SERVICE STOPPED"],
-    starting: ["◇ BOOTING...", "INITIALIZING"],
-    running: ["◇ RUNNING", "SERVICE ONLINE"],
-    stopping: ["◇ STOPPING...", "SHUTTING DOWN"],
-    failed: ["◇ FAULT", ""],
-  };
-  const [a, b] = map[v.phase] || map.stopped;
-  txt(ph, a); txt(sub, v.phase === "failed" ? (v.text || "FAULT") : b);
-  hide(hud, false);
-}
-function fmtClock(s) {
-  s = Math.max(0, Math.floor(Number(s) || 0));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-  return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
-}
-
 // ---- 渲染 ----
 function renderPower(d) {
   const v = vmView(d, pending);
-  const wrapCls = chipLock === "heal" ? "power-wrap running healing"
-    : chipLock === "shutdown" ? "power-wrap stopping shutdown"
-    : "power-wrap " + v.phase;
-  cls($("power-wrap"), wrapCls);
-  cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红线裂纹，启动中由内向外修复，运行中绿流
-  updateFrame($("stage"), { kind: "stage", tone: (v.phase === "running" || v.phase === "starting") ? "green" : "cyan" });
-  cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
-  prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped) || !!chipLock);
+  const cfg = d.config || {};
   const tripped = d.vm && d.vm.tripped !== null && d.vm.tripped !== undefined;
-  const err = $("power-err");
-  // 失败细节叠在舞台内，不占文档流；整机复位已有 #trip 卡片，这里不再重复
-  if (v.phase === "failed" && v.text && !tripped) { txt(err, v.text); hide(err, false); }
-  else { hide(err, true); txt(err, ""); }
-  renderStageHud(v);
-  chipFollow(v.phase);
-  boardFollow(v);
-  cls($("chip"), "chip vis-hide " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
+
+  cls($("hero-card"), "hero-card " + v.phase);
+
+  const chipCls = v.phase === "running" ? "chip chip-ok"
+    : (v.phase === "starting" || v.phase === "stopping") ? "chip chip-busy"
+    : v.phase === "failed" ? "chip chip-bad" : "chip";
+  cls($("chip"), chipCls);
   txt($("chip-text"), v.chip);
-  tog(document.querySelector(".shell"), "nostate", false);   // 拿到状态（或上次缓存）才显示按钮与背景，不先闪「已停止」
+
+  const heroIcon = $("hero-icon");
+  const heroIconName = v.phase === "running" ? "check_circle"
+    : (v.phase === "starting" || v.phase === "stopping") ? "bolt"
+    : v.phase === "failed" ? "error" : "power_settings_new";
+  setIcon(heroIcon, heroIconName);
+  tog(heroIcon, "filled", v.phase !== "stopped");
+
+  const modeLabel = labelOf(MODE_OPTS, cfg.XR_MODE || "global") || "全局接管";
+  const gwHost = cfg.XR_NET_PREFIX ? `${cfg.XR_NET_PREFIX}.254` : "";
+  if (v.phase === "running") {
+    txt($("power-title"), "运行中");
+    txt($("power-sub"), `${modeLabel}${gwHost ? ` · 网关 ${gwHost}` : " · OpenWrt 路由已就绪"}`);
+  } else if (v.phase === "starting") {
+    txt($("power-title"), v.text);
+    txt($("power-sub"), (v.step || 0) >= 1 ? "正在配置策略路由与网关转发…" : "正在引导 OpenWrt 路由系统…");
+  } else if (v.phase === "stopping") {
+    txt($("power-title"), "正在停止");
+    txt($("power-sub"), "正在安全停止服务并恢复本机网络…");
+  } else if (v.phase === "failed") {
+    txt($("power-title"), "异常");
+    txt($("power-sub"), tripped ? "检测到连续异常复位，请先确认上方提示" : "路由服务未能就绪，可检查配置后重试");
+  } else {
+    txt($("power-title"), "已停止");
+    txt($("power-sub"), "点击下方按钮启动 OpenWrt 路由服务");
+  }
+
+  const err = $("power-err");
+  if (v.phase === "failed" && v.text && !tripped) {
+    txt(err, v.text);
+    hide(err, false);
+  } else {
+    hide(err, true);
+    txt(err, "");
+  }
+
+  const inTransition = v.phase === "starting" || v.phase === "stopping";
+  hide($("hero-progress"), !inTransition);
+  if (inTransition) {
+    const curStep = v.phase === "stopping" ? -1 : (v.step ?? 0);
+    $("boot-steps").querySelectorAll(".step-pill").forEach((el) => {
+      const s = Number(el.dataset.step);
+      tog(el, "on", s === curStep);
+      tog(el, "done", s < curStep);
+    });
+  }
+
+  prop($("power"), "disabled", inTransition || !!tripped);
+  setIcon($("power-icon"), v.phase === "running" ? "stop" : v.phase === "failed" ? "refresh" : "play_arrow");
+  txt($("power-btn-text"),
+    v.phase === "running" ? "停止服务"
+      : v.phase === "starting" ? "正在启动…"
+      : v.phase === "stopping" ? "正在停止…"
+      : v.phase === "failed" ? "重新启动" : "启动服务");
+  prop($("btn-luci"), "disabled", v.phase !== "running");
+
+  tog(document.querySelector(".shell"), "nostate", false);
 }
 
-// ---- 组网：隧道列表。每条隧道一张卡片（模板克隆一次，之后只改文字）；只有一条时与原单卡片布局相同：
-// 标题 OpenVPN + 连接状态 + 路由网段，导入按钮在卡片底部。多条时每张卡片标题为隧道名、状态缩成标题右侧的小标记，
-// 显示隧道地址与各自同步的网段；导入按钮单独放在列表下方 ----
-const vpnCards = new Map();   // key -> 卡片元素
+// ---- 组网：多配置卡片列表渲染（导入即展示，点击对应配置直接启动 / 停止 / 删除） ----
+const vpnCards = new Map();
 function vpnCard(key) {
   let c = vpnCards.get(key);
   if (!c) {
@@ -608,114 +318,182 @@ function vpnCard(key) {
   }
   return c;
 }
+
 function renderVpn(vpn) {
-  const list = vpnTunnels(vpn);
-  const multi = list.length > 1;
-  const box = $("vpn-list");
-  const cards = list.map((t) => {
-    const c = vpnCard(t.key);
-    tog(c, "multi", multi);
-    txt(c.querySelector(".vpn-name"), multi ? t.name : "OpenVPN");
-    txt(c.querySelector(".vpn-st"), t.text);
-    cls(c.querySelector(".vpn-st"), "val vpn-st " + t.status);
-    cls(c.querySelector(".vpn-badge"), "vpn-badge " + t.status);
-    txt(c.querySelector(".vpn-badge-text"), t.text);
-    txt(c.querySelector(".vpn-addr"), t.addr || "—");
-    txt(c.querySelector(".vpn-sync"), multi && t.routes.length ? "自动同步" : "");
-    txt(c.querySelector(".vpn-routes"), t.routes.length ? t.routes.join("\n") : "无");
-    return c;
-  });
-  const acts = $("vpn-actions");
-  if (!multi) cards[0].append(acts);
-  const want = multi ? [...cards, acts] : cards;
-  if (box.children.length !== want.length || want.some((c, i) => box.children[i] !== c)) box.replaceChildren(...want);
-  for (const k of vpnCards.keys()) if (!list.some((t) => t.key === k)) vpnCards.delete(k);
-  if (vpnBusy && Date.now() - vpnBusyAt > 20000) {
-    snack(vpnBusy === "enable" ? "启动超时" : "停止超时", true);
+  const vmOn = !!(status && status.vm && status.vm.running);
+  const list = vpnProfiles(vpn);
+
+  if (vpnBusy && Date.now() - vpnBusy.at > 20000) {
+    snack(vpnBusy.kind === "enable" ? "启动超时" : vpnBusy.kind === "disable" ? "停止超时" : "操作超时", true);
     vpnBusy = null;
   }
-  if (vpnBusy && vpn) {
-    const stNow = vpn.status || "down";
-    if (vpnBusy === "enable" && stNow !== "down") vpnBusy = null;
-    if (vpnBusy === "disable" && stNow === "down") vpnBusy = null;
+  if (vpnBusy) {
+    const target = list.find((p) => p.id === vpnBusy.id);
+    if (vpnBusy.kind === "delete" && !target) vpnBusy = null;
+    else if (vpnBusy.kind === "enable" && target && (target.status !== "down" || target.enabled)) vpnBusy = null;
+    else if (vpnBusy.kind === "disable" && (!target || (target.status === "down" && !target.enabled))) vpnBusy = null;
   }
-  const configured = !!(vpn && vpn.configured);
-  const vmOn = !!(status && status.vm && status.vm.running);
-  const st = (vpn && vpn.status) || "down";
-  $("btn-vpn-start").disabled = !(configured && vmOn && !vpnBusy && st === "down");
-  $("btn-vpn-stop").disabled = !(configured && vmOn && !vpnBusy && (st === "up" || st === "connecting"));
+
+  hide($("vpn-empty"), list.length > 0);
+  const box = $("vpn-list");
+  hide(box, list.length === 0);
+
+  const cards = list.map((p) => {
+    const c = vpnCard(p.key);
+    const rowBusy = !!(vpnBusy && vpnBusy.id === p.id);
+    const visSt = rowBusy && vpnBusy.kind === "enable" ? "connecting" : p.status;
+    const visTxt = rowBusy
+      ? (vpnBusy.kind === "enable" ? "正在启动" : vpnBusy.kind === "disable" ? "正在停止" : "正在删除")
+      : p.text;
+    const activeOrEnabled = p.status === "up" || p.status === "connecting" || (vmOn && p.enabled);
+
+    cls(c, "vpn-card " + visSt);
+    tog(c.querySelector(".vpn-ico md-icon"), "filled", visSt === "up" || visSt === "connecting");
+    txt(c.querySelector(".vpn-name"), p.name);
+    txt(c.querySelector(".vpn-dev-sub"),
+      !p.managed ? `外部隧道${p.dev ? ` · ${p.dev}` : ""}`
+        : rowBusy ? `${visTxt}…`
+        : p.dev ? `接口 ${p.dev}`
+        : !vmOn ? "需先在「状态」页启动路由服务"
+        : p.enabled && p.status === "down" ? "已启用 · 等待重连"
+        : "已就绪 · 点击启动即可连接");
+
+    cls(c.querySelector(".vpn-badge"), "vpn-badge " + visSt);
+    txt(c.querySelector(".vpn-badge-text"), visTxt);
+    cls(c.querySelector(".vpn-st"), "val vpn-st " + visSt);
+    txt(c.querySelector(".vpn-st"), visTxt);
+
+    hide(c.querySelector(".vpn-addr-row"), !p.addr && p.status !== "up");
+    txt(c.querySelector(".vpn-addr"), p.addr || "—");
+    txt(c.querySelector(".vpn-sync"), p.routes.length ? "已自动同步至本机" : "");
+    txt(c.querySelector(".vpn-routes"), p.routes.length ? p.routes.join("\n") : "无");
+
+    const actBox = c.querySelector(".vpn-card-actions");
+    hide(actBox, !p.managed);
+    if (p.managed) {
+      const btnStart = c.querySelector(".btn-vpn-start");
+      const btnStop = c.querySelector(".btn-vpn-stop");
+      const btnDel = c.querySelector(".btn-vpn-del");
+      hide(btnStart, activeOrEnabled);
+      hide(btnStop, !activeOrEnabled);
+      prop(btnStart, "disabled", !vmOn || !!vpnBusy);
+      prop(btnStop, "disabled", !vmOn || !!vpnBusy);
+      hide(btnDel, !p.id);
+      prop(btnDel, "disabled", !!vpnBusy);
+      btnStart.onclick = () => actVpn("enable", p.id, p.name);
+      btnStop.onclick = () => actVpn("disable", p.id, p.name);
+      btnDel.onclick = () => delVpn(p.id, p.name);
+    }
+    return c;
+  });
+
+  if (box.children.length !== cards.length || cards.some((c, i) => box.children[i] !== c)) {
+    box.replaceChildren(...cards);
+  }
+  for (const k of vpnCards.keys()) if (!list.some((t) => t.key === k)) vpnCards.delete(k);
+
+  const upList = list.filter((p) => p.status === "up");
+  const connList = list.filter((p) => p.status === "connecting");
+  const st = upList.length ? "up" : connList.length ? "connecting" : ((vpn && vpn.status) || "down");
+  const configured = list.length > 0 || !!(vpn && vpn.configured);
+  const activeCount = Array.isArray(vpn && vpn.routes_active) ? vpn.routes_active.length : 0;
+
+  txt($("vpn-summary"),
+    !configured ? "导入配置文件后，点击对应配置即可运行或停止"
+      : !vmOn ? `已导入 ${list.length} 份配置 · 请先在「状态」页启动路由服务`
+      : upList.length ? `已连接 ${upList.length}/${list.length} 份配置${activeCount ? ` · 已同步 ${activeCount} 个网段` : ""}`
+      : connList.length ? `正在连接「${connList[0].name}」…`
+      : `已导入 ${list.length} 份配置 · 点击对应配置上的「启动」即可连接`);
+
+  // 底部导航栏与首页磁贴同步显示组网状态
+  prop($("nav-vpn"), "showBadge", st === "up");
+  txt($("v-home-vpn"), !configured ? "未导入" : upList.length === 1 ? upList[0].name : upList.length > 1 ? `${upList.length} 条已连接` : (VPN_TXT[st] || "未连接"));
+  txt($("v-home-routes"), activeCount ? `已同步 ${activeCount} 个网段` : configured ? `共 ${list.length} 份配置` : "点击导入配置");
 }
 
 function render(d) {
   status = d;
-  const vm = d.vm || {}; const net = d.net || {}; const vpn = d.vpn || {}; const sh = d.share || {}; const cfg = d.config || {};
+  const vm = d.vm || {};
+  const net = d.net || {};
+  const vpn = d.vpn || {};
+  const sh = d.share || {};
+  const cfg = d.config || {};
+
   if (pending === "start" && (vm.running || vm.error)) pending = vm.running ? null : pending;
   if (pending === "stop" && !vm.running) pending = null;
-  // 兜底：后台操作迟迟没有体现在状态里（比如守护进程没回应），不让按钮一直转圈
   if (pending && Date.now() - pendingAt > (pending === "start" ? 120000 : 45000)) {
     snack(pending === "start" ? "启动超时" : "停止超时", true);
     pending = null;
   }
+
   renderPower(d);
+
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
   hide($("trip"), !tripped);
 
   const as = $("sw-autostart");
-  prop(as, "selected", cfg.AUTOSTART === "1");
-  prop(as, "disabled", tripped && cfg.AUTOSTART !== "1");
+  const asOn = cfg.AUTOSTART === "1";
+  prop(as, "selected", asOn);
+  prop(as, "disabled", tripped && !asOn);
   tog($("row-autostart"), "disabled", as.disabled);
+  txt($("v-as-st"), asOn ? "已开启 · 开机自动拉起路由服务" : "已关闭 · 需手动启动路由服务");
 
-  // 首页之外的页面不可见（content-visibility: hidden），其中的文字也照样只在变化时写
+  // 首页双列指标磁贴
   txt($("v-uptime"), vm.running ? fmtUptime(vm.uptime_s) : "—");
+  const v = vmView(d, pending);
+  const runMap = { running: "运行正常", starting: "正在启动", stopping: "正在停止", failed: "服务异常" };
+  txt($("v-run-st"), runMap[v.phase] || "已停止");
+
   const kind = vm.running ? upKind(net.up_if) : "—";
   txt($("v-up"), kind);
+  txt($("v-up-sub"), vm.running ? (net.up_if ? `接口 ${net.up_if}` : "未检测到上游") : "服务未运行");
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
-  if ($("i-up").dataset.icon !== ic) setIcon($("i-up"), ic);
-  const v = vmView(d, pending);
-  const runMap = { running: ["运行中", "ok"], starting: ["启动中", "busy"], stopping: ["停止中", "busy"], failed: ["异常", "bad"] };
-  const [runL, runC] = runMap[v.phase] || ["已停止", "off"];
-  txt($("v-run-st"), runL);
-  if ($("dot-run")) cls($("dot-run"), "neo-dot " + runC);
-  const asOn = cfg.AUTOSTART === "1";
-  txt($("v-as-st"), asOn ? "已开启" : "已关闭");
-  if ($("dot-as")) cls($("dot-as"), "neo-dot " + (asOn ? "ok" : "off"));
-  txt($("hud-left"), "UPSTREAM: " + (kind === "—" ? "—" : kind.toUpperCase()));
-  txt($("hud-up"), "Uptime: " + (vm.running ? fmtClock(vm.uptime_s) : "00:00:00"));
+  setIcon($("i-up"), ic);
+
+  const curMode = cfg.XR_MODE || "global";
+  txt($("v-home-mode"), labelOf(MODE_OPTS, curMode) || "全局接管");
+  txt($("v-home-hs"), net.hotspot ? `DHCP 已接管 ${net.hotspot}` : cfg.XR_HOTSPOT_BRIDGE !== "0" ? "热点自动接管已开启" : "热点接管已关闭");
 
   renderVpn(vpn);
 
-  seg($("seg-mode"), MODE_OPTS, cfg.XR_MODE || "global", pickMode);
+  // 网络页
+  renderModeCards($("seg-mode"), MODE_OPTS, curMode, pickMode);
   fillSelect($("sel-access"), ACCESS_OPTS, cfg.XR_EXPOSE || "lan");
   const v6 = $("sw-ipv6");
   if (!ipv6Busy) prop(v6, "selected", d.ipv6 === true);
   prop(v6, "disabled", ipv6Busy || d.ipv6 === null || d.ipv6 === undefined);
   tog($("row-ipv6"), "disabled", v6.disabled);
 
-  prop($("sw-share"), "selected", cfg.VM_SHARE === "1");
-  seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (v) => setKey("VM_SHARE_MODE", v), sh.rw_supported ? [] : ["rw"]);
-  txt($("v-share-path"), displayPath(cfg.VM_SHARE_PATH));
-
-  seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (v) => setKey("XR_NOTIFY_TRAFFIC", v));
-  prop($("sw-debug"), "selected", cfg.XR_DEBUG === "1");
-  txt($("btn-export-text"), cfg.XR_DEBUG === "1" ? "诊断导出" : "日志导出");
   prop($("sw-hotspot"), "selected", cfg.XR_HOTSPOT_BRIDGE !== "0");
-  txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "");
+  txt($("v-hotspot"), net.hotspot ? `已接管 ${net.hotspot}` : "由路由系统接管手机热点地址分配");
   txt($("v-hs-net"), cfg.XR_HOTSPOT_SUBNET || "跟随安卓");
   txt($("v-hs-net-cur"), net.hotspot && net.hotspot_net ? `当前 ${net.hotspot_net}` : "");
   tog($("row-hs-net"), "disabled", cfg.XR_HOTSPOT_BRIDGE === "0");
-  fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
+
+  seg($("seg-notify"), NOTIFY_OPTS, cfg.XR_NOTIFY_TRAFFIC || "total", (val) => setKey("XR_NOTIFY_TRAFFIC", val));
+
+  // 系统页
+  prop($("sw-share"), "selected", cfg.VM_SHARE === "1");
+  seg($("seg-share"), SHARE_OPTS, cfg.VM_SHARE_MODE || "ro", (val) => setKey("VM_SHARE_MODE", val), sh.rw_supported ? [] : ["rw"]);
+  txt($("v-share-path"), displayPath(cfg.VM_SHARE_PATH));
 
   fillSelect($("sel-cpu"), CPU_OPTS, cfg.VM_CPUS || "2");
   fillSelect($("sel-mem"), MEM_OPTS, cfg.VM_MEM_MB || "768");
   txt($("v-disk"), fmtSize(cfg.VM_DISK_SIZE_MB));
-  // 运行中系统盘灰显（不设 disabled：点了要能提示「停止后可修改」）
-  txt($("v-disk-sub"), vm.running ? "停止后可修改" : "");
+  txt($("v-disk-sub"), vm.running ? "停止后可修改" : "离线状态下可扩容或重置");
   tog($("row-disk"), "soft-off", !!vm.running);
   tog($("disk-actions"), "soft-off", !!vm.running);
+
+  prop($("sw-debug"), "selected", cfg.XR_DEBUG === "1");
+  txt($("btn-export-text"), cfg.XR_DEBUG === "1" ? "诊断导出" : "日志导出");
+  fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
 }
 
-// 状态刷新单飞：同一时刻最多一个 status-json 在途，期间再要求刷新只记一次，结束后补一次
-let refreshing = null; let refreshAgain = false; let soonTimer = 0;
+// ---- 状态刷新单飞与本地缓存 ----
+let refreshing = null;
+let refreshAgain = false;
+let soonTimer = 0;
+
 function refresh() {
   if (gone) return Promise.resolve();
   if (refreshing) { refreshAgain = true; return refreshing; }
@@ -739,14 +517,12 @@ async function refreshOnce() {
     txt($("chip-text"), "异常");
     return;
   }
-  // 保存完成之后才发出的刷新是权威结果，撤掉对应覆盖；更早的刷新仍套用本地值
   for (const [k, e] of edits) if (e.doneAt !== null && t0 > e.doneAt) edits.delete(k);
   overlay(d);
   render(d);
   saveCache(r.stdout);
 }
 
-// 上次的状态缓存：重新打开模块页面时先按它画按钮与背景，等 status-json 返回再更正（不先闪「已停止」）
 const CACHE_KEY = "xr.status";
 function saveCache(raw) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), raw })); } catch { /* 存储不可用 */ }
@@ -765,15 +541,18 @@ function schedule() {
   const v = status ? vmView(status, pending) : { phase: "stopped" };
   const fast = v.phase === "stopping" || v.phase === "starting" || !!vpnBusy;
   timer = setTimeout(async () => {
-    if (!document.hidden) { await refresh(); if (page === 2) loadTraffic(); }
+    if (!document.hidden) {
+      await refresh();
+      if (page === 1) loadTraffic();
+    }
     schedule();
   }, fast ? 1500 : 5000);
 }
 
 // ---- 操作 ----
-// 点击只切换界面状态并投递后台命令，xr start/stop 在脱离会话的子进程里跑，按钮从不等它
 function act(kind) {
-  pending = kind; pendingAt = Date.now(); bgArmed = false;
+  pending = kind;
+  pendingAt = Date.now();
   renderPower(status || {});
   schedule();
   (kind === "start" ? xr("start-bg") : xr("stop-bg")).then((r) => {
@@ -782,9 +561,7 @@ function act(kind) {
       pending = null;
       snack(kind === "start" ? "启动失败" : "停止失败", true);
       refresh().then(schedule);
-      return;
     }
-    bgArmed = true;
   });
 }
 
@@ -808,10 +585,13 @@ async function pickMode(v) {
 async function toggleIpv6() {
   const sw = $("sw-ipv6");
   const want = sw.selected ? "on" : "off";
-  ipv6Busy = true; sw.disabled = true; $("row-ipv6").classList.add("busy");
+  ipv6Busy = true;
+  sw.disabled = true;
+  $("row-ipv6").classList.add("busy");
   const r = await xr("ipv6", want);
   const res = lastJson(r.stdout);
-  ipv6Busy = false; $("row-ipv6").classList.remove("busy");
+  ipv6Busy = false;
+  $("row-ipv6").classList.remove("busy");
   if (!res || !res.ok) snack((res && res.error) || "切换失败", true);
   await refresh();
 }
@@ -819,29 +599,47 @@ async function toggleIpv6() {
 async function importVpn() {
   const path = await openBrowser({ mode: "ovpn", xr });
   if (!path) return;
-  const r = await xr("vpn-import", path);
+  const r = await xr("vpn-import", path, "0");
   const res = lastJson(r.stdout);
-  if (res && res.ok) snack("已导入"); else snack((res && res.error) || "导入失败", true);
+  if (res && res.ok) snack(res.name ? `已导入「${res.name}」` : "已导入配置");
+  else snack((res && res.error) || "导入失败", true);
   await refresh();
 }
 
-async function actVpn(kind) {
+async function actVpn(kind, id, name) {
   if (vpnBusy) return;
-  vpnBusy = kind;
-  vpnBusyAt = Date.now();
-  vpnBusyFrom = (status && status.vpn && status.vpn.status) || "down";
+  vpnBusy = { id: id || "", kind, at: Date.now() };
   renderVpn((status && status.vpn) || {});
-  const r = kind === "enable" ? await xr("vpn-enable") : await xr("vpn-disable");
+  const r = kind === "enable"
+    ? (id ? await xr("vpn-enable", id) : await xr("vpn-enable"))
+    : (id ? await xr("vpn-disable", id) : await xr("vpn-disable"));
   const res = lastJson(r.stdout);
+  vpnBusy = null;
   if (!res || !res.ok) {
-    vpnBusy = null;
     snack((res && res.error) || (kind === "enable" ? "启动失败" : "停止失败"), true);
     await refresh();
     return;
   }
-  snack(kind === "enable" ? "已启动" : "已停止");
+  snack(kind === "enable" ? `已启动「${name || "配置"}」` : `已停止「${name || "配置"}」`);
   await refresh();
   schedule();
+}
+
+async function delVpn(id, name) {
+  if (!id || vpnBusy) return;
+  if (!await confirmDlg(`删除配置 ${name}`, "删除后若该隧道正在运行将自动断开连接", "删除", true)) return;
+  vpnBusy = { id, kind: "delete", at: Date.now() };
+  renderVpn((status && status.vpn) || {});
+  const r = await xr("vpn-delete", id);
+  const res = lastJson(r.stdout);
+  vpnBusy = null;
+  if (!res || !res.ok) {
+    snack((res && res.error) || "删除失败", true);
+    await refresh();
+    return;
+  }
+  snack(`已删除「${name}」`);
+  await refresh();
 }
 
 async function pickSharePath() {
@@ -850,29 +648,34 @@ async function pickSharePath() {
   if (path) setKey("VM_SHARE_PATH", path);
 }
 
-// 热点网关地址：前端先做格式预检，冲突（上游 / xr0 网段）由手机侧校验后返回原因
 async function editHotspotNet() {
   if (status && status.config && status.config.XR_HOTSPOT_BRIDGE === "0") return;
-  const input = $("in-hsnet"); const err = $("hsnet-err");
+  const input = $("in-hsnet");
+  const err = $("hsnet-err");
   const cur = (status && status.config && status.config.XR_HOTSPOT_SUBNET) || "";
-  input.value = cur; err.textContent = "";
+  input.value = cur;
+  input.error = false;
+  err.textContent = "";
   for (;;) {
     if (!await dialogResult($("dlg-hsnet"))) return;
     const c = hsSubnetCheck(input.value);
-    if (!c.ok) { err.textContent = c.error; continue; }
+    if (!c.ok) {
+      input.error = true;
+      err.textContent = c.error;
+      continue;
+    }
+    input.error = false;
     if (c.value === cur) return;
     setKey("XR_HOTSPOT_SUBNET", c.value);
     return;
   }
 }
 
-// 运行中系统盘不可改：按钮灰显但仍可点，点了只提示
 function diskLocked() {
   if (status && status.vm && status.vm.running) { snack("停止后可修改"); return true; }
   return false;
 }
 
-// CPU / 内存：重启虚拟机才生效，保存前先确认；取消则把下拉框恢复原值
 async function pickRestartKey(key, sel, label, fmt) {
   const cur = (status && status.config && status.config[key]) || "";
   const v = sel.value;
@@ -906,14 +709,14 @@ async function resetDisk() {
   await refresh();
 }
 
-// ---- 立即卸载：先换成静态「已卸载」页（停掉轮询、开机日志与电流动画），再让手机侧脱离会话去删 ----
+// ---- 立即卸载：先切换静态页停止一切轮询，再通知后台卸载 ----
 async function uninstallNow() {
   if (!await confirmDlg("立即卸载 XRouter",
     "将停止服务并删除全部数据：OpenWrt 系统盘、设置、VPN 配置与日志，模块随即从管理器列表中消失，无需重启。已导出到 Download 的日志 / 诊断包会保留。此操作不可撤销。",
     "卸载", true)) return;
   gone = true;
-  clearTimeout(timer); clearTimeout(soonTimer);
-  if (boot) { cancelAnimationFrame(boot.raf); boot = null; }
+  clearTimeout(timer);
+  clearTimeout(soonTimer);
   document.querySelector(".shell").remove();
   $("gone").hidden = false;
   const r = await xr("uninstall-now", "confirm");
@@ -925,12 +728,13 @@ async function uninstallNow() {
   }
 }
 
-// ---- 累计流量：只在设置页可见时读取 ----
+// ---- 累计流量：仅在进入「网络」页时按需读取 ----
 async function loadTraffic() {
   const r = await xr("traffic");
   if (gone) return;
   $("v-traffic").textContent = trafficLine(lastJson(r.stdout), "total");
 }
+
 async function resetTraffic() {
   if (!await confirmDlg("清零流量统计", "通知与此处的累计流量将从 0 重新计算", "清零", true)) return;
   const r = await xr("traffic-reset");
@@ -939,7 +743,6 @@ async function resetTraffic() {
   loadTraffic();
 }
 
-// ---- 累计流量弹窗：手机本机 / 热点各三项（总流量 | 公网 | 内网），由 OpenWrt 分来源统计 ----
 let splitBusy = false;
 async function openTraffic() {
   if (splitBusy) return;
@@ -955,64 +758,76 @@ async function openTraffic() {
     for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) txt($(id), "—");
     txt($("tr-note"), (res && res.error) || "读取失败");
   } else {
-    txt($("tr-ph-total"), l.phone.total); txt($("tr-ph-wan"), l.phone.wan); txt($("tr-ph-lan"), l.phone.lan);
-    txt($("tr-hs-total"), l.hotspot.total); txt($("tr-hs-wan"), l.hotspot.wan); txt($("tr-hs-lan"), l.hotspot.lan);
+    txt($("tr-ph-total"), l.phone.total);
+    txt($("tr-ph-wan"), l.phone.wan);
+    txt($("tr-ph-lan"), l.phone.lan);
+    txt($("tr-hs-total"), l.hotspot.total);
+    txt($("tr-hs-wan"), l.hotspot.wan);
+    txt($("tr-hs-lan"), l.hotspot.lan);
     txt($("tr-note"), "本次运行以来，经 OpenWrt 转发的流量");
   }
   await shown;
 }
 
-// ---- 日志导出：日志统一，只分普通 / 调试。调试模式关闭时导出普通日志，开启时导出完整诊断快照 ----
+// ---- 日志与诊断导出 ----
 let exportBusy = false;
 function exportMode() { return status && status.config && status.config.XR_DEBUG === "1" ? "diag" : "log"; }
 async function exportLogs() {
   if (exportBusy) return;
   const diag = exportMode() === "diag";
-  exportBusy = true; $("btn-export").disabled = true;
+  exportBusy = true;
+  $("btn-export").disabled = true;
   snack(diag ? "正在收集诊断信息…" : "正在打包日志…");
   const r = diag ? await xr("diag-export") : await xr("log-export");
   const res = lastJson(r.stdout);
-  exportBusy = false; $("btn-export").disabled = false;
+  exportBusy = false;
+  $("btn-export").disabled = false;
   snack(res && res.ok ? `已保存到 Download/${String(res.path).split("/").pop()}` : "导出失败", !(res && res.ok));
 }
 
-// ---- 页面切换：标题栏固定，只切换内容；点击 Tab 或左右滑动都有短而干脆的横移淡入（180ms，ease-out）。
-// 只动新页（WAAPI，transform + opacity，走合成层），旧页立即隐藏，不重叠、不跟手、不吸附；点击当帧就切 ----
-// Material Tab 指示条：默认 250ms，缩短为 180ms，与页面同步
+// ---- M3 页面切换：底部导航栏 + 横向轻扫手势，180ms 空间过渡 ----
 const PAGE_MS = 180;
-Tab.prototype[ANIMATE_INDICATOR] = function (previousTab) {
-  if (!this.indicator) return;
-  this.indicator.getAnimations().forEach((a) => a.cancel());
-  const frames = this.getKeyframes(previousTab);
-  if (frames !== null) this.indicator.animate(frames, { duration: PAGE_MS, easing: EASING.EMPHASIZED_DECELERATE || "cubic-bezier(.2,.8,.2,1)" });
-};
+const PAGE_MAX = 3;
+
+function syncAppbarScroll(activePage) {
+  tog($("appbar"), "scrolled", !!activePage && activePage.scrollTop > 4);
+}
 
 function goPage(i) {
-  i = Math.max(0, Math.min(2, i));
+  i = Math.max(0, Math.min(PAGE_MAX, i));
   const pages = document.querySelectorAll("#pager > .page");
   pages.forEach((p, k) => p.classList.toggle("on", k === i));
-  const tabs = $("tabs");
-  if (tabs.activeTabIndex !== i) tabs.activeTabIndex = i;
+  const nav = $("nav");
+  if (nav && nav.activeIndex !== i) nav.activeIndex = i;
+  syncAppbarScroll(pages[i]);
   if (page === i) return;
   const dir = i > page ? 1 : -1;
   page = i;
-  pages[i].animate([{ opacity: 0, transform: `translate3d(${dir * 28}px,0,0)` }, { opacity: 1, transform: "none" }],
-    { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" });
-  tog($("bg"), "dim", i !== 0);
-  syncTabFrames();
-  // 先让切页这一帧画出来，再去读流量（不和切页抢同一帧）
-  if (i === 2) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
+  if (!prefersReduce()) {
+    pages[i].animate(
+      [{ opacity: 0, transform: `translate3d(${dir * 24}px,0,0)` }, { opacity: 1, transform: "none" }],
+      { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" }
+    );
+  }
+  if (i === 1) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }
 
 function bindPager() {
   const pager = $("pager");
-  const tabs = $("tabs");
-  tabs.addEventListener("change", () => goPage(tabs.activeTabIndex));
-  // 只识别明确的横向轻扫：不跟手、不吸附，松手即跳页
+  const nav = $("nav");
+  nav.addEventListener("navigation-bar-activated", (e) => {
+    if (e.detail && typeof e.detail.activeIndex === "number") goPage(e.detail.activeIndex);
+  });
+
+  document.querySelectorAll("#pager > .page").forEach((p) => {
+    p.addEventListener("scroll", () => { if (p.classList.contains("on")) syncAppbarScroll(p); }, { passive: true });
+  });
+
   let sx = 0; let sy = 0; let st = 0; let track = false;
   pager.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) { track = false; return; }
-    const t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = e.timeStamp; track = true;
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; st = e.timeStamp; track = true;
   }, { passive: true });
   pager.addEventListener("touchend", (e) => {
     if (!track) return;
@@ -1025,80 +840,48 @@ function bindPager() {
   pager.addEventListener("touchcancel", () => { track = false; }, { passive: true });
 }
 
-function syncToggle(sw) {
-  if (!sw) return;
-  const on = !!sw.selected;
-  const wrap = sw.closest && sw.closest(".neo-toggle-wrap");
-  if (wrap) wrap.classList.toggle("on", on);
-  const tog = sw.parentElement && sw.parentElement.querySelector(".neo-toggle");
-  if (tog) tog.classList.toggle("on", on);
-}
 function bindRowSwitch(row, sw, onChange) {
-  const go = () => { syncToggle(sw); onChange(); };
   row.addEventListener("click", (e) => {
     if (sw.disabled) return;
-    if (e.target !== sw && !(e.target.closest && e.target.closest(".neo-toggle-wrap"))) {
-      e.preventDefault(); sw.selected = !sw.selected;
+    if (e.target !== sw) {
+      e.preventDefault();
+      sw.selected = !sw.selected;
     }
-    go();
+    onChange();
   });
   sw.addEventListener("click", (e) => e.stopPropagation());
-  sw.addEventListener("change", go);
-  syncToggle(sw);
-}
-
-
-function mountFrames() {
-  const card = (id, tone) => { const n = $(id); if (n) attachFrame(n, { kind: "card", tone, notch: true }); };
-  card("card-run", "cyan");
-  card("row-autostart", "magenta");
-  card("btn-luci", "cyan");
-  if ($("stage")) attachFrame($("stage"), { kind: "stage", tone: "cyan" });
-  const hud = document.querySelector(".hud-frame");
-  if (hud) attachFrame(hud, { kind: "screen", tone: "cyan" });
-  document.querySelectorAll(".card.list, .vpn-card").forEach((el, i) => {
-    if (el.closest && el.classList.contains("neo-card") && (el.id === "card-run" || el.id === "row-autostart" || el.id === "btn-luci")) return;
-    if (el.id === "card-run" || el.id === "row-autostart" || el.id === "btn-luci") return;
-    attachFrame(el, { kind: "card", tone: i % 2 ? "magenta" : "cyan", notch: true });
-  });
-  document.querySelectorAll("md-primary-tab").forEach((tab, i) => {
-    attachFrame(tab, { kind: "hex", tone: i === 0 ? "green" : "cyan", ticks: i === 0 });
-  });
-  document.querySelectorAll("md-dialog").forEach((d) => {
-    d.addEventListener("open", () => {
-      const box = (d.shadowRoot && (d.shadowRoot.querySelector(".container") || d.shadowRoot.querySelector("[part='container']"))) || d;
-      attachFrame(box, { kind: "dialog", tone: "cyan", chamfer: 12 });
-    });
-  });
-}
-function syncTabFrames() {
-  document.querySelectorAll("md-primary-tab").forEach((tab) => {
-    const on = tab.getAttribute("aria-selected") === "true" || tab.hasAttribute("active") || tab.active === true;
-    updateFrame(tab, { kind: "hex", tone: on ? "green" : "cyan", ticks: !!on });
-  });
+  sw.addEventListener("change", onChange);
 }
 
 function bind() {
+  loadTheme();
+  DARK_MEDIA.addEventListener("change", syncMetaTheme);
   document.querySelectorAll("md-icon[data-icon]").forEach(icon);
-  mountPcb();
-  mountFrames();
   bindPager();
   goPage(0);
+
+  $("btn-theme").addEventListener("click", cycleTheme);
   $("power").addEventListener("click", power);
   $("btn-ack").addEventListener("click", async () => { await xr("ack-trip"); await refresh(); });
+  $("tile-mode").addEventListener("click", () => goPage(1));
+  $("tile-vpn").addEventListener("click", () => goPage(2));
+
   bindRowSwitch($("row-autostart"), $("sw-autostart"), () => setKey("AUTOSTART", $("sw-autostart").selected ? "1" : "0"));
   bindRowSwitch($("row-share"), $("sw-share"), () => setKey("VM_SHARE", $("sw-share").selected ? "1" : "0"));
   bindRowSwitch($("row-ipv6"), $("sw-ipv6"), toggleIpv6);
   bindRowSwitch($("row-hotspot"), $("sw-hotspot"), () => setKey("XR_HOTSPOT_BRIDGE", $("sw-hotspot").selected ? "1" : "0"));
   bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
+
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
   $("btn-export").addEventListener("click", exportLogs);
   $("row-hs-net").addEventListener("click", editHotspotNet);
-  $("hsnet-clear").addEventListener("click", () => { $("in-hsnet").value = ""; $("hsnet-err").textContent = ""; });
+  $("hsnet-clear").addEventListener("click", () => {
+    $("in-hsnet").value = "";
+    $("in-hsnet").error = false;
+    $("hsnet-err").textContent = "";
+  });
   $("btn-luci").addEventListener("click", () => xr("luci"));
   $("btn-import").addEventListener("click", importVpn);
-  $("btn-vpn-start").addEventListener("click", () => actVpn("enable"));
-  $("btn-vpn-stop").addEventListener("click", () => actVpn("disable"));
   $("btn-share-path").addEventListener("click", pickSharePath);
   $("sel-access").addEventListener("change", (e) => setKey("XR_EXPOSE", e.target.value));
   $("sel-cpu").addEventListener("change", (e) => pickRestartKey("VM_CPUS", e.target, "CPU ", (v) => `${v} 核`));
@@ -1109,20 +892,19 @@ function bind() {
   $("btn-reset").addEventListener("click", resetDisk);
   $("btn-traffic-reset").addEventListener("click", resetTraffic);
   $("btn-uninstall").addEventListener("click", uninstallNow);
+
   document.addEventListener("visibilitychange", () => {
-    document.documentElement.classList.toggle("hid", document.hidden);   // 不可见时暂停电流动画
+    document.documentElement.classList.toggle("hid", document.hidden);
     if (!document.hidden && !gone) { refresh(); schedule(); }
   });
 }
 
-// ---- 全屏：SukiSU WebUI 默认给页面四周留出系统栏（灰色 #303030 条）。
-// 请求管理器内置的 /internal/insets.css 即开启边到边（SuFilePathHandler 据此置 isInsetsEnabled），
-// 该样式表给出 --window-inset-top / --window-inset-bottom 等安全区变量；再调用 ksu.enableEdgeToEdge(true) 兜底。
-// 普通浏览器里两者都不存在，CSS 回退到 env(safe-area-inset-*)。
+// ---- 边到边沉浸式安全区适配 ----
 function edgeToEdge() {
   if (!isKsuWebui()) return;
   const l = document.createElement("link");
-  l.rel = "stylesheet"; l.href = "/internal/insets.css";
+  l.rel = "stylesheet";
+  l.href = "/internal/insets.css";
   document.head.append(l);
   try { if (window.ksu && typeof window.ksu.enableEdgeToEdge === "function") window.ksu.enableEdgeToEdge(true); } catch { /* 旧管理器 */ }
 }
@@ -1132,30 +914,66 @@ function previewStatus(phase) {
   const starting = phase === "starting";
   const failed = phase === "failed";
   return {
-    vm: { running: running || starting, state: running ? "stable" : starting ? "booting" : "off",
-      uptime_s: running ? 11520 : starting ? 12 : 0, error: failed ? "启动失败" : null, tripped: null },
-    net: { gw: running ? "on" : starting ? "off" : "block", up_if: running ? "wlan0" : "" },
-    config: { AUTOSTART: "1", XR_MODE: "global", XR_EXPOSE: "lan", VM_SHARE: "0", VM_CPUS: "2", VM_MEM_MB: "768", VM_DISK_SIZE_MB: "1024", XR_HOTSPOT_BRIDGE: "1" },
-    vpn: { configured: true, status: running ? "up" : "down", addr: running ? "10.8.0.5/24" : "", routes_active: running ? ["10.8.0.0/24"] : [] },
+    vm: {
+      running: running || starting,
+      state: running ? "stable" : starting ? "booting" : "off",
+      uptime_s: running ? 11520 : starting ? 12 : 0,
+      error: failed ? "180 秒内未就绪，请检查内核镜像" : null,
+      tripped: null,
+    },
+    net: { gw: running ? "on" : starting ? "off" : "block", up_if: running ? "wlan0" : "", hotspot: running ? "ap0" : "" },
+    config: {
+      AUTOSTART: "1", XR_MODE: "global", XR_EXPOSE: "lan", XR_NET_PREFIX: "172.28.221",
+      VM_SHARE: "0", VM_CPUS: "2", VM_MEM_MB: "768", VM_DISK_SIZE_MB: "1024", XR_HOTSPOT_BRIDGE: "1",
+    },
+    vpn: {
+      configured: true,
+      enabled: running,
+      status: running ? "up" : "down",
+      addr: running ? "10.8.0.5/24" : "",
+      routes_active: running ? ["10.8.0.0/24", "192.168.31.0/24"] : [],
+      profiles: [
+        {
+          id: "home_nas",
+          name: "家里 NAS",
+          enabled: running,
+          status: running ? "up" : "down",
+          dev: running ? "tun0" : "",
+          addr: running ? "10.8.0.5/24" : "",
+          mtu: 1420,
+          routes: running ? ["10.8.0.0/24", "192.168.31.0/24"] : [],
+        },
+        {
+          id: "office_gw",
+          name: "公司办公网",
+          enabled: false,
+          status: "down",
+          dev: "",
+          addr: "",
+          mtu: 0,
+          routes: [],
+        },
+      ],
+    },
     share: { rw_supported: true },
-    ipv6: true,
+    ipv6: running ? true : null,
   };
 }
 
-window.__xrPreviewSet = (phase, freeze) => {
+window.__xrPreviewSet = (phase, pageIdx) => {
   render(previewStatus(phase));
-  if (freeze != null && freeze !== undefined) { repairTok++; cancelAnimationFrame(repairRaf); applyRepair(+freeze); }
+  if (typeof pageIdx === "number") goPage(pageIdx);
 };
 
 (async () => {
   edgeToEdge();
   bind();
-  await customElements.whenDefined("md-tabs");
-  const pv = typeof window !== "undefined" ? window.__XR_PREVIEW__ : null;
+  await customElements.whenDefined("md-navigation-bar");
+  const pv = !isKsuWebui() ? (window.__XR_PREVIEW__ || { phase: "running" }) : null;
   if (pv) {
-    render(previewStatus(pv.phase || "stopped"));
+    render(previewStatus(pv.phase || "running"));
+    if (typeof pv.page === "number") goPage(pv.page);
     document.querySelector(".shell").removeAttribute("unresolved");
-    if (pv.freeze != null) { repairTok++; cancelAnimationFrame(repairRaf); applyRepair(+pv.freeze); }
     return;
   }
   const cached = loadCache();
