@@ -45,7 +45,13 @@ else
   echo down > "$TMP/status"
 fi
 
-for f in status addr if routes tunnels; do
+: > "$TMP/connecting"
+for p in /proc/[0-9]*/cmdline; do
+  [ -r "$p" ] || continue
+  tr '\0' ' ' < "$p" 2>/dev/null | sed -n 's#.*openvpn.*/etc/openvpn/xr_\([A-Za-z0-9_]*\)\.conf.*#\1#p'
+done | sort -u > "$TMP/connecting"
+
+for f in status addr if routes tunnels connecting; do
   cmp -s "$TMP/$f" "$ST/openvpn.$f" 2>/dev/null && continue
   cp -f "$TMP/$f" "$ST/openvpn.$f.tmp" && mv -f "$ST/openvpn.$f.tmp" "$ST/openvpn.$f"
 done

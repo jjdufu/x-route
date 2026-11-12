@@ -4,7 +4,7 @@
 s() { echo "## $*"; "$@" 2>&1; echo; }
 
 vpn_hosts() {
-  [ -f /etc/openvpn/xrouter.ovpn ] && awk '$1=="remote" && $2!="" {print $2}' /etc/openvpn/xrouter.ovpn
+  for _f in /etc/openvpn/*.ovpn; do [ -f "$_f" ] && awk '$1=="remote" && $2!="" {print $2}' "$_f"; done
   gw="$(uci -q get network.lan.gateway)"
   # OpenVPN 为服务器加的主机路由：<IP> via <手机网关> dev eth0
   [ -n "$gw" ] && ip -4 route show 2>/dev/null | awk -v g="$gw" '$2=="via" && $3==g && $1!="default" && $1 !~ /\// {print $1}'

@@ -119,6 +119,29 @@ chk '[ $? -ne 0 ] && echo "$out" | grep -q "未响应"'
 mv -f "$XR_DATA/config/openvpn.ovpn" "$XR_DATA/config/openvpn.ovpn.bak"
 out="$($XR vpn-enable)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "未导入配置"'
 mv -f "$XR_DATA/config/openvpn.ovpn.bak" "$XR_DATA/config/openvpn.ovpn"
+# 多配置管理：WebUI 导入默认不自动启用（传 0），直接出现在 profiles 列表，可按配置 ID 独立启动 / 停止 / 删除
+printf 'client\ndev tun\nremote 127.0.0.1 1195\n' > "$XR_MEDIA/Download/vpn/office-hk.ovpn"
+printf 'client\ndev tun\nremote 127.0.0.1 1196\n' > "$XR_MEDIA/Download/vpn/公司内网.ovpn"
+out="$($XR vpn-import /storage/emulated/0/Download/vpn/office-hk.ovpn 0)"
+chk 'echo "$out" | J "d[\"ok\"] and d[\"id\"]==\"office_hk\" and d[\"name\"]==\"office-hk\"" | grep -qx True'
+chk '[ "$(cat "$XR_DATA/config/vpn/office_hk.enabled")" = 0 ]'
+out_cjk="$($XR vpn-import /storage/emulated/0/Download/vpn/公司内网.ovpn 0)"
+cjk_id="$(echo "$out_cjk" | J "d[\"id\"]")"
+chk 'echo "$out_cjk" | J "d[\"ok\"] and d[\"name\"]==\"公司内网\"" | grep -qx True'
+echo 1 > "$RUN/guest/guest/openvpn.multi"
+prev_cmd="$(cat "$RUN/guest/host/openvpn.cmd" 2>/dev/null)"
+( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/openvpn.cmd" 2>/dev/null)"; if [ -n "$c" ] && [ "$c" != "$prev_cmd" ]; then printf '%s\n' "$c" > "$RUN/guest/guest/openvpn.ack"; break; fi; sleep 0.1; i=$((i+1)); done ) &
+chk '$XR vpn-enable office_hk | grep -qx "{\"ok\":true}" && [ "$(cat "$RUN/guest/host/vpn/office_hk.enabled")" = 1 ] && [ "$(cat "$XR_DATA/config/vpn/home.enabled")" = 1 ]'
+wait
+printf '%s\n' "tun0|home|10.8.0.5/24|1400|10.8.0.0/24" "tun1|office_hk|10.9.0.6/24|1400|192.168.50.0/24" > "$RUN/guest/guest/openvpn.tunnels"
+chk '$XR status-json | J "{p[\"name\"]:(p[\"status\"],p[\"addr\"]) for p in d[\"vpn\"][\"profiles\"] if p[\"id\"] in (\"home\",\"office_hk\")}=={\"home\":(\"up\",\"10.8.0.5/24\"),\"office-hk\":(\"up\",\"10.9.0.6/24\")}" | grep -qx True'
+prev_cmd="$(cat "$RUN/guest/host/openvpn.cmd" 2>/dev/null)"
+( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/openvpn.cmd" 2>/dev/null)"; if [ -n "$c" ] && [ "$c" != "$prev_cmd" ]; then printf '%s\n' "$c" > "$RUN/guest/guest/openvpn.ack"; break; fi; sleep 0.1; i=$((i+1)); done ) &
+chk '$XR vpn-disable office_hk | grep -qx "{\"ok\":true}" && [ "$(cat "$RUN/guest/host/vpn/office_hk.enabled")" = 0 ] && [ "$(cat "$XR_DATA/config/vpn/home.enabled")" = 1 ]'
+wait
+rm -f "$RUN/guest/guest/openvpn.tunnels"
+chk '$XR vpn-delete office_hk | grep -qx "{\"ok\":true}" && [ ! -e "$XR_DATA/config/vpn/office_hk.ovpn" ] && [ ! -e "$RUN/guest/host/vpn/office_hk.ovpn" ]'
+chk '$XR vpn-delete "$cjk_id" | grep -qx "{\"ok\":true}" && [ ! -e "$XR_DATA/config/vpn/${cjk_id}.ovpn" ]'
 # 累计流量分来源：写 host/acct.cmd，虚拟机回 guest/acct（首行回显 ts）
 ( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/acct.cmd" 2>/dev/null)"; if [ -n "$c" ]; then printf 'ts=%s\n1 2 3 4 5 6 7 8\n' "${c#* }" > "$RUN/guest/guest/acct"; break; fi; sleep 0.1; i=$((i+1)); done ) &
 out="$($XR traffic-split)"

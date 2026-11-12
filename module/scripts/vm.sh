@@ -223,8 +223,51 @@ vm_stop() {
 }
 
 # ---- 磁盘 ----
-# 开机按持久开关下发 OpenVPN：openvpn.enabled=0 时发 disable，缺省或为 1 时发 enable
+VPN_DIR="${XR_DATA}/config/vpn"
+
+# 把 config/vpn 下的多份配置同步到控制目录 host/vpn，同时维护兼容旧镜像的 host/openvpn.ovpn
+vpn_sync_host() {
+  mkdir -p "${RUN}/guest/host"
+  [ -d "${VPN_DIR}" ] || return 1
+  mkdir -p "${RUN}/guest/host/vpn"
+  for _old in "${RUN}/guest/host/vpn"/*; do
+    [ -e "$_old" ] || continue
+    _obn="${_old##*/}"; _opid="${_obn%.*}"
+    [ -s "${VPN_DIR}/${_opid}.ovpn" ] || rm -f "$_old"
+  done
+  _any=0; _first=""
+  for _vf in "${VPN_DIR}"/*.ovpn; do
+    [ -s "$_vf" ] || continue
+    _pid="${_vf##*/}"; _pid="${_pid%.ovpn}"
+    [ -n "$_first" ] || _first="$_vf"
+    cp -f "$_vf" "${RUN}/guest/host/vpn/${_pid}.ovpn"
+    _ven="$(cat "${VPN_DIR}/${_pid}.enabled" 2>/dev/null)"
+    [ "$_ven" = 1 ] && _ven=1 || _ven=0
+    echo "$_ven" > "${RUN}/guest/host/vpn/${_pid}.enabled"
+    if [ "$_ven" = 1 ]; then
+      _any=1
+      cp -f "$_vf" "${RUN}/guest/host/openvpn.ovpn"
+    fi
+  done
+  [ "$_any" = 0 ] && [ -n "$_first" ] && cp -f "$_first" "${RUN}/guest/host/openvpn.ovpn"
+  echo "$_any"
+  return 0
+}
+
+# 开机按持久开关下发 OpenVPN：支持 config/vpn 多配置目录，并兼容旧单文件 openvpn.ovpn
 vpn_boot_prepare() {
+  rm -f "${RUN}/guest/guest/openvpn.ack" "${RUN}/guest/guest/openvpn.multi" "${RUN}/guest/guest/openvpn.connecting"
+  if [ -d "${VPN_DIR}" ]; then
+    _vany="$(vpn_sync_host)"
+    if [ "$_vany" = 1 ]; then
+      echo enable > "${RUN}/guest/host/openvpn.cmd"
+      blog vpn "下发 OpenVPN 配置"
+    else
+      echo disable > "${RUN}/guest/host/openvpn.cmd"
+      blog vpn "OpenVPN 保持停止"
+    fi
+    return 0
+  fi
   [ -f "${XR_DATA}/config/openvpn.ovpn" ] || return 0
   mkdir -p "${RUN}/guest/host"
   cp -f "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"

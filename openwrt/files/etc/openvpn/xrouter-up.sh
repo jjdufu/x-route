@@ -11,7 +11,7 @@ fam=4
 case "${proto_1:-}" in *6*) fam=6 ;; esac
 p="${p}${fam}"
 mkdir -p /tmp/xrouter-tun
-n="${config:-}"; n="${n##*/}"; n="${n%.conf}"; n="${n%.ovpn}"
+n="${XR_PROFILE:-${config:-}}"; n="${n##*/}"; n="${n%.conf}"; n="${n%.ovpn}"; n="${n#xr_}"
 [ -n "$n" ] && echo "$n" > "/tmp/xrouter-tun/${dev}.name"
 /usr/libexec/xrouter-tunmtu proto "$dev" "$p"
 /usr/libexec/xrouter-tunmtu apply

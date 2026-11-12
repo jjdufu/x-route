@@ -15,7 +15,7 @@ _dsec() { echo "## $*"; "$@" 2>&1; echo; }
 
 # OpenVPN 服务器地址（来自导入的配置的 remote 行），用于脱敏；只输出主机名/IP，不输出其他内容
 diag_vpn_hosts() {
-  for _f in "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn"; do
+  for _f in "${XR_DATA}/config/openvpn.ovpn" "${RUN}/guest/host/openvpn.ovpn" "${XR_DATA}/config/vpn"/*.ovpn "${RUN}/guest/host/vpn"/*.ovpn; do
     [ -f "$_f" ] && awk '$1=="remote" && $2!="" {print $2}' "$_f" 2>/dev/null
   done | sort -u
 }

@@ -27,26 +27,35 @@ sync_time() {
   fi
 }
 
+write_ovpn_conf() { # $1=实例名 $2=源ovpn $3=配置ID（多配置模式）
+  _sec="$1"; _src="$2"; _pid="${3:-}"
+  mkdir -p /etc/openvpn
+  cp -f "$_src" "/etc/openvpn/${_sec}.ovpn"
+  {
+    echo "config /etc/openvpn/${_sec}.ovpn"
+    echo "script-security 2"
+    if [ -n "$_pid" ]; then
+      echo "setenv XR_PROFILE ${_pid}"
+      echo "dev tun"
+    fi
+    echo "up /etc/openvpn/xrouter-up.sh"
+    echo "down /etc/openvpn/xrouter-down.sh"
+    echo "route-up /etc/openvpn/xrouter-up.sh"
+    # 性能（写在用户配置之后，同名选项以此为准；不改加密协商，不影响单文件无密码 .ovpn）：
+    #   OpenVPN 2.6 默认协商 AES-256-GCM / AES-128-GCM / ChaCha20，OpenSSL 走 ARMv8 AES 指令（硬件加速）；
+    #   收发缓冲 512KB（sysctl 已放宽 rmem_max / wmem_max），UDP 下 fast-io 少一次 poll，tun 发送队列 500。
+    #   MTU / MSS 不写死：由 xrouter-tunmtu 按上游 MTU 动态设置内核 tun 网卡与 nft MSS 钳制。
+    grep -qE '^[[:space:]]*sndbuf[[:space:]]' "$_src" || echo "sndbuf 524288"
+    grep -qE '^[[:space:]]*rcvbuf[[:space:]]' "$_src" || echo "rcvbuf 524288"
+    grep -qE '^[[:space:]]*txqueuelen[[:space:]]' "$_src" || echo "txqueuelen 500"
+    grep -qiE '^[[:space:]]*(proto[[:space:]]+tcp|remote[[:space:]].*[[:space:]]tcp)' "$_src" || echo "fast-io"
+  } > "/etc/openvpn/${_sec}.conf"
+}
+
 install_ovpn() {
   src="${CTL}/host/openvpn.ovpn"
   [ -s "$src" ] || return 1
-  mkdir -p /etc/openvpn
-  cp -f "$src" /etc/openvpn/xrouter.ovpn
-  cat > /etc/openvpn/xrouter.conf <<'C'
-config /etc/openvpn/xrouter.ovpn
-script-security 2
-up /etc/openvpn/xrouter-up.sh
-down /etc/openvpn/xrouter-down.sh
-route-up /etc/openvpn/xrouter-up.sh
-C
-  # 性能（写在用户配置之后，同名选项以此为准；不改加密协商，不影响单文件无密码 .ovpn）：
-  #   OpenVPN 2.6 默认协商 AES-256-GCM / AES-128-GCM / ChaCha20，OpenSSL 走 ARMv8 AES 指令（硬件加速）；
-  #   收发缓冲 512KB（sysctl 已放宽 rmem_max / wmem_max），UDP 下 fast-io 少一次 poll，tun 发送队列 500。
-  #   MTU / MSS 不写死：由 xrouter-tunmtu 按上游 MTU 动态设置内核 tun 网卡与 nft MSS 钳制。
-  grep -qE '^[[:space:]]*sndbuf[[:space:]]' "$src" || echo "sndbuf 524288" >> /etc/openvpn/xrouter.conf
-  grep -qE '^[[:space:]]*rcvbuf[[:space:]]' "$src" || echo "rcvbuf 524288" >> /etc/openvpn/xrouter.conf
-  grep -qE '^[[:space:]]*txqueuelen[[:space:]]' "$src" || echo "txqueuelen 500" >> /etc/openvpn/xrouter.conf
-  grep -qiE '^[[:space:]]*(proto[[:space:]]+tcp|remote[[:space:]].*[[:space:]]tcp)' "$src" || echo "fast-io" >> /etc/openvpn/xrouter.conf
+  write_ovpn_conf xrouter "$src" ""
   uci -q set openvpn.xrouter=openvpn
   uci -q set openvpn.xrouter.enabled=1
   uci -q set openvpn.xrouter.config='/etc/openvpn/xrouter.conf'
@@ -54,17 +63,58 @@ C
   /etc/init.d/openvpn restart >/dev/null 2>&1
 }
 
+sync_vpn_dir() {
+  vdir="${CTL}/host/vpn"
+  [ -d "$vdir" ] || return 1
+  uci -q set openvpn.xrouter.enabled=0 2>/dev/null || true
+  for conf in /etc/openvpn/xr_*.conf; do
+    [ -f "$conf" ] || continue
+    sec="${conf##*/}"; sec="${sec%.conf}"; pid="${sec#xr_}"
+    if [ ! -s "${vdir}/${pid}.ovpn" ]; then
+      uci -q delete "openvpn.${sec}" 2>/dev/null || true
+      rm -f "/etc/openvpn/${sec}.conf" "/etc/openvpn/${sec}.ovpn"
+    fi
+  done
+  any_en=0
+  for f in "${vdir}"/*.ovpn; do
+    [ -s "$f" ] || continue
+    pid="${f##*/}"; pid="${pid%.ovpn}"
+    case "$pid" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    sec="xr_${pid}"
+    write_ovpn_conf "$sec" "$f" "$pid"
+    en="$(cat "${vdir}/${pid}.enabled" 2>/dev/null)"
+    [ "$en" = 1 ] && en=1 || en=0
+    [ "$en" = 1 ] && any_en=1
+    uci -q set "openvpn.${sec}=openvpn"
+    uci -q set "openvpn.${sec}.enabled=${en}"
+    uci -q set "openvpn.${sec}.config=/etc/openvpn/${sec}.conf"
+  done
+  uci -q commit openvpn
+  if [ "$any_en" = 1 ]; then
+    /etc/init.d/openvpn reload >/dev/null 2>&1 || /etc/init.d/openvpn restart >/dev/null 2>&1
+  else
+    /etc/init.d/openvpn stop >/dev/null 2>&1
+  fi
+  refresh_routes
+  return 0
+}
+
 apply_cmd() {
   cmd="$(cat "${CTL}/host/openvpn.cmd" 2>/dev/null)"
-  case "${cmd%% *}" in   # 命令后可带时间戳，同一命令重复下发也会执行
-    enable|reload) install_ovpn ;;
-    disable)
-      uci -q set openvpn.xrouter.enabled=0
-      uci -q commit openvpn
-      /etc/init.d/openvpn stop >/dev/null 2>&1
-      refresh_routes
-      ;;
-  esac
+  if [ -d "${CTL}/host/vpn" ]; then
+    sync_vpn_dir
+  else
+    case "${cmd%% *}" in   # 命令后可带时间戳，同一命令重复下发也会执行
+      enable|reload) install_ovpn ;;
+      disable)
+        uci -q set openvpn.xrouter.enabled=0
+        uci -q commit openvpn
+        /etc/init.d/openvpn stop >/dev/null 2>&1
+        refresh_routes
+        ;;
+    esac
+  fi
+  printf '%s\n' "$cmd" > "${CTL}/guest/openvpn.ack.tmp" && mv -f "${CTL}/guest/openvpn.ack.tmp" "${CTL}/guest/openvpn.ack"
 }
 
 watch() {
@@ -144,6 +194,7 @@ start() {
     mount -t virtiofs xrctl "$CTL" 2>/dev/null || true
   fi
   mkdir -p "${CTL}/host" "${CTL}/guest"
+  echo 1 > "${CTL}/guest/openvpn.multi"
   chmod 0755 /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh 2>/dev/null || true
   /usr/libexec/xrouter-ipv6 boot
   /usr/libexec/xrouter-acct init
