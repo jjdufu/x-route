@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#111318" />
+  <meta name="theme-color" content="#010609" />
   <title>XRouter</title>
   <script type="module" src="./src/main.js"></script>
 </head>
@@ -13,8 +13,14 @@
   <div id="bg" class="bg stopped" aria-hidden="true"><div class="bg-layer bg-red"></div><div class="bg-layer bg-green"></div></div>
   <div class="shell nostate" unresolved>
     <header class="appbar">
-      <span class="title">XRouter</span>
-      <span id="chip" class="chip chip-off"><span class="dot"></span><span id="chip-text">已停止</span></span>
+      <div class="hud-line" aria-hidden="true">
+        <span class="hud-hex hud-cyan">0x7A3F // XROUTER OS</span>
+        <span class="hud-hex hud-mag">0xFF32</span>
+      </div>
+      <div class="appbar-row">
+        <h1 class="title" data-text="XRouter">XRouter</h1>
+        <span id="chip" class="chip chip-off"><span class="dot"></span><span id="chip-text">已停止</span></span>
+      </div>
     </header>
 
     <md-tabs id="tabs" class="tabs" aria-label="页面">
@@ -33,12 +39,11 @@
         </div>
 
         <div class="power-area">
-          <!-- 舞台：可点芯片在整页电路板最密处。停止/失败为裂纹芯片；启动中淡出并显示瀑布日志；
-               运行中愈合上电，绿光沿内部电路流向引脚。过渡见 docs/chip-transition-flow.md -->
+          <!-- 舞台：可点芯片在电路板最密处。停止/失败为裂纹芯片与红色断开走线；
+               启动中走线由芯片向外红改绿修复；运行中绿流。见 docs/chip-transition-flow.md -->
           <div id="stage" class="stage stopped">
             <div class="st-wrap" aria-hidden="true">
-              <div class="st-layer st-red"></div><div class="st-layer st-green"></div>
-              <div id="pcb-flow" class="pcb-flow"></div>
+              <svg id="pcb-svg" class="pcb-svg" viewBox="0 0 480 320"></svg>
             </div>
             <div id="power-wrap" class="power-wrap stopped">
               <button id="power" class="power" type="button" aria-label="电源">
@@ -320,8 +325,11 @@
                 </svg>
               </button>
             </div>
-            <div id="boot" class="boot" aria-hidden="true"><div id="boot-log" class="boot-log"></div></div>
             <div id="power-err" class="power-err" hidden></div>
+            <div id="stage-hud" class="stage-hud" aria-hidden="true">
+              <div id="stage-hud-ph" class="stage-hud-ph">STOPPED</div>
+              <div id="stage-hud-sub" class="stage-hud-sub">服务已停止</div>
+            </div>
           </div>
         </div>
 

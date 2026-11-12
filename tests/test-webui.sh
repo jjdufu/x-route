@@ -35,7 +35,7 @@ for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
 for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh) && !xrsh.includes(`if [ "\${1:-}" = ${s} ]`)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "boot-tail", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
+for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci"]) if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 
 // 布局与文案
 const tabs = [...html.matchAll(/<md-primary-tab[^>]*>.*?<\/md-icon>([^<]+)<\/md-primary-tab>/g)].map((m) => m[1].trim());
@@ -124,10 +124,10 @@ eq(L.expandSizes(1024), [1536, 2048, 3072, 5120, 9216], "扩容选项"); eq(L.ex
 // 启停与按钮解耦：只投递后台命令，不等待 xr start/stop
 if (subs.has("start") || subs.has("stop")) fail("WebUI 不应同步调用 xr start/stop");
 if (/await\s+xr\(\s*kind/.test(main)) fail("按钮不得等待后台启停");
-// 开机日志：真实增量日志、轮询节流、固定行池、只用 transform 平滑上移、无模糊/发光动画
-if (!html.includes('id="boot-log"') || html.includes('id="power-log"')) fail("开机日志应在舞台里而不是按钮里");
-if (html.indexOf('id="boot"') > html.indexOf('id="row-autostart"')) fail("开机日志应在「开机自启」上方");
-{ const m = main.match(/const BOOT_POLL = (\d+);/); if (!m || +m[1] < 150 || +m[1] > 250 || !/setTimeout\(\(\) => bootTick\(b\), BOOT_POLL\)/.test(main)) fail("开机日志应 150-250ms 轮询"); }
+// 启动改为舞台走线由芯片向外修复，不再使用瀑布日志
+if (html.includes('id="boot-log"') || html.includes('id="boot"') || /function bootOn|function bootTick|BOOT_POLL/.test(main)) fail("不应再有开机瀑布日志");
+if (!html.includes('id="pcb-svg"') || !/function mountPcb/.test(main) || !/function applyRepair/.test(main) || !/function boardFollow/.test(main)) fail("舞台应有可动画走线并按进度修复");
+if (!/PCB_TRACES/.test(fs.readFileSync(W + "/src/pcb.js", "utf8"))) fail("走线数据应由 gen-pcb.py 生成");
 // 点击不卡：优先 ksu.spawn（命令在后台线程跑，不堵 WebView 主线程），没有时才退回同步的 ksu.exec
 if (!/canSpawn\(\) \? await runSpawn\(cmd\) : await exec\(cmd\)/.test(main)) fail("xr() 应优先用 spawn");
 // 状态刷新单飞；设置乐观更新（先改本地再后台保存），保存后合并刷新，不在点击路径上等 status-json
@@ -136,21 +136,8 @@ if (!/if \(refreshing\) \{ refreshAgain = true; return refreshing; \}/.test(main
   if (sk.indexOf("render(status)") < 0 || sk.indexOf("render(status)") > sk.indexOf('await xr("set"') || /await refresh\(\)/.test(sk)) fail("setKey 应乐观更新、不等 refresh"); }
 if (!/for \(const \[k, e\] of edits\) if \(e\.doneAt !== null && t0 > e\.doneAt\) edits\.delete\(k\);/.test(main)) fail("保存前发出的刷新不能把开关弹回去");
 if (!/requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("切页后再读流量");
-// 单次在途：先 await 本次 exec，再排下一次；开机期间暂停常规状态轮询
-{ const bt = main.slice(main.indexOf("async function bootTick"), main.indexOf("// ---- 操作 ----"));
-  if (bt.indexOf('await xr("boot-tail"') < 0 || bt.indexOf('await xr("boot-tail"') > bt.indexOf("setTimeout(() => bootTick(b), BOOT_POLL)")) fail("boot-tail 必须单次在途");
-  if (!/!document\.hidden && !boot\) \{ await refresh\(\)/.test(main)) fail("开机期间应暂停常规状态轮询"); }
+if (!/v\.phase === "starting"/.test(main) || !/fast \? 1500 : 5000/.test(main)) fail("启动中应加快状态刷新");
 const blk = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
-const plog = blk(".boot-log");
-if (/blur|box-shadow|animation|filter/.test(plog + blk(".boot"))) fail("开机日志不得用模糊/阴影/动画");
-// 瀑布：rAF 里按积压行数小步上移（translate3d 小数位移），不用 CSS 过渡；只在有积压时请求下一帧
-if (/\.boot-log[^{]*\{[^}]*transition/.test(css)) fail("开机日志不得用 CSS 过渡");
-{ const bf = main.slice(main.indexOf("function bootFrame"), main.indexOf("async function bootTick"));
-  if (!/bootStep\(/.test(bf) || !/translate3d\(0,/.test(bf)) fail("瀑布应按 bootStep 小步 translate3d 上移");
-  if (!/if \(b\.pos < target\) b\.raf = requestAnimationFrame/.test(bf)) fail("没有积压时不应继续请求帧"); }
-if (!/page === 0\) b\.raf = requestAnimationFrame/.test(main)) fail("不在首页时不画开机日志");
-if (!/const BOOT_ROWS = \d+;/.test(main) || !/Array\.from\(\{ length: BOOT_ROWS \}/.test(main)) fail("应使用固定行池");
-if (/getBoundingClientRect|offsetHeight|scrollHeight/.test(main.slice(main.indexOf("function bootPaint"), main.indexOf("async function bootTick")))) fail("绘制开机日志时不得读布局");
 const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启动 pid=1\n\x1f30\x1f[    0.000000] Booting Linux\n[ 0.1] half");
 eq([bt.rc, bt.mod.size, bt.con.size], [1, 120, 30], "parseBootTail");
 eq(L.parseBootTail("R-\x1f0\x1f\x1f0\x1f").rc, null, "parseBootTail 无退出码");
@@ -186,34 +173,28 @@ if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" 
   if (iC < 0 || iR < 0 || iX < 0 || !(iC < iR && iR < iX) || !/Download/.test(u) || !/, true\)\) return;/.test(u)) fail("卸载应先确认、再换静态页、最后请求删除");
   if (!/gone = true;/.test(u) || !/if \(gone\) return Promise\.resolve\(\);/.test(main) || !/clearTimeout\(timer\);\n  if \(gone\) return;/.test(main)) fail("卸载后应停止一切轮询"); }
 if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
-// 启动中：电源按钮淡出（150-250ms 交叉淡化）后出现瀑布，没有转圈；瀑布文字只有「正在启动」
-{ const m = /\.starting\.power-wrap \{([^}]*)\}/.exec(css); if (!m || !/opacity: 0/.test(m[1]) || !/visibility: hidden/.test(m[1])) fail("启动中应隐藏电源按钮"); }
+// 启动中芯片保持可见；走线修复；失败错误与阶段条叠在舞台内，不推动布局
+if (/\.starting\.power-wrap \{[^}]*visibility:\s*hidden/.test(css) || /\.starting\.power-wrap \{[^}]*opacity:\s*0/.test(css)) fail("启动中不应隐藏芯片");
 if (!html.includes('class="chip-svg"') || !html.includes('id="power"') || html.includes('class="ring"') || /data-icon="power_settings_new"/.test(html)) fail("首页应为可点芯片，不得保留圆形电源键");
 if (html.includes('id="power-text"') || html.includes('id="power-steps"') || /class="power-text"|class="steps"/.test(html)) fail("首页舞台不应有状态提示或步骤条");
 if (!html.includes('id="power-err"') || html.indexOf('id="power-err"') > html.indexOf('id="row-autostart"') || html.indexOf('id="power-err"') < html.indexOf('id="stage"')) fail("失败错误应叠在舞台内");
 if (!/\.stage \{[^}]*height:\s*\d+px/.test(css)) fail("舞台高度应固定");
-if (!/\.power-err \{[^}]*position:\s*absolute/.test(css)) fail("失败错误应为绝对定位以免挤动芯片");
-{ const ds = [...css.matchAll(/\.(?:power-wrap|boot|st-layer|st-wrap|bg-layer) \{[^}]*transition:([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)s/g)].map((x) => +x[1]).filter((x) => x > 0.1));
+if (!/\.power-err \{[^}]*position:\s*absolute/.test(css) || !/\.stage-hud \{[^}]*position:\s*absolute/.test(css)) fail("舞台内状态/错误应为绝对定位以免挤动芯片");
+{ const ds = [...css.matchAll(/\.(?:power-wrap|bg-layer) \{[^}]*transition:([^}]*)\}/g)].flatMap((m) => [...m[1].matchAll(/(\d*\.?\d+)s/g)].map((x) => +x[1]).filter((x) => x > 0.1));
   if (!ds.length || ds.some((x) => x < 0.15 || x > 0.25)) fail(`交叉淡化应 150-250ms: ${ds}`); }
-if (!/\.boot\.on \{/.test(css) || !/classList\.(add|toggle)\("on"/.test(main)) fail("瀑布应淡入淡出");
 if (/\.starting[^{]*\.ring/.test(css)) fail("启动中不应有转圈动画");
 if (!/STEPS = \["正在启动"/.test(fs.readFileSync(W + "/src/logic.js", "utf8"))) fail("启动文字应为「正在启动」");
-// 底图：src/pcb.css（scripts/gen-pcb.py 生成的静态 SVG）。全屏铺底（红 / 绿随状态切换），电源键附近更密，组网 / 设置页更淡
+if (!/prefers-reduced-motion/.test(css) || !/prefersReduce/.test(main)) fail("应尊重减少动效");
+// 底图：src/pcb.css 全屏平铺静态 SVG（红 / 绿随状态交叉淡入淡出）；舞台走线为 pcb.js 内联 SVG
 const pcb = fs.readFileSync(W + "/src/pcb.css", "utf8");
 const pblk = (sel) => pcb.slice(pcb.indexOf(sel + " {"), pcb.indexOf("}\n", pcb.indexOf(sel + " {")));
 const svgOf = (b) => { const m = /url\("data:image\/svg\+xml,([^"]+)"\)/.exec(b); return m ? decodeURIComponent(m[1]) : ""; };
-const segs = (b) => (svgOf(b).match(/ ?M[-\d.]+ [-\d.]+/g) || []).length;
-const stg = pblk(".st-red"), stgRun = pblk(".st-green");
-if (!/%23ff6b5e/.test(stg) || /animation|transition/.test(stg + stgRun)) fail("未启动：红色静态电路板");
-if (!/%2357e389/.test(stgRun)) fail("运行中：绿色电路板");
-if (!(segs(stg) > segs(stgRun) * 1.5)) fail("未启动的走线应断开");
-for (const t of ["<circle", "rx="]) if (!svgOf(stgRun).includes(t)) fail(`电路板应含 ${t}`);
+if (!/%23ff6b5e/.test(pblk(".bg-red")) || /animation|transition/.test(pblk(".bg-red") + pblk(".bg-green"))) fail("未启动：红色静态底图");
+if (!/%2357e389/.test(pblk(".bg-green"))) fail("运行中：绿色底图");
 if (!svgOf(pblk(".bg-red")) || !svgOf(pblk(".bg-green")) || !/background-repeat: repeat/.test(pblk(".bg-layer"))) fail("应有全屏平铺底图");
-if (!(svgOf(stgRun).length > svgOf(pblk(".bg-green")).length * 1.5)) fail("电源键附近应比全屏底图更密");
 if (!html.includes('id="bg"') || html.indexOf('id="bg"') > html.indexOf('class="shell')) fail("全屏底图应在内容之下");
 if (!/\.bg\.dim \{[^}]*opacity/.test(css) || !/"dim"/.test(main)) fail("组网 / 设置页底图应更淡");
 if (!/import "\.\/pcb\.css";/.test(main) || !fs.existsSync(W + "/scripts/gen-pcb.py")) fail("电路板底图应由 gen-pcb.py 生成并引入");
-if (!/\.pcb-flow \{[^}]*display: none; \}/.test(css)) fail("开机中不应有电流");
 // 重新打开不闪「已停止」：先渲染缓存状态，未确定前隐藏电源区
 if (!/class="shell nostate/.test(html) || !/localStorage/.test(main) || !/\.nostate/.test(css)) fail("重新打开不应闪「已停止」");
 // 组网页按隧道列表渲染（单条保持原样）；系统盘运行中置灰
@@ -230,17 +211,17 @@ eq(L.splitLines({ ok: false }), null, "splitLines 失败");
 for (const id of ["tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!html.includes(`id="${id}"`)) fail(`累计流量弹窗缺少 ${id}`);
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 if (!/cls\(\$\("stage"\), "stage " \+ v\.phase\)/.test(main)) fail("舞台应随启动阶段切换");
-// 电流动画：只在运行中、只用 transform（合成层），页面不可见 / 不在首页时暂停；无发光滤镜；元素启动时一次建好
+// 电流动画：启动中电荷往复、运行中接通后流动，只改 stroke-dashoffset；不可见时暂停；无发光滤镜
 const kf = (n) => css.slice(css.indexOf(`@keyframes ${n}`), css.indexOf("}\n", css.indexOf(`@keyframes ${n}`)) + 1);
-{ const k = kf("pcbFlow"); if (!k || /opacity|left|top|width|height|stroke|filter|shadow|background/.test(k.replace(/@keyframes \w+/, ""))) fail("pcbFlow 只能改 transform"); }
+{ const k = kf("pcbPulse"); if (!k || /opacity|left|top|width|height|filter|shadow|background|transform|scale/.test(k.replace(/@keyframes \w+/, ""))) fail("pcbPulse 只能改 stroke-dashoffset"); }
 { const k = kf("chipFlow"); if (!k || /opacity|left|top|width|height|filter|shadow|background|transform|scale/.test(k.replace(/@keyframes \w+/, ""))) fail("chipFlow 只能改 stroke-dashoffset"); }
-if (!/\.running \.pcb-flow \{ display: block; \}/.test(css)) fail("电流只在运行中流动");
-if (/filter|box-shadow|blur/.test(blk(".pf i"))) fail("电流不能发光");
-if (!/\.page:not\(\.on\) \.pf i, \.hid \.pf i \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
-{ const n = (fs.readFileSync(W + "/src/pcb.js", "utf8").match(/\{x:/g) || []).length; if (n < 4 || n > 12) fail("电流走线数量应在 4-12"); }
+if (!/\.pcb-svg\.flowing \.tr-pulse/.test(css) || !/\.pcb-svg\.charging \.tr-pulse/.test(css)) fail("电流应只在修复/运行时流动");
+if (/filter|box-shadow|blur/.test(blk(".tr-pulse") + blk(".tr-g") + blk(".tr-glow"))) fail("电流不能发光滤镜");
+if (!/\.page:not\(\.on\) \.tr-pulse, \.hid \.tr-pulse \{ animation-play-state: paused; \}/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停电流动画");
+{ const n = (fs.readFileSync(W + "/src/pcb.js", "utf8").match(/kind:"pin"/g) || []).length; if (n < 20 || n > 80) fail("舞台走线数量应受控"); }
 // 性能：状态刷新只在变化时写 DOM；日志内容未变不重写；不保留装饰性动画
 if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.test(main)) fail("状态刷新应只在变化时写 DOM");
-if (/requestAnimationFrame/.test(main) === false) fail("启动日志应按帧合并写入");
+if (/requestAnimationFrame/.test(main) === false) fail("修复进度应按帧更新");
 if (/@keyframes drop|\.switching/.test(css)) fail("不得保留装饰性过渡动画");
 process.exit(bad);
 EOS

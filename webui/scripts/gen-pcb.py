@@ -232,22 +232,98 @@ def tile_svg(color, broken):
     return "".join(g)
 
 
+def bus_lines():
+    bus = []
+    for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+        ox = 0 if sx < 0 else W
+        oy = 0 if sy < 0 else H
+        for k in range(4):
+            y = oy - sy * (8 + k * 5)
+            x_a = ox - sx * 2
+            x_b = ox - sx * (28 + k * 5)
+            x_c = x_b - sx * 10
+            bus.append([(x_a, y), (x_b, y), (x_c, y - sy * 10), (x_c - sx * 22, y - sy * 10)])
+    return bus
+
+
+def traces_export():
+    """舞台可动画走线：路径从芯片引脚向外，供 stroke-dashoffset 由内向外修复。"""
+    items = []
+    for pin in pins():
+        pts = trace(pin)
+        px, py = pts[0]
+        items.append({
+            "d": path_d(pts),
+            "dist": round(math.hypot(px - CX, py - CY), 1),
+            "kind": "pin",
+        })
+    for pts in corner_traces():
+        # corner_traces 是 [edge, chip]；改成从芯片向外
+        pts = list(reversed(pts))
+        px, py = pts[0]
+        items.append({
+            "d": path_d(pts),
+            "dist": round(math.hypot(px - CX, py - CY), 1),
+            "kind": "corner",
+        })
+    for pts in bus_lines():
+        # 总线在角落，离芯片更远，较晚接通
+        mid = pts[len(pts) // 2]
+        items.append({
+            "d": path_d(pts),
+            "dist": round(math.hypot(mid[0] - CX, mid[1] - CY), 1),
+            "kind": "bus",
+        })
+    vias = []
+    for t in (trace(p) for p in pins()):
+        if len(t) == 4:
+            vias.append({"x": round(t[2][0], 1), "y": round(t[2][1], 1)})
+        elif rnd.random() < 0.5:
+            vias.append({"x": round(t[1][0], 1), "y": round(t[1][1], 1)})
+    pr = []
+    for (px, py), v, _, _ in pins():
+        if v[0]:
+            x = px if v[0] < 0 else px - PIN_LEN
+            pr.append({"x": round(x, 1), "y": round(py - 2, 1), "w": PIN_LEN, "h": 4})
+        else:
+            y = py if v[1] < 0 else py - PIN_LEN
+            pr.append({"x": round(px - 2, 1), "y": round(y, 1), "w": 4, "h": PIN_LEN})
+    return items, vias, pr
+
+
+def js_obj(d):
+    parts = []
+    for k, v in d.items():
+        if isinstance(v, str):
+            parts.append(f'{k}:"{v}"')
+        else:
+            parts.append(f"{k}:{v}")
+    return "{" + ",".join(parts) + "}"
+
+
 root = Path(__file__).resolve().parent.parent
 red = data_uri(svg("%23ff6b5e", True))
 green = data_uri(svg("%2357e389", False))
 tred = data_uri(tile_svg("%23ff6b5e", True))
 tgreen = data_uri(tile_svg("%2357e389", False))
-css = f"""/* 由 scripts/gen-pcb.py 生成，勿手改。整页电路板：底纹 {TILE}x{TILE} 平铺 + 按钮周围 {W}x{H} 密集走线，静态 SVG，只栅格化一次 */
-.bg-red {{ background-color: #120c0d; background-image: url("{tred}"); }}
-.bg-green {{ background-color: #0b110d; background-image: url("{tgreen}"); }}
+css = f"""/* 由 scripts/gen-pcb.py 生成，勿手改。整页底纹 {TILE}x{TILE} 平铺，静态 SVG，只栅格化一次。
+   舞台可动画走线在 pcb.js（PCB_TRACES），不再用 .st-layer 背景图。 */
+.bg-red {{ background-color: #07080c; background-image: url("{tred}"); }}
+.bg-green {{ background-color: #050a08; background-image: url("{tgreen}"); }}
 .bg-layer {{ background-size: {TILE}px {TILE}px; background-repeat: repeat; }}
-.st-red {{ background-image: url("{red}"); }}
-.st-green {{ background-image: url("{green}"); }}
-.st-layer {{ width: {W}px; height: {H}px; margin: -{H // 2}px 0 0 -{W // 2}px; background-size: {W}px {H}px; background-repeat: no-repeat; }}
 """
 (root / "src" / "pcb.css").write_text(css)
-js = "// 由 scripts/gen-pcb.py 生成，勿手改。电流走线（舞台坐标 %dx%d，起点在外、终点在芯片）\nexport const PCB_W = %d;\nexport const PCB_H = %d;\nexport const PCB_FLOW = [\n%s\n];\n" % (
-    W, H, W, H, ",\n".join("  " + str(f).replace("'", '"') for f in flows()))
-js = js.replace('"x"', "x").replace('"y"', "y").replace('"len"', "len").replace('"deg"', "deg").replace('"delay"', "delay")
+tr, vias, pins_out = traces_export()
+flow_js = ",\n".join("  " + str(f).replace("'", '"') for f in flows())
+flow_js = flow_js.replace('"x"', "x").replace('"y"', "y").replace('"len"', "len").replace('"deg"', "deg").replace('"delay"', "delay")
+js = (
+    f"// 由 scripts/gen-pcb.py 生成，勿手改。舞台坐标 {W}x{H}；走线从芯片向外，供 stroke-dashoffset 修复。\n"
+    f"export const PCB_W = {W};\n"
+    f"export const PCB_H = {H};\n"
+    f"export const PCB_TRACES = [\n" + ",\n".join("  " + js_obj(x) for x in tr) + "\n];\n"
+    f"export const PCB_VIAS = [\n" + ",\n".join("  " + js_obj(x) for x in vias) + "\n];\n"
+    f"export const PCB_PINS = [\n" + ",\n".join("  " + js_obj(x) for x in pins_out) + "\n];\n"
+    f"export const PCB_FLOW = [\n{flow_js}\n];\n"
+)
 (root / "src" / "pcb.js").write_text(js)
-print("pcb.css", len(css), "bytes; flows", len(flows()))
+print("pcb.css", len(css), "bytes; traces", len(tr), "vias", len(vias), "pins", len(pins_out), "flows", len(flows()))

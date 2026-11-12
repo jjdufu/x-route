@@ -18,12 +18,12 @@ import "@material/web/select/select-option.js";
 import { exec, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import "./pcb.css";
-import { PCB_FLOW } from "./pcb.js";
+import { PCB_W, PCB_H, PCB_TRACES, PCB_VIAS, PCB_PINS } from "./pcb.js";
 import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
   xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  parseBootTail, newBootBuf, feedBoot, bootStep, trafficLine, hsSubnetCheck, vpnTunnels, splitLines,
+  trafficLine, hsSubnetCheck, vpnTunnels, splitLines,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 
@@ -38,7 +38,6 @@ let status = null;
 let pending = null;      // start | stop
 let pendingAt = 0;       // 发出操作的时间，用于兜底超时
 let bgArmed = false;     // start-bg 已返回，之后读到的 bg.rc 才属于这次操作
-let boot = null;         // 启动日志跟随状态
 let ipv6Busy = false;
 let page = 0;
 let timer = null;
@@ -220,10 +219,8 @@ function chipJump(phase) {
   chipLock = null;
   const wrap = $("power-wrap");
   finishTree(wrap);
-  finishTree($("boot"));
   fragRest(phase === "running");
   clearFlowInline(wrap && wrap.querySelector(".chip-svg"));
-  if (phase !== "starting") bootOff();
   if (wrap) wrap.className = "power-wrap " + phase;
   chipRestPhase = phase;
 }
@@ -232,37 +229,8 @@ function waitAnims(anims) {
   return Promise.all(anims.filter(Boolean).map((a) => a.finished.catch(() => {})));
 }
 
-async function bootCollapse(live) {
-  const el = $("boot");
-  if (boot) {
-    clearTimeout(boot.timer);
-    if (boot.raf) cancelAnimationFrame(boot.raf);
-    boot = null;
-  }
-  if (!el) return;
-  if (!prefersReduce() && el.classList.contains("on") && live()) {
-    const a = el.animate(
-      [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-28px) scale(0.86)" }],
-      { duration: 300, easing: EASE_ACCEL, fill: "forwards" }
-    );
-    await a.finished.catch(() => {});
-    try { a.cancel(); } catch { /* */ }
-  }
-  el.style.transition = "none";
-  el.classList.remove("on");
-  el.style.transform = "";
-  el.style.opacity = "";
-  requestAnimationFrame(() => { el.style.transition = ""; });
-  clearTimeout(bootClear);
-  bootClear = setTimeout(() => {
-    if (!boot) { bootPool().forEach((r) => { r.textContent = ""; }); $("boot-log").style.transform = ""; }
-  }, 40);
-}
-
 async function chipToRunning(from, live) {
   if (from !== "starting") { chipJump("running"); return; }
-  await bootCollapse(live);
-  if (!live()) return;
   if (prefersReduce()) { chipJump("running"); return; }
   const wrap = $("power-wrap");
   wrap.className = "power-wrap running healing";
@@ -366,19 +334,6 @@ async function chipToStopped(from, live) {
 }
 
 async function chipToFailed(from, live) {
-  if (from === "starting") {
-    const el = $("boot");
-    if (boot) { clearTimeout(boot.timer); if (boot.raf) cancelAnimationFrame(boot.raf); boot = null; }
-    if (!prefersReduce() && el.classList.contains("on") && live()) {
-      const a = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: EASE_ACCEL, fill: "forwards" });
-      await a.finished.catch(() => {});
-      try { a.cancel(); } catch { /* */ }
-    }
-    el.style.transition = "none";
-    el.classList.remove("on");
-    el.style.opacity = "";
-    requestAnimationFrame(() => { el.style.transition = ""; });
-  }
   if (!live()) return;
   const wrap = $("power-wrap");
   wrap.className = "power-wrap failed";
@@ -424,6 +379,124 @@ function chipFollow(phase) {
   chipJump(phase);
 }
 
+
+// ---- 舞台走线修复：由芯片向外 stroke-dashoffset 红→绿；启动中电荷往复，到达 running 才走完 ----
+const NS = "http://www.w3.org/2000/svg";
+let repairP = 0, repairRaf = 0, repairTok = 0;
+function svgEl(name, attrs) {
+  const n = document.createElementNS(NS, name);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, String(v));
+  return n;
+}
+function mountPcb() {
+  const svg = $("pcb-svg");
+  if (!svg || svg.childNodes.length) return;
+  svg.setAttribute("viewBox", `0 0 ${PCB_W} ${PCB_H}`);
+  const gPins = svgEl("g", { class: "pcb-pins" });
+  for (const p of PCB_PINS) gPins.append(svgEl("rect", { class: "pcb-pin", x: p.x, y: p.y, width: p.w, height: p.h, rx: 1 }));
+  const gRed = svgEl("g", { class: "pcb-red" });
+  const gGlow = svgEl("g", { class: "pcb-glow" });
+  const gGreen = svgEl("g", { class: "pcb-green" });
+  const gPulse = svgEl("g", { class: "pcb-pulse" });
+  const maxD = Math.max(...PCB_TRACES.map((t) => t.dist), 1);
+  PCB_TRACES.forEach((t, i) => {
+    const distN = t.dist / maxD;
+    const t0 = +(distN * 0.72).toFixed(3);
+    const t1 = +Math.min(1, t0 + 0.28).toFixed(3);
+    gRed.append(svgEl("path", { class: "tr-r", d: t.d }));
+    const glow = svgEl("path", { class: "tr-glow", d: t.d });
+    const gr = svgEl("path", { class: "tr-g", d: t.d });
+    glow.dataset.t0 = gr.dataset.t0 = String(t0);
+    glow.dataset.t1 = gr.dataset.t1 = String(t1);
+    gGlow.append(glow); gGreen.append(gr);
+    if (t.kind !== "bus") {
+      gPulse.append(svgEl("path", { class: "tr-pulse", d: t.d, style: `--t:${((i * 0.11) % 1.4).toFixed(2)}s` }));
+    }
+  });
+  const gVias = svgEl("g", { class: "pcb-vias" });
+  for (const v of PCB_VIAS) gVias.append(svgEl("circle", { class: "pcb-via", cx: v.x, cy: v.y, r: 2.4 }));
+  svg.append(gPins, gRed, gGlow, gGreen, gPulse, gVias);
+  svg.querySelectorAll(".tr-g, .tr-glow, .tr-r, .tr-pulse").forEach((path) => {
+    const len = path.getTotalLength();
+    path.dataset.len = String(len);
+    if (path.classList.contains("tr-r")) {
+      path.style.strokeDasharray = `${len * 0.32} 8 ${len}`;
+      path.style.strokeDashoffset = "0";
+    } else if (path.classList.contains("tr-pulse")) {
+      path.style.strokeDasharray = "10 46";
+    } else {
+      path.style.strokeDasharray = String(len);
+      path.style.strokeDashoffset = String(len);
+    }
+  });
+  applyRepair(0);
+}
+function applyRepair(p) {
+  repairP = Math.max(0, Math.min(1, p));
+  const svg = $("pcb-svg");
+  if (!svg) return;
+  svg.querySelectorAll(".tr-g, .tr-glow").forEach((el) => {
+    const len = +el.dataset.len || 0;
+    const t0 = +el.dataset.t0 || 0;
+    const t1 = +el.dataset.t1 || 1;
+    let local = 0;
+    if (repairP <= t0) local = 0;
+    else if (repairP >= t1) local = 1;
+    else local = (repairP - t0) / (t1 - t0);
+    el.style.strokeDashoffset = String(len * (1 - local));
+  });
+  svg.querySelectorAll(".tr-r").forEach((el) => { el.style.opacity = String(0.72 * (1 - repairP)); });
+  svg.classList.toggle("charging", repairP > 0.02 && repairP < 0.995);
+  svg.classList.toggle("flowing", repairP >= 0.995);
+  if ($("power-wrap") && !chipLock) {
+    if (repairP <= 0.1) fragRest(false);
+    else if (repairP >= 0.58) fragRest(true);
+  }
+}
+function repairCap(phase, step) {
+  if (phase === "running") return 1;
+  if (phase === "starting") return (step || 0) >= 1 ? 0.84 : 0.58;
+  return 0;
+}
+function animateRepair(target, ms) {
+  const tok = ++repairTok;
+  cancelAnimationFrame(repairRaf);
+  if (prefersReduce() || ms <= 0) { applyRepair(target); return; }
+  const from = repairP, t0 = performance.now();
+  const step = (now) => {
+    if (tok !== repairTok) return;
+    const k = Math.min(1, (now - t0) / ms);
+    applyRepair(from + (target - from) * k);
+    if (k < 1) repairRaf = requestAnimationFrame(step);
+  };
+  repairRaf = requestAnimationFrame(step);
+}
+function boardFollow(v) {
+  const cap = repairCap(v.phase, v.step);
+  if (prefersReduce()) { applyRepair(cap); return; }
+  if (v.phase === "starting") {
+    animateRepair(cap, Math.max(500, Math.abs(cap - repairP) * 4200));
+    return;
+  }
+  if (v.phase === "running") { animateRepair(1, Math.max(400, (1 - repairP) * 900)); return; }
+  if (v.phase === "stopping") { animateRepair(0, 2000); return; }
+  animateRepair(0, Math.max(240, repairP * 600));
+}
+function renderStageHud(v) {
+  const ph = $("stage-hud-ph"), sub = $("stage-hud-sub"), hud = $("stage-hud");
+  if (!ph || !sub) return;
+  const map = {
+    stopped: ["STOPPED", "服务已停止"],
+    starting: ["BOOTING...", "正在启动服务"],
+    running: ["RUNNING", "服务运行中"],
+    stopping: ["STOPPING", "正在停止服务"],
+    failed: ["FAILED", ""],
+  };
+  const [a, b] = map[v.phase] || map.stopped;
+  txt(ph, a); txt(sub, b);
+  hide(hud, v.phase === "failed");
+}
+
 // ---- 渲染 ----
 function renderPower(d) {
   const v = vmView(d, pending);
@@ -431,7 +504,7 @@ function renderPower(d) {
     : chipLock === "shutdown" ? "power-wrap stopping shutdown"
     : "power-wrap " + v.phase;
   cls($("power-wrap"), wrapCls);
-  cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红色断电，启动中变暗叠开机日志，运行中绿色 + 电流
+  cls($("stage"), "stage " + v.phase);   // 舞台随阶段：停止 / 失败红线裂纹，启动中由内向外修复，运行中绿流
   cls($("bg"), "bg " + v.phase + (page ? " dim" : ""));   // 整页背景同步变色；组网、设置页更弱
   prop($("power"), "disabled", v.phase === "starting" || v.phase === "stopping" || !!(d.vm && d.vm.tripped) || !!chipLock);
   const tripped = d.vm && d.vm.tripped !== null && d.vm.tripped !== undefined;
@@ -439,9 +512,9 @@ function renderPower(d) {
   // 失败细节叠在舞台内，不占文档流；整机复位已有 #trip 卡片，这里不再重复
   if (v.phase === "failed" && v.text && !tripped) { txt(err, v.text); hide(err, false); }
   else { hide(err, true); txt(err, ""); }
-  if (v.phase === "starting") bootOn();
+  renderStageHud(v);
   chipFollow(v.phase);
-  if (v.phase !== "starting" && !chipLock) bootOff();
+  boardFollow(v);
   cls($("chip"), "chip " + (v.chip === "运行中" ? "chip-ok" : v.chip === "异常" ? "chip-bad" : "chip-off"));
   txt($("chip-text"), v.chip);
   tog(document.querySelector(".shell"), "nostate", false);   // 拿到状态（或上次缓存）才显示按钮与背景，不先闪「已停止」
@@ -605,114 +678,11 @@ function schedule() {
   clearTimeout(timer);
   if (gone) return;
   const v = status ? vmView(status, pending) : { phase: "stopped" };
-  const fast = v.phase === "stopping" || !!vpnBusy;
+  const fast = v.phase === "stopping" || v.phase === "starting" || !!vpnBusy;
   timer = setTimeout(async () => {
-    // 开机中由 bootTick 驱动状态刷新，这里不再并行拉 status-json
-    if (!document.hidden && !boot) { await refresh(); if (page === 2) loadTraffic(); }
+    if (!document.hidden) { await refresh(); if (page === 2) loadTraffic(); }
     schedule();
   }, fast ? 1500 : 5000);
-}
-
-// ---- 开机日志：增量读取（按字节偏移），约 200ms 一次。点击启动后电源按钮隐藏，舞台里显示瀑布式日志；
-// 启动完成或失败（阶段不再是 starting）即撤掉日志、恢复按钮 ----
-// 固定行池：BOOT_ROWS 个行元素一次建好，之后只改文字（不增删节点）。
-// 平滑瀑布：新到的行先进缓冲区（积压），每帧按 bootStep 滚动一小段（可为小数行）：
-//   - 整数部分变化时才改写行池文字（每帧最多一次）；
-//   - 小数部分用 translate3d 把整块下移，最新一行从底部渐隐区慢慢升起；
-//   - 积压滚完就停 rAF，没有空转帧；全程不读布局。
-const BOOT_ROWS = 16;
-const BOOT_LH = 14;      // 与 .boot-log 行高一致
-let bootRows = null;
-function bootPool() {
-  if (bootRows) return bootRows;
-  const box = $("boot-log");
-  bootRows = Array.from({ length: BOOT_ROWS }, () => document.createElement("div"));
-  box.replaceChildren(...bootRows);
-  return bootRows;
-}
-
-function bootOn() {
-  if (boot) return;
-  // 点击启动：开机日志会被 start-bg 清空，从当前末尾起跟随，清空后自动从 0 读；
-  // 打开页面时已在开机：直接给出已有内容（最多末尾一段）
-  boot = { m: -1, c: pending === "start" ? -1 : 0, buf: newBootBuf(), timer: 0, raf: 0, shown: 0, pos: 0, st: undefined, at: Date.now() };
-  if (pending !== "start") boot.m = 0;
-  clearTimeout(bootClear);
-  bootPool().forEach((r) => { r.textContent = ""; });
-  $("boot-log").style.transform = "";
-  tog($("boot"), "on", true);   // CSS：按钮先淡出，日志随后淡入（交叉淡入淡出约 200ms）
-  bootTick(boot);
-}
-
-// 结束开机阶段：日志淡出、按钮淡入；淡出结束后再清空行池（淡出过程中文字保持不动）
-let bootClear = 0;
-function bootOff() {
-  if (!boot) return;
-  clearTimeout(boot.timer);
-  if (boot.raf) cancelAnimationFrame(boot.raf);
-  boot = null;
-  tog($("boot"), "on", false);
-  clearTimeout(bootClear);
-  bootClear = setTimeout(() => { if (!boot) { bootPool().forEach((r) => { r.textContent = ""; }); $("boot-log").style.transform = ""; } }, 260);
-}
-
-function bootPaint(b) {
-  if (!b.raf && page === 0) b.raf = requestAnimationFrame(() => bootFrame(b));
-}
-function bootFrame(b) {
-  b.raf = 0;
-  if (boot !== b || page !== 0) return;
-  const target = b.buf.total;
-  b.pos = bootStep(b.pos, target, BOOT_ROWS);
-  const top = Math.ceil(b.pos);
-  if (top !== b.shown) {
-    const rows = bootPool();
-    const lines = b.buf.lines;
-    const base = target - lines.length;      // 缓冲区第一行的累计序号
-    for (let i = 0; i < BOOT_ROWS; i++) {
-      const n = top - BOOT_ROWS + i;
-      const t = n >= base && n >= 0 ? (lines[n - base] || "") : "";
-      if (rows[i].textContent !== t) rows[i].textContent = t;
-    }
-    b.shown = top;
-  }
-  const off = (top - b.pos) * BOOT_LH;
-  $("boot-log").style.transform = off > 0.01 ? `translate3d(0,${off.toFixed(2)}px,0)` : "";
-  if (b.pos < target) b.raf = requestAnimationFrame(() => bootFrame(b));
-}
-
-// 开机期间的唯一轮询：约 200ms 一次，上一次 exec 返回后才排下一次（永不重叠）；
-// boot-tail 在手机侧走快速路径，只读新增字节。状态（status-json）只在虚拟机状态变化或每 5 秒拉一次，
-// 其他定时刷新在开机期间全部暂停，WebView 主线程基本空闲
-const BOOT_POLL = 200;
-async function bootTick(b) {
-  if (boot !== b) return;
-  if (!document.hidden) {
-    const r = await xr("boot-tail", String(b.m), String(b.c));
-    if (boot !== b) return;
-    const t = parseBootTail(r.stdout);
-    if (t) {
-      b.m = t.mod.size; b.c = t.con.size;
-      const a = feedBoot(b.buf, "mod", t.mod.text);
-      const c = feedBoot(b.buf, "con", t.con.text);
-      if (a || c) bootPaint(b);
-      if (pending === "start" && bgArmed && t.rc !== null && t.rc !== 0) {
-        // 后台 xr start 已失败退出：立刻结束，显示原因
-        pending = null;
-        await refresh();
-        if (!(status && status.vm && (status.vm.running || status.vm.error))) snack("启动失败", true);
-        schedule();
-        return;
-      }
-      const now = Date.now();
-      if (t.st !== b.st || now - b.at > 5000) {
-        b.st = t.st; b.at = now;
-        await refresh();          // 可能结束开机阶段（bootOff）
-        if (boot !== b) { schedule(); return; }
-      }
-    }
-  }
-  if (boot === b) b.timer = setTimeout(() => bootTick(b), BOOT_POLL);
 }
 
 // ---- 操作 ----
@@ -980,20 +950,9 @@ function bindRowSwitch(row, sw, onChange) {
   sw.addEventListener("change", onChange);
 }
 
-// 运行中的电流走线：启动时按 pcb.js 一次性建好（8 个元素），之后只靠 CSS 动画，不再碰 DOM
-function buildFlow() {
-  $("pcb-flow").replaceChildren(...PCB_FLOW.map((f) => {
-    const d = document.createElement("span");
-    d.className = "pf";
-    d.style.cssText = `left:${f.x}px;top:${f.y}px;width:${f.len}px;transform:rotate(${f.deg}deg);--t:${f.delay}s`;
-    d.append(document.createElement("i"));
-    return d;
-  }));
-}
-
 function bind() {
   document.querySelectorAll("md-icon[data-icon]").forEach(icon);
-  buildFlow();
+  mountPcb();
   bindPager();
   goPage(0);
   $("power").addEventListener("click", power);
@@ -1023,7 +982,7 @@ function bind() {
   $("btn-uninstall").addEventListener("click", uninstallNow);
   document.addEventListener("visibilitychange", () => {
     document.documentElement.classList.toggle("hid", document.hidden);   // 不可见时暂停电流动画
-    if (!document.hidden && !boot && !gone) { refresh(); schedule(); }
+    if (!document.hidden && !gone) { refresh(); schedule(); }
   });
 }
 
