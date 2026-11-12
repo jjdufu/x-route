@@ -83,7 +83,11 @@ chk '[ "$(cat "$RUN/net.up_out")" = "rmnet_data2 " ] && ! grep -q v4-rmnet "$FWD
 # 唯一例外是 XR_MSS 链里按路径 MTU 钳制 SYN 的 MSS（不改载荷，只防大包被上游丢弃）
 chk '! grep -v "XR_MSS" "$MOCK/calls" | grep -qE "^iptables .*(-t mangle|--dport|--sport|-p udp|-p tcp|MARK|DSCP|TCPMSS|TOS)"'
 chk '[ -z "$(grep -v -- "^-s 172.29.233.0/24 -o [a-z0-9_-]* -j MASQUERADE$" "$MOCK/XR_NAT")" ]'
-# 3. 去掉 VPN 网段 -> 路由与规则撤销
+# 3. 固定热点网段重叠路由被拒绝；去掉 VPN 网段 -> 路由与规则撤销
+echo "172.28.222.254/24" > "$RUN/net.hs_gw"
+echo "172.28.222.0/24" >> "$RUN/guest/guest/openvpn.routes"; $NET sync
+chk '! grep -q "172.28.222.0/24" "$RUN/routes.active" && grep -q "172.28.222.0/24 与 172.28.222.254/24 重叠" "$LOG"'
+rm -f "$RUN/net.hs_gw"
 set_kv XR_EXPOSE lan; : > "$RUN/guest/guest/openvpn.routes"; : > "$MOCK/calls"; $NET sync
 chk 'grep -q "^ndc network route remove local xr0 10.8.0.0/24 172.29.233.254" "$MOCK/calls" && grep -q "^ip rule del pref 4801 to 10.8.0.0/24" "$MOCK/calls"'
 chk '[ -z "$(cat "$RUN/routes.active")" ] && ! grep -q 10.8.0.0 "$FWD"'

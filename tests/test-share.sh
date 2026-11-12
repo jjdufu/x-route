@@ -8,7 +8,11 @@ fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
 mkdir -p "$T/bin" "$T/media/Download"
 CE=true; printf '#!/bin/sh\n[ "$1" = sys.user.0.ce_available ] && cat "%s/ce"\n' "$T" > "$T/bin/getprop"; chmod +x "$T/bin/getprop"
 echo true > "$T/ce"
-BBX="$(command -v busybox)"
+BBX="$(command -v busybox || true)"
+if [ -z "$BBX" ]; then
+  BBX="$T/bin/busybox"
+  printf '#!/bin/sh\nexec "$@"\n' > "$BBX"; chmod +x "$BBX"
+fi
 export PATH="$T/bin:$PATH" XR_DATA="$T/data" XR_MEDIA="$T/media" BB="$BBX"
 . "$ROOT/module/scripts/common.sh"; ensure_dirs
 . "$ROOT/module/scripts/share.sh"
@@ -17,10 +21,11 @@ share_prepare; chk '[ "$share_mode" = off ] && [ -z "$share_spec" ] && [ -z "$sh
 VM_SHARE=1
 echo false > "$T/ce"; share_prepare; chk '[ "$share_mode" = off ] && grep -q "CE 不可用" "$LOG"'
 echo true > "$T/ce"
-for bad in /data/local/tmp "$T/media/../x" "$T/media/a:b" "$T/media/nope" "$T/media/a,b"; do
+nl_dir="$(printf '%s/bad\nx' "$T/media")"; mkdir -p "$nl_dir"
+for bad in /data/local/tmp "$T/media/../x" "$T/media/a:b" "$T/media/nope" "$T/media/a,b" "$nl_dir"; do
   VM_SHARE_PATH="$bad"; share_prepare; chk '[ "$share_mode" = off ] && [ -z "$share_spec" ]'
 done
-chk 'grep -c "路径不允许" "$LOG" | grep -qx 5'
+chk 'grep -c "路径不允许" "$LOG" | grep -qx 6'
 # ro
 VM_SHARE_PATH="$T/media/Download"; share_prepare
 chk '[ "$share_mode" = ro ] && [ "$share_spec" = "$T/media/Download:xrshare:type=fs:cache=auto:timeout=1" ]'

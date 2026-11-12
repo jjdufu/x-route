@@ -32,7 +32,7 @@ is_ip6_cidr() { case "$1" in *:*) return 0 ;; *) return 1 ;; esac; }
 
 routes_valid() {
   up="$(cat "${RUN}/net.up_if" 2>/dev/null)"
-  busy="${XR_NET_PREFIX}.0/24 127.0.0.0/8 169.254.0.0/16 ${XR_NET6}::/64"
+  busy="${XR_NET_PREFIX}.0/24 127.0.0.0/8 169.254.0.0/16 ${XR_NET6}::/64 $(cat "${RUN}/net.hs_gw" 2>/dev/null)"
   for i in $up $(tether_ifaces); do
     busy="$busy $(ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')"
     busy="$busy $(ip -6 -o addr show dev "$i" 2>/dev/null | awk '{print $4}')"

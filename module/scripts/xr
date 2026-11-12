@@ -84,6 +84,7 @@ after_set() {
 }
 
 vpn_rejected() {
+  vm_running || return 0
   act="$(cat "${RUN}/routes.active" 2>/dev/null)"
   gf="${RUN}/guest/guest/openvpn.routes"
   [ -f "$gf" ] || return 0
@@ -222,9 +223,11 @@ status_json() {
   cfg=""
   v=""; for k in ${KEYS}; do eval "v=\"\${${k}}\""; cfg="${cfg:+${cfg},}\"${k}\":$(jstr "$v")"; done
   vst="down"; vaddr=""
-  [ -f "${RUN}/guest/guest/openvpn.status" ] && vst="$(cat "${RUN}/guest/guest/openvpn.status" 2>/dev/null)"
-  [ -n "$vst" ] || vst="down"
-  [ -f "${RUN}/guest/guest/openvpn.addr" ] && vaddr="$(cat "${RUN}/guest/guest/openvpn.addr" 2>/dev/null)"
+  if vm_running; then
+    [ -f "${RUN}/guest/guest/openvpn.status" ] && vst="$(cat "${RUN}/guest/guest/openvpn.status" 2>/dev/null)"
+    [ -n "$vst" ] || vst="down"
+    [ -f "${RUN}/guest/guest/openvpn.addr" ] && vaddr="$(cat "${RUN}/guest/guest/openvpn.addr" 2>/dev/null)"
+  fi
   profs="$(vpn_profiles "$vst")"
   tun="$(vpn_tunnels "$vst")"
   v6=null

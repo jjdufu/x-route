@@ -188,6 +188,8 @@ zl() { python3 -c "import zipfile,sys; print(\"\n\".join(zipfile.ZipFile(sys.arg
 chk 'zl "$dg" | grep -q "/debug.log$" && zl "$dg" | grep -q "/phone.txt$" && zl "$dg" | grep -q "/module.log$"'
 chk '[ -z "$(find "$T/dl" -name "*.gz")" ]'   # 全部导出都是 zip
 $XR stop; chk '! $XR running'
+echo up > "$RUN/guest/guest/openvpn.status"; echo "10.8.0.5" > "$RUN/guest/guest/openvpn.addr"; rm -f "$RUN/routes.active"
+chk '$XR status-json | J "d[\"vpn\"][\"status\"]==\"down\" and d[\"vpn\"][\"addr\"]==\"\" and d[\"vpn\"][\"routes_rejected\"]==[]" | grep -qx True'
 # 熔断：存在 tripped 时自启和启动都被拒绝，ack-trip 后恢复
 $XR set AUTOSTART 0 >/dev/null; date > "$TRIPPED"
 out="$($XR set AUTOSTART 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "熔断" && grep -qx "AUTOSTART=\"0\"" "$CONF"'

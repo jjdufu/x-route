@@ -195,7 +195,13 @@ is_uint()  { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le 6 ]; }
 in_range() { is_uint "$1" && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
 valid_ip4() {
   echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
-  o="$1"; for _ in 1 2 3 4; do v="${o%%.*}"; [ "$v" -le 255 ] || return 1; o="${o#*.}"; done
+  _vo="$1"
+  for _ in 1 2 3 4; do
+    _vv="${_vo%%.*}"
+    case "$_vv" in 0?*) return 1 ;; esac
+    [ "$_vv" -le 255 ] || return 1
+    _vo="${_vo#*.}"
+  done
 }
 
 # IPv4 点分掩码 -> 前缀长度；非连续掩码返回失败
@@ -339,7 +345,7 @@ valid_kv() { # $1=键 $2=值，按 docs/v2-plan/05 的约束表校验
     VM_SHARE_PATH)
       _sp="$(canon_share_path "$2")"
       case "$_sp" in "${MEDIA}"|"${MEDIA}"/*) ;; *) return 1;; esac
-      case "$_sp" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*) return 1;; esac
+      case "$_sp" in *..*|*\"*|*\'*|*' '*|*:*|*,*|*'$'*|*'`'*|*\\*|*[[:cntrl:]]*) return 1;; esac
       [ -d "$_sp" ] ;;
     AUTOSTART_DELAY_SEC)
       in_range "$2" 0 600 ;;
@@ -372,7 +378,15 @@ config_hash() {
 }
 
 is_module_disabled() { [ -f "${MODDIR}/disable" ] || [ -f "${MODDIR}/remove" ]; }
-is_pid_running()     { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+is_pid_running() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null || return 1
+  if [ -r "/proc/$1/stat" ]; then
+    _ps=""; read -r _ps < "/proc/$1/stat" 2>/dev/null
+    case "$_ps" in *") Z "*|*") X "*|*") x "*) return 1 ;; esac
+  fi
+  return 0
+}
 wait_boot_completed(){ until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done; }
 ce_ready()           { [ "$(getprop sys.user.0.ce_available)" = true ]; }
 wakelock_on()        { { echo xrouter > /sys/power/wake_lock; } 2>/dev/null; }
@@ -380,8 +394,14 @@ wakelock_off()       { { echo xrouter > /sys/power/wake_unlock; } 2>/dev/null; }
 
 # ---- CIDR 工具（08 使用）。mksh 只有 32 位有符号算术：只用按位与和相等比较，不做有符号的移位比较 ----
 # 注意：sh 没有局部变量，以下函数只用 _ 前缀变量，避免覆盖调用方的 n/b/c 等循环变量
-ip2int() { _o="$1"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"; _o="${_o#*.}"; _c="${_o%%.*}"; _d="${_o#*.}"
-  echo $(( (_a<<24) | (_b<<16) | (_c<<8) | _d )); }
+ip2int() {
+  _o="$1"; _a="${_o%%.*}"; _o="${_o#*.}"; _b="${_o%%.*}"; _o="${_o#*.}"; _c="${_o%%.*}"; _d="${_o#*.}"
+  _a="${_a#0}"; _a="${_a#0}"; [ -n "$_a" ] || _a=0
+  _b="${_b#0}"; _b="${_b#0}"; [ -n "$_b" ] || _b=0
+  _c="${_c#0}"; _c="${_c#0}"; [ -n "$_c" ] || _c=0
+  _d="${_d#0}"; _d="${_d#0}"; [ -n "$_d" ] || _d=0
+  echo $(( (_a<<24) | (_b<<16) | (_c<<8) | _d ))
+}
 prefix_mask() { [ "$1" -eq 0 ] && { echo 0; return; }; echo $(( (0xFFFFFFFF << (32-$1)) & 0xFFFFFFFF )); }
 valid_cidr() {
   # 接受规范 CIDR，以及裸主机地址、IPv4 点分掩码（先经 norm_route）
