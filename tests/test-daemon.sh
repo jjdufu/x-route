@@ -66,7 +66,7 @@ chk '$XR start'
 cpid="$(cat "$RUN/crosvm.pid")"
 kill "$cpid" 2>/dev/null
 # 等待守护进程 5 秒循环扫到
-w=0; while [ "$w" -lt 12 ]; do grep -q "异常退出" "$LOG" && break; sleep 1; w=$((w+1)); done
+w=0; while [ "$w" -lt 15 ]; do grep -q "异常退出" "$LOG" && grep -q "net down" "$T/net.calls" && [ -f "$RUN/last_error" ] && break; sleep 1; w=$((w+1)); done
 chk 'grep -q "异常退出" "$LOG" && grep -q "net down" "$T/net.calls"'
 chk '[ -f "$RUN/last_error" ]'
 
