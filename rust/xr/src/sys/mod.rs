@@ -41,8 +41,16 @@ pub struct DirLock {
 
 impl DirLock {
     pub fn acquire(path: PathBuf, max_iters: u32, sleep_ms: u64, check_pid: bool) -> Self {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let mut n = 0_u32;
         while fs::create_dir(&path).is_err() {
+            if let Some(parent) = path.parent() {
+                if !parent.exists() && fs::create_dir_all(parent).is_err() {
+                    break;
+                }
+            }
             let stale_pid = if check_pid {
                 fs::read_to_string(path.join("pid"))
                     .ok()
@@ -52,14 +60,19 @@ impl DirLock {
             } else {
                 false
             };
-            if stale_pid || n >= max_iters {
+            if stale_pid {
                 let _ = fs::remove_dir_all(&path);
                 continue;
+            }
+            if n >= max_iters {
+                let _ = fs::remove_dir_all(&path);
+                let _ = fs::create_dir(&path);
+                break;
             }
             thread::sleep(Duration::from_millis(sleep_ms));
             n = n.saturating_add(1);
         }
-        if check_pid {
+        if check_pid && path.is_dir() {
             let _ = fs::write(path.join("pid"), format!("{}\n", std::process::id()));
         }
         Self { path }

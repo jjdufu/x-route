@@ -25,6 +25,7 @@ use crate::net::run_net_cli;
 use crate::sys::spawn::{exec_crosvm_trampoline, spawn_self_detached};
 use crate::sys::{ce_ready, wait_boot_completed};
 use crate::traffic::{acct_hooks, acct_json, acct_reset, acct_setup, acct_snapshot, acct_teardown};
+use crate::uninstall::{uninstall_now, uninstall_standard, uninstall_worker};
 use crate::vm::disk::{disk_expand, disk_reset};
 use crate::vm::{fuse_watch, run_net_hook, vm_running};
 
@@ -440,6 +441,11 @@ pub fn run_cli(args: &[String]) -> i32 {
             println!("{out}");
             i32::from(!out.contains("\"ok\":true"))
         }
+        "uninstall-now" => {
+            let (rc, out) = uninstall_now(&env, rest.first().map_or("", String::as_str));
+            println!("{out}");
+            rc
+        }
         "internal" => match rest.first().map(String::as_str) {
             Some("dump-config-keys") => {
                 for k in KEYS {
@@ -508,6 +514,15 @@ pub fn run_cli(args: &[String]) -> i32 {
                 0
             }
             Some("exec-crosvm") => exec_crosvm_trampoline(rest.get(1..).unwrap_or(&[])),
+            Some("uninstall") => uninstall_standard(&env),
+            Some("uninstall-worker") => {
+                let (Some(stage), Some(moddir), Some(upd)) =
+                    (rest.get(1), rest.get(2), rest.get(3))
+                else {
+                    return 2;
+                };
+                uninstall_worker(&env, stage, moddir, upd)
+            }
             _ => 2,
         },
         _ => {

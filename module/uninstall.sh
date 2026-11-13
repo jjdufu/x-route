@@ -1,6 +1,10 @@
 #!/system/bin/sh
 # XRouter: 彻底卸载。每一步都容错，最后删除全部数据（含系统盘与日志）。
 MODDIR="${0%/*}"
+if [ -x "${MODDIR}/bin/xr" ] && [ "${XR_UNINSTALL_SH_ONLY:-0}" != "1" ]; then
+  exec "${MODDIR}/bin/xr" internal uninstall
+fi
+
 XR_DATA="${XR_DATA:-/data/adb/xrouter}"
 RUN="${XR_DATA}/run"
 SYSBIN="${XR_SYSBIN:-/system/bin}"
@@ -31,9 +35,9 @@ kill_match() {
     [ "$pid" = "$$" ] && continue
     cmd="$( { tr '\0' ' ' < "${d}/cmdline"; } 2>/dev/null )"
     [ -n "$cmd" ] || continue
-    case "$cmd" in *uninstall.sh*) continue ;; esac
+    case "$cmd" in *uninstall.sh*|*uninstall-worker*|*internal\ uninstall*) continue ;; esac
     case "$cmd" in
-      *crosvm*"${XR_DATA}"*|*"${XR_DATA}/images"*|*"${MODDIR}/scripts/daemon.sh"*|*"${MODDIR}/scripts/watchdog.sh"*|*"${MODDIR}/scripts/net.sh"*|xrnotify|xrnotify\ *)
+      *crosvm*"${XR_DATA}"*|*"${XR_DATA}/images"*|*"${MODDIR}/scripts/daemon.sh"*|*"${MODDIR}/scripts/watchdog.sh"*|*"${MODDIR}/scripts/net.sh"*|*"${MODDIR}/bin/xr"*|xrnotify|xrnotify\ *)
         kill "$sig" "$pid" 2>/dev/null
         ;;
     esac

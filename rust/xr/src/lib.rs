@@ -8,4 +8,5 @@ pub mod log;
 pub mod net;
 pub mod sys;
 pub mod traffic;
+pub mod uninstall;
 pub mod vm;

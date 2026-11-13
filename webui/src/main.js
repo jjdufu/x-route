@@ -746,6 +746,8 @@ async function uninstallNow() {
     $("gone-text").textContent = `卸载请求失败${e ? `（${e}）` : ""}，请到管理器的模块列表中卸载。`;
     $("gone").classList.add("bad");
     setIcon(document.querySelector("#gone md-icon"), "error");
+  } else {
+    $("gone-text").textContent = "XRouter 已从模块列表移除，正在后台清理数据，无需重启。可以关闭此页面。";
   }
 }
 
