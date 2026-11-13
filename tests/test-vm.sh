@@ -38,14 +38,14 @@ chk '[ -S "$RUN/clash-ctl.sock" ] && [ -S "$RUN/clash-rpc.sock" ]'
 chk 'grep -q -- "--shared-dir" "$T/args" && grep -q "xrctl" "$T/args" && ! grep -q "xrshare" "$T/args"'
 chk '[ -f "$FUSE" ]'
 sleep 10
-chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(sh "$T/mod/scripts/xr" internal config-hash)" ]'
+chk '[ "$(cat "$RUN/state")" = stable ] && [ -f "$RUN/ready_at" ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(sh "$T/mod/scripts/xr" internal config-hash)" ]'
 chk '$VM status | grep -q "\"running\":true.*\"state\":\"stable\".*\"last_good_match\":true.*\"ready_channel\":\"hvc\""'
 $VM start; chk 'grep -q "已在运行" "$LOG"'
 # 磁盘操作在运行中被拒绝
 $VM expand 2048; chk '[ $? -ne 0 ] && [ "$(stat -c %s "$ROOTFS")" -eq $((300*1048576)) ]'
 # 2. 停止
 $VM stop
-chk '! sh "$T/mod/scripts/xr" running && [ ! -f "$RUN/crosvm.pid" ] && [ ! -e "$RUN/clash-ctl.sock" ] && [ ! -e "$RUN/clash_mux.pid" ] && grep -q "net down" "$T/net.calls"'
+chk '! sh "$T/mod/scripts/xr" running && [ ! -f "$RUN/crosvm.pid" ] && [ ! -f "$RUN/ready_at" ] && [ ! -e "$RUN/clash-ctl.sock" ] && [ ! -e "$RUN/clash_mux.pid" ] && grep -q "net down" "$T/net.calls"'
 # 2b. OpenVPN 持久开关：开机按 openvpn.enabled 下发 enable / disable
 mkdir -p "$XR_DATA/config" "$RUN/guest/host"
 printf 'client\n' > "$XR_DATA/config/openvpn.ovpn"
@@ -55,8 +55,11 @@ chk 'grep -q "remote\|^client\|." "$RUN/guest/host/openvpn.ovpn" && grep -qx dis
 echo 1 > "$XR_DATA/config/openvpn.enabled"
 $VM start; $VM stop
 chk 'grep -qx enable "$RUN/guest/host/openvpn.cmd"'
-# 3. 未就绪超时 -> 自动停止、熔断文件删除
-FAKE_NO_READY=1 $VM start; sleep 10
+# 3. 未就绪阶段：booting 期间 uptime_s 保持为 0 且状态行统一为「启动中」，超时后自动停止并删除熔断文件
+FAKE_NO_READY=1 $VM start
+chk '$VM status | grep -q "\"running\":true.*\"state\":\"booting\".*\"uptime_s\":0"'
+chk 'sh "$T/mod/scripts/xr" status-line | grep -q "^启动中 / 启动中 /"'
+sleep 10
 chk '[ ! -f "$RUN/crosvm.pid" ] && [ ! -f "$FUSE" ] && grep -q "秒内未就绪" "$LOG"'
 chk '$VM status | grep -q "\"running\":false.*\"error\":\"[0-9]* 秒内未就绪\""'   # WebUI 显示失败原因
 # 4. crosvm 立即退出

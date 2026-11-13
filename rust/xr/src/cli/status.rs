@@ -156,12 +156,11 @@ pub fn status_line(env: &Env) -> String {
     let run = env.run_dir();
     let (r, s) = if vm_running(env) {
         let st = fs::read_to_string(run.join("state")).unwrap_or_default();
-        let label = match st.trim() {
-            "stable" => "运行中",
-            "ready" => "已就绪",
-            _ => "启动中",
-        };
-        ("运行中", label)
+        match st.trim() {
+            "stable" => ("运行中", "运行中"),
+            "ready" => ("运行中", "已就绪"),
+            _ => ("启动中", "启动中"),
+        }
     } else {
         ("已停止", "-")
     };

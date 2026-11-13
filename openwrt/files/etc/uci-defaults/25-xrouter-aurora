@@ -5,7 +5,7 @@
 APK=/usr/lib/xrouter/luci-theme-aurora-1.4.0-r20260920.apk
 
 if [ -f "$APK" ]; then
-	apk add --allow-untrusted --force-overwrite "$APK" || exit 1
+	apk add --no-network --allow-untrusted --force-overwrite "$APK" || exit 1
 	rm -f "$APK"
 fi
 

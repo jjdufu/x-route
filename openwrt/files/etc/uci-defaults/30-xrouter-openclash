@@ -6,7 +6,7 @@ APK=/usr/lib/xrouter/luci-app-openclash-0.48.002.apk
 CORE_GZ=/usr/lib/xrouter/clash_meta.gz
 
 if [ -f "$APK" ]; then
-	apk add --allow-untrusted --force-overwrite "$APK" || exit 1
+	apk add --no-network --allow-untrusted --force-overwrite "$APK" || exit 1
 	rm -f "$APK"
 fi
 

@@ -101,6 +101,18 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
     run_net_cli(env, &[op.to_string()])
 }
 
+pub fn mono_now(env: &Env) -> Option<u64> {
+    let custom = env.proc_base.join("uptime");
+    let raw = if custom.is_file() {
+        fs::read_to_string(custom).ok()?
+    } else {
+        fs::read_to_string("/proc/uptime").ok()?
+    };
+    raw.split('.')
+        .next()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+}
+
 pub fn fuse_watch(env: &Env) {
     let cfg = Config::load(env);
     let ready_to = cfg.ready_timeout_sec();
@@ -127,11 +139,17 @@ pub fn fuse_watch(env: &Env) {
     }
 
     let run = env.run_dir();
+    if let Some(now_m) = mono_now(env) {
+        let _ = fs::write(run.join("ready_at"), format!("{now_m}\n"));
+    }
     let _ = fs::write(run.join("state"), "ready\n");
     let _ = fs::remove_file(run.join("last_error"));
     log_info(env, "vm", &format!("XR_READY（{}）", ready_channel(env)));
     blog(env, "net", "重建转发 / NAT / 接管规则");
     let _ = run_net_hook(env, "sync");
+    if let Some(now_m) = mono_now(env) {
+        let _ = fs::write(run.join("ready_at"), format!("{now_m}\n"));
+    }
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
         .map(|s| s.trim().to_string())
@@ -415,6 +433,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     let sock = run.join("crosvm.sock");
     let _ = fs::remove_file(&sock);
     let _ = fs::remove_file(run.join("state"));
+    let _ = fs::remove_file(run.join("ready_at"));
 
     let swiotlb = cfg.vm_swiotlb_mb();
     dlog(
@@ -624,6 +643,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         run.join("crosvm.pid"),
         run.join("crosvm.sock"),
         run.join("state"),
+        run.join("ready_at"),
         run.join("fuse_watch.pid"),
         run.join("share.mode"),
         run.join("guest/guest/openclash.status"),
@@ -656,32 +676,6 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     let running = vm_running(env);
     let mut pid_num = None;
     let mut uptime_s = 0_u64;
-    if running {
-        let pid_s = fs::read_to_string(run.join("crosvm.pid"))
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        if let Ok(p) = pid_s.parse::<u64>() {
-            pid_num = Some(p);
-        }
-        if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat")) {
-            if let Some(st) = stat
-                .split_whitespace()
-                .nth(21)
-                .and_then(|s| s.parse::<u64>().ok())
-            {
-                if let Ok(up_raw) = fs::read_to_string("/proc/uptime") {
-                    if let Some(now) = up_raw
-                        .split('.')
-                        .next()
-                        .and_then(|s| s.trim().parse::<u64>().ok())
-                    {
-                        uptime_s = now.saturating_sub(st / 100);
-                    }
-                }
-            }
-        }
-    }
     let state = if running {
         let s = fs::read_to_string(run.join("state")).unwrap_or_default();
         let t = s.trim();
@@ -693,6 +687,32 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     } else {
         "stopped".to_string()
     };
+    if running {
+        let pid_s = fs::read_to_string(run.join("crosvm.pid"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if let Ok(p) = pid_s.parse::<u64>() {
+            pid_num = Some(p);
+        }
+        if matches!(state.as_str(), "ready" | "stable") {
+            let ready_at = fs::read_to_string(run.join("ready_at"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            if let (Some(r0), Some(now)) = (ready_at, mono_now(env)) {
+                uptime_s = now.saturating_sub(r0);
+            } else if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat")) {
+                if let (Some(st), Some(now)) = (
+                    stat.split_whitespace()
+                        .nth(21)
+                        .and_then(|s| s.parse::<u64>().ok()),
+                    mono_now(env),
+                ) {
+                    uptime_s = now.saturating_sub(st / 100);
+                }
+            }
+        }
+    }
     let tripped = fs::read_to_string(env.tripped_file())
         .ok()
         .map(|s| s.trim().to_string())

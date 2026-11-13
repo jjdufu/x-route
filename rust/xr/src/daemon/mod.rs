@@ -51,6 +51,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
         run.join("crosvm.pid"),
         run.join("crosvm.sock"),
         run.join("state"),
+        run.join("ready_at"),
         run.join("fuse_watch.pid"),
         run.join("share.mode"),
         run.join("guest/guest/openclash.status"),
@@ -244,6 +245,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
             }
             if !xr_vm_alive(env) {
                 let _ = fs::remove_file(run.join("state"));
+                let _ = fs::remove_file(run.join("ready_at"));
                 let _ = fs::remove_file(run.join("crosvm.pid"));
                 let _ = fs::remove_file(run.join("stopping"));
                 routes_emergency_down(env);
@@ -317,20 +319,21 @@ pub fn daemon_loop(env: &Env) -> i32 {
                         .unwrap_or_default()
                         .trim()
                         .to_string();
-                    let st = fs::read_to_string(env.proc_base.join(&cp).join("stat"))
+                    let since = fs::read_to_string(run.join("ready_at"))
                         .ok()
-                        .and_then(|s| {
-                            s.split_whitespace()
-                                .nth(21)
-                                .and_then(|x| x.parse::<u64>().ok())
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .or_else(|| {
+                            fs::read_to_string(env.proc_base.join(&cp).join("stat"))
+                                .ok()
+                                .and_then(|s| {
+                                    s.split_whitespace()
+                                        .nth(21)
+                                        .and_then(|x| x.parse::<u64>().ok())
+                                        .map(|ticks| ticks / 100)
+                                })
                         });
-                    let now = fs::read_to_string("/proc/uptime").ok().and_then(|s| {
-                        s.split('.')
-                            .next()
-                            .and_then(|x| x.trim().parse::<u64>().ok())
-                    });
-                    if let (Some(st), Some(now)) = (st, now) {
-                        if now.saturating_sub(st / 100) >= cfg.stable_sec() {
+                    if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env)) {
+                        if now.saturating_sub(r0) >= cfg.stable_sec() {
                             let _ = fs::remove_file(env.fuse_file());
                             let _ = fs::remove_file(env.boot_log());
                             let _ = fs::write(

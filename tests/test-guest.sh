@@ -181,9 +181,12 @@ srv.close
 PYRB
 fi
 
-# 7. OpenClash 预置自启软链与旧盘自愈检查
+# 7. OpenClash / Aurora 首次开机离线安装（--no-network 避免无网超时阻塞 70s）与自启软链检查
+AU_DEF="$ROOT/openwrt/files/etc/uci-defaults/25-xrouter-aurora"
 OC_DEF="$ROOT/openwrt/files/etc/uci-defaults/30-xrouter-openclash"
 OC_RDY="$ROOT/openwrt/files/etc/init.d/xrouter-ready"
+chk 'grep -q "apk add --no-network " "$AU_DEF" && grep -q "apk add --no-network " "$OC_DEF"'
+chk '! grep -En "^[[:space:]]*apk add " "$ROOT/openwrt/files/etc/uci-defaults/"* | grep -v -- "--no-network"'
 chk 'grep -q "/etc/init.d/openclash enable" "$OC_DEF" && ! grep -q "/etc/init.d/openclash disable" "$OC_DEF"'
 chk 'grep -q "openclash.config.enable=0" "$OC_DEF"'
 chk 'grep -q "/etc/init.d/openclash enabled" "$OC_RDY" && grep -q "/etc/init.d/openclash boot" "$OC_RDY"'

@@ -413,6 +413,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
         crate::clash::stop_clash_mux(env);
         for p in [
             run.join("state"),
+            run.join("ready_at"),
             run.join("crosvm.pid"),
             run.join("guest/guest/openclash.status"),
         ] {
@@ -435,6 +436,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
         crate::clash::stop_clash_mux(env);
         for p in [
             run.join("state"),
+            run.join("ready_at"),
             run.join("crosvm.pid"),
             run.join("stopping"),
             run.join("guest/guest/openclash.status"),
@@ -460,6 +462,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     crate::clash::stop_clash_mux(env);
     let _ = fs::write(run.join("last_error"), "服务意外退出\n");
     let _ = fs::remove_file(run.join("state"));
+    let _ = fs::remove_file(run.join("ready_at"));
     let _ = fs::remove_file(run.join("crosvm.pid"));
     let _ = fs::remove_file(run.join("guest/guest/openclash.status"));
     routes_emergency_down(env);
