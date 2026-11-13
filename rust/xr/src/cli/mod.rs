@@ -446,6 +446,23 @@ pub fn run_cli(args: &[String]) -> i32 {
             println!("{out}");
             rc
         }
+        "clash-bridge" => crate::clash::run_clash_bridge(&env),
+        "clash-ping" => crate::clash::run_clash_ping(&env),
+        "clash-call" => crate::clash::run_clash_call(&env, rest.first().map_or("", String::as_str)),
+        "clash-stream" => crate::clash::run_clash_stream(
+            &env,
+            rest.first().map_or("", String::as_str),
+            rest.get(1).map_or("", String::as_str),
+        ),
+        "clash-ws-send" => crate::clash::run_clash_ws_send(
+            &env,
+            rest.first().map_or("", String::as_str),
+            rest.get(1).map_or("text", String::as_str),
+            rest.get(2).map_or("", String::as_str),
+        ),
+        "clash-ws-close" => {
+            crate::clash::run_clash_ws_close(&env, rest.first().map_or("", String::as_str))
+        }
         "internal" => match rest.first().map(String::as_str) {
             Some("dump-config-keys") => {
                 for k in KEYS {
@@ -502,6 +519,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 fuse_watch(&env);
                 0
             }
+            Some("clash-mux") => crate::clash::run_clash_mux(&env),
             Some("bg-exec") => bg_exec(&env, rest.get(1).map_or("", String::as_str)),
             Some("boot-service") => boot_service(&env),
             Some("action-toggle") => action_toggle(&env),
@@ -526,7 +544,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             _ => 2,
         },
         _ => {
-            println!("usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm");
+            println!("usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm");
             2
         }
     }

@@ -35,7 +35,10 @@ fn test_common_parity_valid_kv_and_cidr() {
     let mut env = make_test_env(&tmp);
     let cfg = Config::load(&env);
 
-    assert_eq!(KEYS.len(), 24);
+    assert_eq!(KEYS.len(), 25);
+    assert!(valid_kv(&env, &cfg, "XR_CLASH_UI", "0"));
+    assert!(valid_kv(&env, &cfg, "XR_CLASH_UI", "1"));
+    assert!(!valid_kv(&env, &cfg, "XR_CLASH_UI", "2"));
     assert!(valid_kv(&env, &cfg, "XR_NET_PREFIX", "172.29.233"));
     assert!(!valid_kv(&env, &cfg, "XR_NET_PREFIX", "8.8.8"));
     assert!(!valid_kv(&env, &cfg, "XR_NET_PREFIX", "172.29.256"));

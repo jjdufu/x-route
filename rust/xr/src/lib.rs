@@ -1,4 +1,5 @@
 pub mod cidr;
+pub mod clash;
 pub mod cli;
 pub mod config;
 pub mod daemon;

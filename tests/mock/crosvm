@@ -6,7 +6,7 @@ printf '%s\n' "$@" > "${FAKE_ARGS:-/dev/null}"
 ctl=""; sock=""; prev=""
 for a in "$@"; do
   case "$prev" in
-    --serial) case "$a" in *hardware=virtio-console*) ctl="$(echo "$a" | sed 's/.*path=\([^,]*\).*/\1/')";; esac ;;
+    --serial) case "$a" in *type=file,*hardware=virtio-console*) ctl="$(echo "$a" | sed 's/.*path=\([^,]*\).*/\1/')";; esac ;;
     --socket) sock="$a" ;;
   esac
   prev="$a"

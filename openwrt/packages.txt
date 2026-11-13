@@ -60,4 +60,6 @@ kmod-inet-diag
 bash
 ruby
 ruby-yaml
+ruby-json
+ruby-socket
 unzip

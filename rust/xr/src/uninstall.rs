@@ -65,7 +65,7 @@ fn kill_matching_procs(env: &Env, sig: Signal) {
             || cmd.contains(&format!("{moddir_s}/scripts/daemon.sh"))
             || cmd.contains(&format!("{moddir_s}/scripts/watchdog.sh"))
             || cmd.contains(&format!("{moddir_s}/scripts/net.sh"))
-            || cmd.contains("/bin/xr")
+            || cmd.contains(&format!("{moddir_s}/bin/xr"))
             || cmd.trim() == "xrnotify"
             || cmd.contains("xrnotify ");
         if is_match {

@@ -134,17 +134,17 @@ for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/
          /etc/uci-defaults/10-xrouter /etc/uci-defaults/25-xrouter-aurora /etc/uci-defaults/30-xrouter-openclash \
          /usr/lib/xrouter/luci-theme-aurora-1.4.0-r20260920.apk /usr/lib/xrouter/luci-app-openclash-0.48.002.apk /usr/lib/xrouter/clash_meta.gz \
          /bin/bash /usr/bin/ruby /usr/bin/unzip \
-         /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/sysctl.d/12-xrouter.conf /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
+         /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/init.d/xrouter-clashd /etc/sysctl.d/12-xrouter.conf /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-clashstat /usr/libexec/xrouter-clashd /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
 done
 for f in /usr/bin/htop /usr/bin/owut /usr/lib/opkg /bin/opkg /usr/bin/easyrsa; do
   if debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:"; then echo "forbidden ${f}"; exit 1; fi
 done
-for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S12xrouter-tune /etc/rc.d/S13xrouter-bootlog /etc/rc.d/S99xrouter-ready; do
+for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S12xrouter-tune /etc/rc.d/S13xrouter-bootlog /etc/rc.d/S22xrouter-clashd /etc/rc.d/S99xrouter-ready; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "${f} not enabled"; exit 1; }
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/25-xrouter-aurora /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
+for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/25-xrouter-aurora /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/init.d/xrouter-clashd /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-clashstat /usr/libexec/xrouter-clashd /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 

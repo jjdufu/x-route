@@ -32,6 +32,9 @@ chk 'grep -qx -- "--swiotlb" "$T/args" && grep -qx "64" "$T/args" && grep -qx "7
 chk 'grep -q "hardware=virtio-console" "$T/args" && grep -q "xr.ip=172.29.233.254/24 xr.gw=172.29.233.1 xr.dns=223.5.5.5,119.29.29.29 xr.ip6=fd7a:7872:e9::254/64 xr.gw6=fd7a:7872:e9::1 xr.share=off" "$T/args"'
 chk 'grep -qE "xr\.time=[0-9]{9,}" "$T/args"'   # 开机把手机时间带给虚拟机
 chk 'grep -q "^tap-name=xr0,mac=52:54:00:1d:e9:fe$" "$T/args" && grep -q "net up" "$T/net.calls"'
+chk 'grep -q "type=unix-stream,hardware=virtio-console,num=2,path=.*clash-ctl\.sock,input-unix-stream" "$T/args"'
+chk 'grep -q "xrctl:type=fs:cache=auto:timeout=0" "$T/args"'
+chk '[ -S "$RUN/clash-ctl.sock" ] && [ -S "$RUN/clash-rpc.sock" ]'
 chk 'grep -q -- "--shared-dir" "$T/args" && grep -q "xrctl" "$T/args" && ! grep -q "xrshare" "$T/args"'
 chk '[ -f "$FUSE" ]'
 sleep 10
@@ -42,7 +45,7 @@ $VM start; chk 'grep -q "已在运行" "$LOG"'
 $VM expand 2048; chk '[ $? -ne 0 ] && [ "$(stat -c %s "$ROOTFS")" -eq $((300*1048576)) ]'
 # 2. 停止
 $VM stop
-chk '! sh "$T/mod/scripts/xr" running && [ ! -f "$RUN/crosvm.pid" ] && grep -q "net down" "$T/net.calls"'
+chk '! sh "$T/mod/scripts/xr" running && [ ! -f "$RUN/crosvm.pid" ] && [ ! -e "$RUN/clash-ctl.sock" ] && [ ! -e "$RUN/clash_mux.pid" ] && grep -q "net down" "$T/net.calls"'
 # 2b. OpenVPN 持久开关：开机按 openvpn.enabled 下发 enable / disable
 mkdir -p "$XR_DATA/config" "$RUN/guest/host"
 printf 'client\n' > "$XR_DATA/config/openvpn.ovpn"

@@ -86,4 +86,94 @@ exit 0
 EOF
 chk '[ "$(sh "$LX/xrouter-acct" show)" = "100 0 0 0 0 0 0 4096" ]'
 
+# 5. OpenClash 状态上报（xrouter-clashstat）：未安装 / 核心未启动 / 已安装+已启动
+export XRG_CLASH_UI="$T/zb"
+mkdir -p "$XRG_CLASH_UI"
+sh "$LX/xrouter-clashstat"
+chk 'grep -qx "installed=0" "$T/ctl/guest/openclash.status" && grep -qx "running=0" "$T/ctl/guest/openclash.status" && grep -qx "port=9090" "$T/ctl/guest/openclash.status"'
+echo "<html>zashboard</html>" > "$XRG_CLASH_UI/index.html"
+printf '#!/bin/sh\n[ "$1" = clash ] && exit 0; exit 1\n' > "$T/bin/pidof"
+printf '#!/bin/sh\n[ "$3" = "openclash.config.cn_port" ] && echo 9092; exit 0\n' > "$T/bin/uci"
+chmod +x "$T/bin/pidof" "$T/bin/uci"
+sh "$LX/xrouter-clashstat"
+chk 'grep -qx "installed=1" "$T/ctl/guest/openclash.status" && grep -qx "running=1" "$T/ctl/guest/openclash.status" && grep -qx "port=9092" "$T/ctl/guest/openclash.status"'
+touch -d "2001-01-01" "$T/ctl/guest/openclash.status"
+sh "$LX/xrouter-clashstat"
+chk '[ "$(date -r "$T/ctl/guest/openclash.status" +%Y)" = 2001 ]'
+
+# 6. OpenClash hvc1 内部通道（xrouter-clashd）：ui 静态读取 + 越权拦截 + 本地 HTTP 代理 + WebSocket
+if command -v ruby >/dev/null 2>&1 && ruby -rjson -rsocket -e 'exit 0' 2>/dev/null; then
+  ruby - "$LX/xrouter-clashd" "$XRG_CLASH_UI" <<'PYRB' || fail=1
+require "json"
+require "socket"
+require "digest/sha1"
+
+clashd, ui_dir = ARGV
+srv = TCPServer.new("127.0.0.1", 0)
+port = srv.addr[1]
+t_srv = Thread.new do
+  loop do
+    c = srv.accept
+    Thread.new(c) do |s|
+      req = +""
+      req << s.readpartial(4096) until req.include?("\r\n\r\n")
+      hdr, rest = req.split("\r\n\r\n", 2)
+      first = hdr.lines.first.to_s
+      if first.start_with?("GET /version")
+        auth = hdr[/^Authorization:\s*(.+)$/i, 1].to_s.strip
+        body = JSON.generate(version: "mihomo-test", auth: auth)
+        s.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}")
+      elsif first.start_with?("GET /ws")
+        key = hdr[/^Sec-WebSocket-Key:\s*(.+)$/i, 1].to_s.strip
+        acc = [Digest::SHA1.digest("#{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11")].pack("m0")
+        s.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: #{acc}\r\n\r\n")
+        msg = '{"down":1024}'.b
+        s.write([0x81, msg.bytesize].pack("CC") + msg)
+        sleep 0.2
+        s.write([0x88, 2, 1000].pack("CCn"))
+      end
+    ensure
+      s.close rescue nil
+    end
+  end
+rescue StandardError
+  nil
+end
+
+env = {
+  "XRG_HVC_DEV" => "-",
+  "XRG_CLASH_UI" => ui_dir,
+  "XRG_CLASH_PORT" => port.to_s,
+  "XRG_CLASH_SECRET" => "topsecret",
+  "XRG_CLASH_RUNNING" => "1"
+}
+IO.popen(env, ["ruby", clashd], "r+") do |io|
+  io.puts(JSON.generate(id: 1, op: "ping"))
+  r1 = JSON.parse(io.gets)
+  abort("ping failed: #{r1}") unless r1["ok"] && r1["installed"] && r1["running"] && r1["port"] == port
+
+  io.puts(JSON.generate(id: 2, op: "ui", path: "index.html"))
+  r2 = JSON.parse(io.gets)
+  abort("ui index failed: #{r2}") unless r2["ok"] && r2["body_b64"].unpack1("m0").include?("zashboard")
+
+  io.puts(JSON.generate(id: 3, op: "ui", path: "../etc/passwd"))
+  r3 = JSON.parse(io.gets)
+  abort("ui traversal not blocked: #{r3}") if r3["ok"]
+
+  io.puts(JSON.generate(id: 4, op: "req", method: "GET", path: "/version", headers: { "Authorization" => "Bearer xrouter-internal" }))
+  r4 = JSON.parse(io.gets)
+  body4 = JSON.parse(r4["body_b64"].unpack1("m0"))
+  abort("req proxy failed: #{r4} #{body4}") unless r4["status"] == 200 && body4["auth"] == "Bearer topsecret"
+
+  io.puts(JSON.generate(id: 5, op: "ws_open", ws_id: "w1", path: "/ws?token=xrouter-internal"))
+  got = []
+  3.times { got << JSON.parse(io.gets) }
+  unless got.any? { |g| g["op"] == "ws_open_ok" } && got.any? { |g| g["op"] == "ws_msg" && g["data"].include?("1024") }
+    abort("ws failed: #{got}")
+  end
+end
+srv.close
+PYRB
+fi
+
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi

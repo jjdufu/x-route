@@ -29,8 +29,12 @@ J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # get / set
 chk 'grep -qx "XR_HOTSPOT_SUBNET=\"172.28.222.254/24\"" "$ROOT/module/config/config.conf"'   # 默认网关地址（非空）
-chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 24 ]'
+chk '$XR get | grep -qx "XR_EXPOSE=lan" && [ "$($XR get | wc -l)" -eq 25 ]'
 cp "$CONF" "$T/conf.bak"
+# 内嵌分流管理开关：仅接受 0/1，无需重启
+chk '$XR set XR_CLASH_UI 1 | grep -qx "{\"ok\":true,\"restart\":false}" && grep -qx "XR_CLASH_UI=\"1\"" "$CONF"'
+chk '! $XR set XR_CLASH_UI yes >/dev/null && grep -qx "XR_CLASH_UI=\"1\"" "$CONF"'
+$XR set XR_CLASH_UI 0 >/dev/null
 # 通知显示：取值校验，改后不需重启，并请求守护进程立即刷新通知
 rm -f "$RUN/notify.force"
 chk '$XR set XR_NOTIFY_TRAFFIC wan | grep -qx "{\"ok\":true,\"restart\":false}" && grep -qx "XR_NOTIFY_TRAFFIC=\"wan\"" "$CONF" && [ -f "$RUN/notify.force" ]'
@@ -191,7 +195,8 @@ chk 'zl "$dg" | grep -q "/debug.log$" && zl "$dg" | grep -q "/phone.txt$" && zl 
 chk '[ -z "$(find "$T/dl" -name "*.gz")" ]'   # 全部导出都是 zip
 $XR stop; chk '! $XR running'
 echo up > "$RUN/guest/guest/openvpn.status"; echo "10.8.0.5" > "$RUN/guest/guest/openvpn.addr"; rm -f "$RUN/routes.active"
-chk '$XR status-json | J "d[\"vpn\"][\"status\"]==\"down\" and d[\"vpn\"][\"addr\"]==\"\" and d[\"vpn\"][\"routes_rejected\"]==[]" | grep -qx True'
+printf 'installed=1\nrunning=1\nport=9093\n' > "$RUN/guest/guest/openclash.status"
+chk '$XR status-json | J "d[\"vpn\"][\"status\"]==\"down\" and d[\"vpn\"][\"addr\"]==\"\" and d[\"vpn\"][\"routes_rejected\"]==[] and d[\"clash\"]=={\"installed\":False,\"running\":False,\"port\":9090}" | grep -qx True'
 # 熔断：存在 tripped 时自启和启动都被拒绝，ack-trip 后恢复
 $XR set AUTOSTART 0 >/dev/null; date > "$TRIPPED"
 out="$($XR set AUTOSTART 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "熔断" && grep -qx "AUTOSTART=\"0\"" "$CONF"'

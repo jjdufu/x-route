@@ -18,9 +18,16 @@ files="$(list_sh)"
 
 echo "== shellcheck"
 # SC3043: local 在 ash/mksh 中可用；SC1091: 运行时路径无法静态跟踪
-sh_files=""; bash_files=""
+sh_files=""; bash_files=""; ruby_files=""
 for f in ${files}; do
-  if head -n1 "$f" | grep -q bash; then bash_files="${bash_files} $f"; else sh_files="${sh_files} $f"; fi
+  first="$(head -n1 "$f")"
+  case "${first}" in
+    '#!'*bash*) bash_files="${bash_files} $f" ;;
+    '#!'*ruby*) ruby_files="${ruby_files} $f" ;;
+    '#!'*sh*) sh_files="${sh_files} $f" ;;
+    '#!'*) : ;;
+    *) sh_files="${sh_files} $f" ;;
+  esac
 done
 # shellcheck disable=SC2086
 [ -z "${sh_files}" ] || shellcheck -s sh -e SC3043,SC1091,SC1090,SC2013 ${sh_files}
@@ -28,9 +35,12 @@ done
 [ -z "${bash_files}" ] || shellcheck -s bash -e SC1091 ${bash_files}
 
 echo "== sh -n"
-for f in ${files}; do
-  if head -n1 "$f" | grep -q bash; then bash -n "$f"; else sh -n "$f"; fi
-done
+for f in ${sh_files}; do sh -n "$f"; done
+for f in ${bash_files}; do bash -n "$f"; done
+if [ -n "${ruby_files}" ] && command -v ruby >/dev/null 2>&1; then
+  echo "== ruby -c"
+  for f in ${ruby_files}; do ruby -c "$f"; done
+fi
 
 if [ -f rust/xr/Cargo.toml ]; then
   echo "== rust (fmt + clippy + test)"

@@ -12,6 +12,7 @@ STOP=15
 CTL=/var/run/xrouter
 
 refresh_routes() { /usr/libexec/xrouter-vpnstat; }
+refresh_clash() { [ -x /usr/libexec/xrouter-clashstat ] && /usr/libexec/xrouter-clashstat; }
 
 # 隧道增减（新连上 / 断开 / 多份配置各自起停）时按上游 MTU 重算全部 tun* 的 MTU 与 MSS
 tun_sig() { for d in /sys/class/net/tun*; do [ -d "$d" ] && printf '%s ' "${d##*/}"; done; }
@@ -182,6 +183,7 @@ watch() {
       mv -f "${CTL}/guest/diag.tmp" "${CTL}/guest/diag.txt"
     fi
     refresh_routes
+    refresh_clash
     sleep 2
   done
 }
@@ -199,6 +201,7 @@ start() {
   /usr/libexec/xrouter-ipv6 boot
   /usr/libexec/xrouter-acct init
   sync_time
+  refresh_clash
   watch &
   echo $! > /var/run/xrouter-vpn.pid
 }

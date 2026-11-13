@@ -326,6 +326,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         "guest/hotspot",
         "host/acct.cmd",
         "guest/acct",
+        "guest/openclash.status",
         "guest/openvpn.tunnels",
         "guest/openvpn.status",
         "guest/openvpn.addr",
@@ -385,7 +386,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         &format!("共享目录：{} · 控制通道 virtiofs", share.mode),
     );
     let ctl_spec = format!(
-        "{}:xrctl:type=fs:cache=auto:timeout=1",
+        "{}:xrctl:type=fs:cache=auto:timeout=0",
         run.join("guest").display()
     );
     vpn_boot_prepare(env);
@@ -424,6 +425,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         ),
     );
     fuse_arm(env);
+    crate::clash::start_clash_mux(env);
     blog(env, "vm", "熔断已布防，启动 crosvm（gunyah）");
     if cfg.vm_wakelock() {
         wakelock_on();
@@ -460,6 +462,11 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         format!(
             "type=file,path={},hardware=virtio-console,num=1",
             env.ctl_log().display()
+        ),
+        "--serial".to_string(),
+        format!(
+            "type=unix-stream,hardware=virtio-console,num=2,path={},input-unix-stream",
+            run.join("clash-ctl.sock").display()
         ),
         "--socket".to_string(),
         sock.to_string_lossy().into_owned(),
@@ -507,6 +514,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     let Ok(ch) = child else {
         vm_fail(env, "无法拉起 crosvm", "无法启动");
         let _ = fs::remove_file(env.fuse_file());
+        crate::clash::stop_clash_mux(env);
         wakelock_off();
         if vm_net {
             let _ = run_net_hook(env, "down");
@@ -521,6 +529,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         vm_fail(env, "crosvm 立即退出，详见 vmm.log", "无法启动");
         let _ = fs::remove_file(env.fuse_file());
         let _ = fs::remove_file(run.join("crosvm.pid"));
+        crate::clash::stop_clash_mux(env);
         wakelock_off();
         if vm_net {
             let _ = run_net_hook(env, "down");
@@ -583,12 +592,14 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
             let _ = send_signal(&pid, Signal::KILL);
         }
     }
+    crate::clash::stop_clash_mux(env);
     for p in [
         run.join("crosvm.pid"),
         run.join("crosvm.sock"),
         run.join("state"),
         run.join("fuse_watch.pid"),
         run.join("share.mode"),
+        run.join("guest/guest/openclash.status"),
         env.fuse_file(),
         env.boot_log(),
     ] {

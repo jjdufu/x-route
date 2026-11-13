@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid, in_range, valid_ip4};
 use crate::env::Env;
 
-pub const KEYS: [&str; 24] = [
+pub const KEYS: [&str; 25] = [
     "XR_NET_PREFIX",
     "XR_VM_MAC",
     "XR_DNS",
@@ -33,6 +33,7 @@ pub const KEYS: [&str; 24] = [
     "XR_DEBUG_HOURS",
     "XR_HOTSPOT_BRIDGE",
     "XR_HOTSPOT_SUBNET",
+    "XR_CLASH_UI",
 ];
 
 pub const HASH_KEYS: [&str; 8] = [
@@ -246,6 +247,10 @@ impl Config {
         self.get_raw("XR_HOTSPOT_SUBNET")
     }
 
+    pub fn clash_ui(&self) -> bool {
+        self.get_or("XR_CLASH_UI", "0") == "1"
+    }
+
     pub fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         for key in HASH_KEYS {
@@ -320,6 +325,7 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
         "VM_SWIOTLB_MB" => matches!(val, "32" | "64" | "128"),
         "VM_NET" | "VM_DISK_RW" | "VM_WAKELOCK" | "VM_SHARE" | "AUTOSTART" | "XR_DEBUG"
         | "XR_HOTSPOT_BRIDGE" => matches!(val, "0" | "1"),
+        "XR_CLASH_UI" => matches!(val, "0" | "1"),
         "VM_DISK_SIZE_MB" => in_range(val, 512, 16384),
         "VM_SHARE_MODE" => match val {
             "ro" => true,

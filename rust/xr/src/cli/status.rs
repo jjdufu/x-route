@@ -128,6 +128,7 @@ pub fn status_json(env: &Env) -> String {
         "vm": vm_val,
         "net": net_val,
         "ipv6": v6,
+        "clash": crate::clash::clash_status(env, alive),
         "vpn": {
             "status": vst,
             "addr": vaddr,

@@ -1,0 +1,37 @@
+#!/bin/sh
+# XRouter: 上报 OpenClash 核心运行状态与 zashboard 安装状态给手机侧（控制目录 guest/openclash.status）。
+# 先在 /tmp 生成，内容有变化才替换控制目录里的文件：控制目录落在手机 /data 上，避免每 2 秒重写一遍刷闪存。
+# 路径可由环境变量覆盖（仅测试用）。
+CTL="${XRG_CTL:-/var/run/xrouter}"
+UI_DIR="${XRG_CLASH_UI:-/usr/share/openclash/ui/zashboard}"
+TMP="${XRG_TMP:-/tmp/xrouter-clashstat}"
+ST="${CTL}/guest"
+[ -d "$CTL" ] || ST="${TMP}-guest"
+mkdir -p "$ST" "$TMP"
+
+installed=0
+[ -f "${UI_DIR}/index.html" ] && installed=1
+
+running=0
+for proc in clash clash_meta mihomo; do
+  if pidof "$proc" >/dev/null 2>&1; then
+    running=1
+    break
+  fi
+done
+
+port="$(uci -q get openclash.config.cn_port 2>/dev/null | tr -dc '0-9')"
+case "$port" in
+  ''|0) port=9090 ;;
+  *)
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+      port=9090
+    fi
+    ;;
+esac
+
+printf 'installed=%s\nrunning=%s\nport=%s\n' "$installed" "$running" "$port" > "$TMP/openclash.status"
+if ! cmp -s "$TMP/openclash.status" "$ST/openclash.status" 2>/dev/null; then
+  cp -f "$TMP/openclash.status" "$ST/openclash.status.tmp" && mv -f "$ST/openclash.status.tmp" "$ST/openclash.status"
+fi
+exit 0

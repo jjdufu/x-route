@@ -9,7 +9,7 @@ for a in "$@"; do
   case "$prev" in
     --block) blk="${a%%,*}" ;;
     --serial) p="$(echo "$a" | sed 's/.*path=\([^,]*\).*/\1/')"
-              case "$a" in *virtio-console*) ctl="$p";; *) con="$p";; esac ;;
+              case "$a" in *type=file,*virtio-console*) ctl="$p";; *hardware=serial*) con="$p";; esac ;;
     --socket) sock="$a" ;;
     --params) params="$a" ;;
     --mem) mem="$a" ;;

@@ -1,0 +1,540 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# XRouter: 客机侧 virtio-console (/dev/hvc1) <-> OpenClash 控制器 (127.0.0.1:cn_port)
+#          与 zashboard 静态资源的内部双工代理（纯内部通道，不走任何外部或 VM IP）。
+
+require "json"
+require "socket"
+
+UI_ROOT = ENV.fetch("XRG_CLASH_UI", "/usr/share/openclash/ui/zashboard")
+CLASH_HOST = ENV.fetch("XRG_CLASH_HOST", "127.0.0.1")
+HVC_DEV = ENV.fetch("XRG_HVC_DEV", "/dev/hvc1")
+MAX_BODY = 16 * 1024 * 1024
+PLACEHOLDER_SECRET = "xrouter-internal"
+
+MIME_TYPES = {
+  ".html" => "text/html; charset=utf-8",
+  ".js" => "application/javascript; charset=utf-8",
+  ".mjs" => "application/javascript; charset=utf-8",
+  ".css" => "text/css; charset=utf-8",
+  ".json" => "application/json; charset=utf-8",
+  ".webmanifest" => "application/manifest+json; charset=utf-8",
+  ".svg" => "image/svg+xml",
+  ".png" => "image/png",
+  ".jpg" => "image/jpeg",
+  ".jpeg" => "image/jpeg",
+  ".ico" => "image/x-icon",
+  ".woff2" => "font/woff2",
+  ".woff" => "font/woff",
+  ".ttf" => "font/ttf"
+}.freeze
+
+def uci_get(key)
+  out = IO.popen(["uci", "-q", "get", key], err: File::NULL, &:read)
+  out.to_s.strip
+rescue StandardError
+  ""
+end
+
+def clash_port
+  raw = ENV["XRG_CLASH_PORT"]
+  raw = uci_get("openclash.config.cn_port") if raw.nil? || raw.empty?
+  p = raw.to_i
+  (1..65_535).include?(p) ? p : 9090
+end
+
+def clash_secret
+  raw = ENV["XRG_CLASH_SECRET"]
+  return raw unless raw.nil?
+
+  uci_get("openclash.config.dashboard_password")
+end
+
+def core_running?
+  return ENV["XRG_CLASH_RUNNING"] == "1" if ENV.key?("XRG_CLASH_RUNNING")
+
+  %w[clash clash_meta mihomo].any? do |name|
+    system("pidof", name, out: File::NULL, err: File::NULL)
+  end
+end
+
+def ui_installed?
+  File.file?(File.join(UI_ROOT, "index.html"))
+end
+
+def set_raw_tty(io)
+  buf = +"\0".b * 64
+  rc = io.ioctl(0x5401, buf) # TCGETS
+  return unless rc == 0
+
+  iflag, oflag, cflag, lflag = buf.unpack("L4")
+  iflag &= ~0x05eb # IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL|IXON
+  oflag &= ~0x0001 # OPOST
+  lflag &= ~0x804b # ECHO|ECHONL|ICANON|ISIG|IEXTEN
+  buf[0, 16] = [iflag, oflag, cflag, lflag].pack("L4")
+  buf.setbyte(22, 0) # VTIME = 0
+  buf.setbyte(23, 1) # VMIN = 1
+  io.ioctl(0x5402, buf) # TCSETS
+rescue StandardError
+  nil
+end
+
+def resolve_ui_file(rel_path)
+  return nil if rel_path.nil? || rel_path.include?("\0")
+
+  clean = rel_path.sub(%r{\A/+}, "").split("?", 2).first.to_s
+  clean = "index.html" if clean.empty?
+  return nil unless File.directory?(UI_ROOT)
+
+  root_real = File.realpath(UI_ROOT)
+  cand = File.expand_path(clean, root_real)
+  return nil unless cand == root_real || cand.start_with?("#{root_real}/")
+  return nil unless File.file?(cand)
+
+  File.realpath(cand)
+rescue StandardError
+  nil
+end
+
+def rewrite_path_token(path, secret)
+  return path unless path.include?("token=")
+
+  path.gsub(/([?&]token=)([^&]*)/) do
+    prefix = Regexp.last_match(1)
+    val = Regexp.last_match(2)
+    if val == PLACEHOLDER_SECRET
+      secret.empty? ? "#{prefix}" : "#{prefix}#{encode_query_val(secret)}"
+    else
+      "#{prefix}#{val}"
+    end
+  end
+end
+
+def encode_query_val(str)
+  str.b.gsub(/[^A-Za-z0-9\-_.~]/) { |c| format("%%%02X", c.ord) }
+end
+
+def read_http_response(sock, skip_body: false)
+  buf = +"".b
+  hdr_end = nil
+  while (hdr_end = buf.index("\r\n\r\n")).nil?
+    chunk = sock.readpartial(16_384)
+    buf << chunk
+    raise "header too large" if buf.bytesize > 131_072
+  end
+
+  raw_hdr = buf.byteslice(0, hdr_end).force_encoding("UTF-8")
+  rest = buf.byteslice(hdr_end + 4, buf.bytesize - (hdr_end + 4)) || +"".b
+  lines = raw_hdr.split("\r\n")
+  status_line = lines.shift.to_s
+  status = status_line.split(" ", 3)[1].to_i
+  status = 502 if status <= 0
+
+  headers = {}
+  content_len = nil
+  chunked = false
+  lines.each do |line|
+    k, v = line.split(":", 2)
+    next if k.nil? || v.nil?
+
+    lk = k.strip.downcase
+    val = v.strip
+    headers[lk] = val
+    content_len = val.to_i if lk == "content-length" && val.match?(/\A\d+\z/)
+    chunked = true if lk == "transfer-encoding" && val.downcase.include?("chunked")
+  end
+
+  body =
+    if skip_body || [204, 304].include?(status)
+      +"".b
+    elsif chunked
+      read_chunked_body(sock, rest)
+    elsif !content_len.nil?
+      while rest.bytesize < content_len
+        more = sock.readpartial([content_len - rest.bytesize, 65_536].min)
+        rest << more
+        raise "body too large" if rest.bytesize > MAX_BODY
+      end
+      rest.byteslice(0, content_len) || +"".b
+    else
+      while rest.bytesize < MAX_BODY
+        begin
+          rest << sock.readpartial(65_536)
+        rescue EOFError
+          break
+        end
+      end
+      rest
+    end
+
+  [status, headers, body]
+end
+
+def read_chunked_body(sock, initial)
+  buf = initial.dup
+  out = +"".b
+  loop do
+    while (idx = buf.index("\r\n")).nil?
+      buf << sock.readpartial(16_384)
+      raise "chunk header too large" if buf.bytesize > 131_072
+    end
+    sz_hex = buf.byteslice(0, idx).split(";", 2).first.to_s.strip
+    buf = buf.byteslice(idx + 2, buf.bytesize - (idx + 2)) || +"".b
+    sz = sz_hex.to_i(16)
+    break if sz == 0
+
+    raise "body too large" if out.bytesize + sz > MAX_BODY
+
+    while buf.bytesize < sz + 2
+      buf << sock.readpartial(65_536)
+    end
+    out << buf.byteslice(0, sz)
+    buf = buf.byteslice(sz + 2, buf.bytesize - (sz + 2)) || +"".b
+  end
+  out
+end
+
+def read_exact(sock, buf, n)
+  while buf.bytesize < n
+    buf << sock.readpartial(65_536)
+  end
+  out = buf.byteslice(0, n)
+  rest = buf.byteslice(n, buf.bytesize - n) || +"".b
+  [out, rest]
+end
+
+def read_ws_frame(sock, buf)
+  b, buf = read_exact(sock, buf, 2)
+  b0 = b.getbyte(0)
+  b1 = b.getbyte(1)
+  fin = (b0 & 0x80) != 0
+  opcode = b0 & 0x0f
+  masked = (b1 & 0x80) != 0
+  len = b1 & 0x7f
+  if len == 126
+    ext, buf = read_exact(sock, buf, 2)
+    len = ext.unpack1("n")
+  elsif len == 127
+    ext, buf = read_exact(sock, buf, 8)
+    len = ext.unpack1("Q>")
+  end
+  raise "ws frame too large" if len > MAX_BODY
+
+  mask_key = nil
+  mask_key, buf = read_exact(sock, buf, 4) if masked
+  payload, buf = len > 0 ? read_exact(sock, buf, len) : [+"".b, buf]
+  if masked && !mask_key.nil?
+    unmasked = +"".b
+    payload.bytes.each_with_index { |byte, i| unmasked << (byte ^ mask_key.getbyte(i & 3)) }
+    payload = unmasked
+  end
+  [fin, opcode, payload, buf]
+end
+
+def build_ws_client_frame(opcode, payload_bytes)
+  len = payload_bytes.bytesize
+  hdr = [0x80 | (opcode & 0x0f)].pack("C")
+  if len < 126
+    hdr << [0x80 | len].pack("C")
+  elsif len < 65_536
+    hdr << [0x80 | 126, len].pack("Cn")
+  else
+    hdr << [0x80 | 127, len].pack("CQ>")
+  end
+  mask = Random.urandom(4)
+  hdr << mask
+  masked = +"".b
+  payload_bytes.bytes.each_with_index { |b, i| masked << (b ^ mask.getbyte(i & 3)) }
+  hdr << masked
+  hdr
+end
+
+class ClashDaemon
+  def initialize(in_io, out_io)
+    @in = in_io
+    @out = out_io
+    @write_mu = Mutex.new
+    @ws_mu = Mutex.new
+    @ws_map = {}
+  end
+
+  def send_msg(obj)
+    line = "#{JSON.generate(obj)}\n"
+    @write_mu.synchronize do
+      @out.write(line)
+      @out.flush
+    end
+  rescue StandardError
+    nil
+  end
+
+  def handle_line(line)
+    msg = JSON.parse(line)
+    op = msg["op"].to_s
+    case op
+    when "ping"
+      send_msg(
+        id: msg["id"],
+        ok: true,
+        installed: ui_installed?,
+        running: core_running?,
+        port: clash_port
+      )
+    when "ui"
+      handle_ui(msg)
+    when "req"
+      Thread.new { handle_req(msg) }
+    when "ws_open"
+      Thread.new { handle_ws_open(msg) }
+    when "ws_send"
+      handle_ws_send(msg)
+    when "ws_close"
+      handle_ws_close(msg)
+    else
+      send_msg(id: msg["id"], ok: false, error: "unknown op: #{op}") if msg.key?("id")
+    end
+  rescue StandardError => e
+    warn("xrouter-clashd bad frame: #{e.message}")
+  end
+
+  def handle_ui(msg)
+    id = msg["id"]
+    path = resolve_ui_file(msg["path"].to_s)
+    if path.nil?
+      send_msg(id: id, ok: false, status: 404, error: "not found")
+      return
+    end
+    ext = File.extname(path).downcase
+    mime = MIME_TYPES.fetch(ext, "application/octet-stream")
+    data = File.binread(path)
+    send_msg(id: id, ok: true, mime: mime, body_b64: [data].pack("m0"))
+  rescue StandardError => e
+    send_msg(id: id, ok: false, status: 500, error: e.message)
+  end
+
+  def handle_req(msg)
+    id = msg["id"]
+    method = msg["method"].to_s.upcase
+    method = "GET" unless %w[GET POST PUT PATCH DELETE HEAD OPTIONS].include?(method)
+    path = msg["path"].to_s
+    unless path.start_with?("/") && !path.match?(/[\r\n]/)
+      send_msg(id: id, ok: false, status: 400, error: "invalid path")
+      return
+    end
+
+    port = clash_port
+    secret = clash_secret
+    path = rewrite_path_token(path, secret)
+    body_b64 = msg["body_b64"].to_s
+    body = body_b64.empty? ? +"".b : body_b64.unpack1("m0")
+    req_hdrs = msg["headers"].is_a?(Hash) ? msg["headers"] : {}
+
+    sock = TCPSocket.new(CLASH_HOST, port)
+    sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVTIMEO, [15, 0].pack("l_2"))
+    sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_SNDTIMEO, [10, 0].pack("l_2"))
+
+    lines = ["#{method} #{path} HTTP/1.1", "Host: #{CLASH_HOST}:#{port}", "Connection: close"]
+    auth_sent = false
+    req_hdrs.each do |k, v|
+      ks = k.to_s
+      vs = v.to_s
+      next if ks.match?(/[\r\n:]/) || vs.match?(/[\r\n]/)
+
+      lk = ks.downcase
+      next if %w[host connection content-length transfer-encoding].include?(lk)
+
+      if lk == "authorization"
+        auth_sent = true
+        if vs == "Bearer #{PLACEHOLDER_SECRET}"
+          next if secret.empty?
+
+          vs = "Bearer #{secret}"
+        end
+      end
+      lines << "#{ks}: #{vs}"
+    end
+    lines << "Authorization: Bearer #{secret}" if !auth_sent && !secret.empty?
+    lines << "Content-Length: #{body.bytesize}" if !body.empty? || %w[POST PUT PATCH].include?(method)
+    raw_req = "#{lines.join("\r\n")}\r\n\r\n".b + body
+
+    sock.write(raw_req)
+    sock.flush
+    status, resp_hdrs, resp_body = read_http_response(sock, skip_body: method == "HEAD")
+    send_msg(
+      id: id,
+      ok: true,
+      status: status,
+      headers: resp_hdrs,
+      body_b64: [resp_body].pack("m0")
+    )
+  rescue StandardError => e
+    send_msg(id: id, ok: false, status: 502, error: e.message)
+  ensure
+    sock&.close
+  end
+
+  def handle_ws_open(msg)
+    id = msg["id"]
+    ws_id = msg["ws_id"].to_s
+    path = msg["path"].to_s
+    unless !ws_id.empty? && path.start_with?("/") && !path.match?(/[\r\n]/)
+      send_msg(id: id, ok: false, error: "invalid ws request")
+      send_msg(op: "ws_close", ws_id: ws_id, code: 1002, reason: "invalid request") unless ws_id.empty?
+      return
+    end
+
+    port = clash_port
+    secret = clash_secret
+    path = rewrite_path_token(path, secret)
+    ws_key = [Random.urandom(16)].pack("m0")
+
+    sock = TCPSocket.new(CLASH_HOST, port)
+    req_lines = [
+      "GET #{path} HTTP/1.1",
+      "Host: #{CLASH_HOST}:#{port}",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      "Sec-WebSocket-Key: #{ws_key}",
+      "Sec-WebSocket-Version: 13"
+    ]
+    req_lines << "Authorization: Bearer #{secret}" unless secret.empty?
+    sock.write("#{req_lines.join("\r\n")}\r\n\r\n")
+    sock.flush
+
+    buf = +"".b
+    hdr_end = nil
+    while (hdr_end = buf.index("\r\n\r\n")).nil?
+      buf << sock.readpartial(4096)
+      raise "ws handshake header too large" if buf.bytesize > 32_768
+    end
+    hdr = buf.byteslice(0, hdr_end).force_encoding("UTF-8")
+    buf = buf.byteslice(hdr_end + 4, buf.bytesize - (hdr_end + 4)) || +"".b
+    status_line = hdr.split("\r\n", 2).first.to_s
+    code = status_line.split(" ", 3)[1].to_i
+    unless code == 101
+      sock.close
+      send_msg(id: id, ok: false, error: "ws upgrade failed: #{status_line}")
+      send_msg(op: "ws_close", ws_id: ws_id, code: 1006, reason: "upgrade #{code}")
+      return
+    end
+
+    entry = { sock: sock, mu: Mutex.new }
+    @ws_mu.synchronize { @ws_map[ws_id] = entry }
+    send_msg(id: id, op: "ws_open_ok", ok: true, ws_id: ws_id)
+
+    frag_buf = +"".b
+    frag_binary = false
+    loop do
+      fin, opcode, payload, buf = read_ws_frame(sock, buf)
+      case opcode
+      when 0x1, 0x2
+        binary = opcode == 0x2
+        if fin
+          emit_ws_payload(ws_id, binary, payload)
+        else
+          frag_buf = payload
+          frag_binary = binary
+        end
+      when 0x0
+        frag_buf << payload
+        if fin
+          emit_ws_payload(ws_id, frag_binary, frag_buf)
+          frag_buf = +"".b
+        end
+      when 0x9
+        entry[:mu].synchronize { sock.write(build_ws_client_frame(0xA, payload)) }
+      when 0x8
+        close_code = payload.bytesize >= 2 ? payload.unpack1("n") : 1000
+        close_reason = payload.bytesize > 2 ? payload.byteslice(2, payload.bytesize - 2).force_encoding("UTF-8").scrub : ""
+        send_msg(op: "ws_close", ws_id: ws_id, code: close_code, reason: close_reason)
+        break
+      end
+    end
+  rescue EOFError
+    send_msg(op: "ws_close", ws_id: ws_id, code: 1000, reason: "")
+  rescue StandardError => e
+    send_msg(id: id, ok: false, error: e.message) unless id.nil?
+    send_msg(op: "ws_close", ws_id: ws_id, code: 1006, reason: e.message)
+  ensure
+    removed = @ws_mu.synchronize { @ws_map.delete(ws_id) }
+    removed&.dig(:sock)&.close
+  end
+
+  def emit_ws_payload(ws_id, binary, payload)
+    if binary
+      send_msg(op: "ws_msg", ws_id: ws_id, binary: true, data_b64: [payload].pack("m0"))
+    else
+      text = payload.force_encoding("UTF-8")
+      text = text.scrub unless text.valid_encoding?
+      send_msg(op: "ws_msg", ws_id: ws_id, binary: false, data: text)
+    end
+  end
+
+  def handle_ws_send(msg)
+    ws_id = msg["ws_id"].to_s
+    entry = @ws_mu.synchronize { @ws_map[ws_id] }
+    return if entry.nil?
+
+    if msg["binary"]
+      payload = msg["data_b64"].to_s.unpack1("m0")
+      frame = build_ws_client_frame(0x2, payload)
+    else
+      frame = build_ws_client_frame(0x1, msg["data"].to_s.b)
+    end
+    entry[:mu].synchronize do
+      entry[:sock].write(frame)
+      entry[:sock].flush
+    end
+  rescue StandardError
+    handle_ws_close("ws_id" => ws_id)
+  end
+
+  def handle_ws_close(msg)
+    ws_id = msg["ws_id"].to_s
+    entry = @ws_mu.synchronize { @ws_map.delete(ws_id) }
+    return if entry.nil?
+
+    begin
+      entry[:mu].synchronize do
+        entry[:sock].write(build_ws_client_frame(0x8, [1000].pack("n")))
+        entry[:sock].flush
+      end
+    rescue StandardError
+      nil
+    end
+    entry[:sock].close
+  rescue StandardError
+    nil
+  end
+
+  def run
+    while (line = @in.gets("\n"))
+      trimmed = line.strip
+      next if trimmed.empty?
+
+      handle_line(trimmed)
+    end
+  ensure
+    entries = @ws_mu.synchronize { vals = @ws_map.values; @ws_map.clear; vals }
+    entries.each { |e| e[:sock].close rescue nil }
+  end
+end
+
+if __FILE__ == $PROGRAM_NAME
+  if HVC_DEV == "-"
+    ClashDaemon.new($stdin, $stdout).run
+  else
+    waited = 0
+    while waited < 10 && !File.exist?(HVC_DEV)
+      sleep 1
+      waited += 1
+    end
+    exit 0 unless File.exist?(HVC_DEV)
+
+    io = File.open(HVC_DEV, "r+b")
+    io.sync = true
+    set_raw_tty(io)
+    ClashDaemon.new(io, io).run
+  end
+end
