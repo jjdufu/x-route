@@ -43,7 +43,11 @@ PKGS="$(grep -vE '^[[:space:]]*(#|$)' "${ROOT}/openwrt/packages.txt" | tr '\n' '
 echo "[*] excluded default kmods: ${DEF_KMODS}"
 
 # OpenClash：打入 GitHub 官方 apk + 固定版本 linux-arm64 mihomo，首次开机安装，默认不启用。
+# 主题：打入 GitHub 官方 luci-theme-aurora apk，首次开机安装并设为默认 LuCI 主题。
 # 版本与 sha256 写死在此，改动会改变镜像指纹，CI 会重建根文件系统。
+AURORA_TAG=v1.4.0
+AURORA_VER=1.4.0-r20260920
+AURORA_APK_SHA256=05f9015e0a4e2859f6a153f69e472f2984481490d4ce6db19b8a41bba7264f1e
 OC_VER=0.48.002
 OC_APK_SHA256=f7ebbd43f9be15c5e6df26e5d0c03d50d0bb8f7fa4cc0d2c2bf048b08c0b155b
 MIHOMO_VER=v1.19.34
@@ -65,6 +69,8 @@ FILES_STAGE="${WORK}/files-stage"
 rm -rf "${FILES_STAGE}"
 mkdir -p "${FILES_STAGE}/usr/lib/xrouter"
 cp -a "${ROOT}/openwrt/files/." "${FILES_STAGE}/"
+fetch_sha "${FILES_STAGE}/usr/lib/xrouter/luci-theme-aurora-${AURORA_VER}.apk" "${AURORA_APK_SHA256}" \
+  "https://github.com/eamonxg/luci-theme-aurora/releases/download/${AURORA_TAG}/luci-theme-aurora-${AURORA_VER}.apk"
 fetch_sha "${FILES_STAGE}/usr/lib/xrouter/luci-app-openclash-${OC_VER}.apk" "${OC_APK_SHA256}" \
   "https://github.com/vernesong/OpenClash/releases/download/v${OC_VER}/luci-app-openclash-${OC_VER}.apk" \
   "https://dl.openclash.org/releases/latest/luci-app-openclash-${OC_VER}.apk"
@@ -125,8 +131,8 @@ e2fsck -fy "${RAW}" >/dev/null 2>&1 || [ $? -le 1 ]
 
 # 检查：关键文件存在，禁止的文件不存在，只有 apk 没有 opkg
 for f in /usr/sbin/openvpn /usr/bin/openssl /usr/bin/tcpdump /usr/bin/ttyd /usr/bin/apk /lib/apk/db/installed \
-         /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash \
-         /usr/lib/xrouter/luci-app-openclash-0.48.002.apk /usr/lib/xrouter/clash_meta.gz \
+         /etc/uci-defaults/10-xrouter /etc/uci-defaults/25-xrouter-aurora /etc/uci-defaults/30-xrouter-openclash \
+         /usr/lib/xrouter/luci-theme-aurora-1.4.0-r20260920.apk /usr/lib/xrouter/luci-app-openclash-0.48.002.apk /usr/lib/xrouter/clash_meta.gz \
          /bin/bash /usr/bin/ruby /usr/bin/unzip \
          /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/sysctl.d/12-xrouter.conf /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "missing ${f}"; exit 1; }
@@ -138,7 +144,7 @@ for f in /etc/rc.d/S11xrouter-net /etc/rc.d/S12xrouter-tune /etc/rc.d/S13xrouter
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Inode:" || { echo "${f} not enabled"; exit 1; }
 done
 if debugfs -R "cat /etc/inittab" "${RAW}" 2>/dev/null | grep -q '^hvc0'; then echo "inittab still has hvc0"; exit 1; fi
-for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
+for f in /etc/uci-defaults/10-xrouter /etc/uci-defaults/25-xrouter-aurora /etc/uci-defaults/30-xrouter-openclash /etc/init.d/xrouter-net /etc/init.d/xrouter-ready /etc/init.d/xrouter-bootlog /etc/init.d/xrouter-share /etc/init.d/xrouter-vpn /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh /etc/board.d/99-xrouter-model /usr/libexec/xrouter-ipv6 /usr/libexec/xrouter-diag /usr/libexec/xrouter-hotspot /usr/libexec/xrouter-mtu /usr/libexec/xrouter-tunmtu /usr/libexec/xrouter-vpnstat /usr/libexec/xrouter-acct /etc/init.d/xrouter-tune; do
   debugfs -R "stat ${f}" "${RAW}" 2>/dev/null | grep -q "Mode:  0755" || { echo "${f} not 0755"; exit 1; }
 done
 

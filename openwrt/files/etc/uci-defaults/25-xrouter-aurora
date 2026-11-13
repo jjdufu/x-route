@@ -1,0 +1,26 @@
+#!/bin/sh
+# XRouter: 首次开机安装预置的 Aurora 主题，并设为默认 LuCI 主题。
+# 构建脚本会把 apk 放到 /usr/lib/xrouter/。
+
+APK=/usr/lib/xrouter/luci-theme-aurora-1.4.0-r20260920.apk
+
+if [ -f "$APK" ]; then
+	apk add --allow-untrusted --force-overwrite "$APK" || exit 1
+	rm -f "$APK"
+fi
+
+if [ -x /etc/uci-defaults/30_luci-theme-aurora ]; then
+	/etc/uci-defaults/30_luci-theme-aurora || exit 1
+	rm -f /etc/uci-defaults/30_luci-theme-aurora
+fi
+
+if [ -d /www/luci-static/aurora ]; then
+	uci -q set luci.themes.Aurora='/luci-static/aurora'
+	uci -q set luci.main.mediaurlbase='/luci-static/aurora'
+	uci -q commit luci
+fi
+
+rm -rf /tmp/luci-indexcache /tmp/luci-indexcache.* /var/luci-indexcache /var/luci-indexcache.* >/dev/null 2>&1
+rm -rf /tmp/luci-modulecache /var/luci-modulecache >/dev/null 2>&1
+rmdir /usr/lib/xrouter 2>/dev/null || true
+exit 0
