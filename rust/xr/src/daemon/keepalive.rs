@@ -106,7 +106,7 @@ pub fn xr_vm_alive(env: &Env) -> bool {
     if p.is_empty() || !env.proc_base.join(p).is_dir() {
         return false;
     }
-    if env.proc_base == Path::new("/proc") && !is_pid_running(env, p) {
+    if !is_pid_running(env, p) {
         return false;
     }
     proc_cmdline(env, p).is_some_and(|c| c.contains("crosvm"))
@@ -344,16 +344,46 @@ pub fn notify_update(env: &Env) {
     }
 }
 
+pub const VMM_RUN_MARKER: &str = "=== xr crosvm start ";
+
+pub fn vmm_last_run_slice(vmm: &str) -> &str {
+    if let Some(idx) = vmm.rfind(VMM_RUN_MARKER) {
+        let after = vmm.get(idx..).unwrap_or("");
+        if let Some(nl) = after.find('\n') {
+            return after.get(nl.saturating_add(1)..).unwrap_or("");
+        }
+        return "";
+    }
+    vmm
+}
+
+pub fn vmm_has_guest_reset(vmm: &str) -> bool {
+    let cur = vmm_last_run_slice(vmm);
+    cur.contains("vcpu requested reset") || cur.contains("system reset event")
+}
+
+pub fn vm_guest_reset_pending(env: &Env) -> bool {
+    if vm_stopping(env) || xr_vm_alive(env) || sys_shutting_down(env) {
+        return false;
+    }
+    let st = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
+    if !matches!(st.trim(), "ready" | "stable") {
+        return false;
+    }
+    fs::read_to_string(env.vmm_log()).is_ok_and(|s| vmm_has_guest_reset(&s))
+}
+
 pub fn vm_exit_reason(env: &Env) -> String {
     let p = fs::read_to_string(env.run_dir().join("crosvm.pid"))
         .unwrap_or_default()
         .trim()
         .to_string();
-    if !p.is_empty() && env.proc_base.join(&p).join("cmdline").is_file() {
+    if !p.is_empty() && is_pid_running(env, &p) {
         return "crosvm 仍在运行".to_string();
     }
     if let Ok(vmm) = fs::read_to_string(env.vmm_log()) {
-        let lines: Vec<&str> = vmm.lines().collect();
+        let cur = vmm_last_run_slice(&vmm);
+        let lines: Vec<&str> = cur.lines().collect();
         let start = lines.len().saturating_sub(8);
         let tail = lines
             .get(start..)
@@ -380,9 +410,16 @@ pub fn emergency_teardown(env: &Env, why: &str) {
         if xr_vm_alive(env) {
             return;
         }
-        let _ = fs::remove_file(run.join("state"));
-        let _ = fs::remove_file(run.join("crosvm.pid"));
+        crate::clash::stop_clash_mux(env);
+        for p in [
+            run.join("state"),
+            run.join("crosvm.pid"),
+            run.join("guest/guest/openclash.status"),
+        ] {
+            let _ = fs::remove_file(p);
+        }
         routes_emergency_down(env);
+        crate::sys::wakelock_off();
         let _ = fs::remove_file(run.join("net.gw"));
         return;
     }
@@ -395,16 +432,19 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             return;
         }
         log_info(env, "daemon", "补全未完成的停止清理");
+        crate::clash::stop_clash_mux(env);
         for p in [
             run.join("state"),
             run.join("crosvm.pid"),
             run.join("stopping"),
+            run.join("guest/guest/openclash.status"),
             env.fuse_file(),
             env.boot_log(),
         ] {
             let _ = fs::remove_file(p);
         }
         routes_emergency_down(env);
+        crate::sys::wakelock_off();
         notify_cancel(env);
         return;
     }
@@ -417,10 +457,13 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     if xr_vm_alive(env) {
         return;
     }
+    crate::clash::stop_clash_mux(env);
     let _ = fs::write(run.join("last_error"), "服务意外退出\n");
     let _ = fs::remove_file(run.join("state"));
     let _ = fs::remove_file(run.join("crosvm.pid"));
+    let _ = fs::remove_file(run.join("guest/guest/openclash.status"));
     routes_emergency_down(env);
+    crate::sys::wakelock_off();
     notify_cancel(env);
 }
 

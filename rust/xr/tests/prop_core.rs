@@ -9,6 +9,9 @@ use xr::cidr::{
     v6_is_ll, v6_is_ula, v6_pick_addr, valid_cidr, valid_ip4,
 };
 use xr::config::{config_hash, set_kv, valid_kv, Config, KEYS};
+use xr::daemon::keepalive::{
+    vm_exit_reason, vm_guest_reset_pending, vmm_has_guest_reset, vmm_last_run_slice, VMM_RUN_MARKER,
+};
 use xr::env::Env;
 use xr::log::{blog, boot_clean_run, log_info, xr_now};
 use xr::sys::exec::xr_exec;
@@ -275,6 +278,48 @@ fn test_set_kv_log_boot_clean_and_cgroup() {
         fs::read_to_string(env.proc_base.join("1234/oom_score_adj")).unwrap_or_default(),
         "-1000\n"
     );
+}
+
+#[test]
+fn test_vm_exit_reason_zombie_and_guest_reset() {
+    let tmp = TempDir::new().unwrap_or_else(|_| std::process::abort());
+    let mut env = make_test_env(&tmp);
+    env.proc_base = tmp.path().join("proc");
+
+    let zdir = env.proc_base.join("4321");
+    let _ = fs::create_dir_all(&zdir);
+    let _ = fs::write(zdir.join("cmdline"), b"crosvm\0run\0");
+    let _ = fs::write(
+        zdir.join("stat"),
+        "4321 (crosvm) Z 1 4321 4321 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 100 0 0\n",
+    );
+    let _ = fs::write(env.run_dir().join("crosvm.pid"), "4321\n");
+    let vmm1 = format!(
+        "old run fatal\n{VMM_RUN_MARKER}1000 ===\n[INFO] system reset event\n[INFO] vcpu requested reset\n[INFO] exiting with success\n"
+    );
+    let _ = fs::write(env.vmm_log(), &vmm1);
+
+    // 僵尸态 crosvm 不得误判为“仍在运行”，且应只截取最后一次 VMM_RUN_MARKER 之后的日志
+    let reason = vm_exit_reason(&env);
+    assert!(!reason.contains("仍在运行"), "got: {reason}");
+    assert!(reason.contains("vcpu requested reset"), "got: {reason}");
+    assert!(!reason.contains("old run fatal"), "got: {reason}");
+    assert!(vmm_has_guest_reset(&vmm1));
+
+    // 启动早期（state 尚未进入 ready/stable）不视作正常客机重启，防止内核 panic=5 死循环
+    let _ = fs::write(env.run_dir().join("state"), "booting\n");
+    assert!(!vm_guest_reset_pending(&env));
+
+    // 已就绪或稳定运行后收到客机 reset，应识别为待重启
+    let _ = fs::write(env.run_dir().join("state"), "stable\n");
+    assert!(vm_guest_reset_pending(&env));
+
+    // 新一轮启动写入新 marker 后，上一轮的 reset 记录不再串味
+    let vmm2 = format!("{vmm1}{VMM_RUN_MARKER}1005 ===\n[ERROR] disk io error\n");
+    let _ = fs::write(env.vmm_log(), &vmm2);
+    assert_eq!(vmm_last_run_slice(&vmm2), "[ERROR] disk io error\n");
+    assert!(!vmm_has_guest_reset(&vmm2));
+    assert!(!vm_guest_reset_pending(&env));
 }
 
 proptest! {

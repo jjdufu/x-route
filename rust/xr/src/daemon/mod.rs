@@ -14,15 +14,60 @@ use signal_hook::flag;
 use crate::config::Config;
 use crate::daemon::keepalive::{
     cgroup_escape, cgroup_escape_tree, cgroup_path, emergency_teardown, notify_cancel,
-    notify_update, routes_emergency_down, stale_gateway, vm_exit_reason, vm_stopping, xr_vm_alive,
+    notify_update, routes_emergency_down, stale_gateway, vm_exit_reason, vm_guest_reset_pending,
+    vm_stopping, xr_vm_alive,
 };
 use crate::env::Env;
-use crate::log::{debug_expire, log_err, log_info, rotate_all_logs};
+use crate::log::{debug_expire, log_err, log_info, rotate_all_logs, unix_now};
 use crate::net::common::NetCtx;
 use crate::sys::spawn::spawn_self_detached;
 use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note, sys_shutting_down};
 use crate::traffic::acct_snapshot;
-use crate::vm::{vm_running, vm_start_exec, vm_stop_exec};
+use crate::vm::{run_net_hook, vm_running, vm_start_exec, vm_stop_exec};
+
+fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
+    if !vm_guest_reset_pending(env) {
+        return false;
+    }
+    let now = unix_now();
+    reset_times.retain(|&ts| now.saturating_sub(ts) < 120);
+    if reset_times.len() >= 3 {
+        log_err(env, "vm", "短时间内连续多次检测到客机重启，停止自动拉起");
+        return false;
+    }
+    reset_times.push(now);
+
+    let run = env.run_dir();
+    log_info(env, "vm", "检测到 OpenWrt 重启请求，正在重新拉起服务");
+    let _ = fs::write(run.join("stopping"), format!("{}\n", std::process::id()));
+    if let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
+        let wp = wp.trim();
+        if !wp.is_empty() && is_pid_running(env, wp) {
+            let _ = send_signal(wp, Signal::TERM);
+        }
+    }
+    crate::clash::stop_clash_mux(env);
+    for p in [
+        run.join("crosvm.pid"),
+        run.join("crosvm.sock"),
+        run.join("state"),
+        run.join("fuse_watch.pid"),
+        run.join("share.mode"),
+        run.join("guest/guest/openclash.status"),
+        run.join("last_error"),
+        env.fuse_file(),
+        env.boot_log(),
+    ] {
+        let _ = fs::remove_file(p);
+    }
+    let _ = run_net_hook(env, "down");
+    let _ = fs::remove_file(run.join("stopping"));
+
+    let _ = vm_start_exec(env);
+    let _ = fs::write(run.join("notify.force"), "");
+    notify_update(env);
+    true
+}
 
 pub fn daemon_pid(env: &Env) -> String {
     fs::read_to_string(env.run_dir().join("daemon.pid"))
@@ -189,6 +234,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
     log_info(env, "daemon", &format!("已启动 pid={self_pid} cgroup={cg}"));
 
     let mut tick = 0_u64;
+    let mut reset_times: Vec<u64> = Vec::new();
     loop {
         if term.load(Ordering::Relaxed) {
             if sys_shutting_down(env) {
@@ -214,8 +260,14 @@ pub fn daemon_loop(env: &Env) -> i32 {
             let _ = fs::write(run.join("daemon.cmd"), "");
             if !cmd.is_empty() {
                 let rc = match cmd.as_str() {
-                    "start" => vm_start_exec(env),
-                    "stop" => vm_stop_exec(env, false),
+                    "start" => {
+                        reset_times.clear();
+                        vm_start_exec(env)
+                    }
+                    "stop" => {
+                        reset_times.clear();
+                        vm_stop_exec(env, false)
+                    }
                     "ping" => 0,
                     "quit" => {
                         let _ = vm_stop_exec(env, false);
@@ -250,8 +302,10 @@ pub fn daemon_loop(env: &Env) -> i32 {
         cgroup_escape_tree(env, std::process::id());
         if !vm_stopping(env) && (run.join("crosvm.pid").is_file() || run.join("state").is_file()) {
             if !vm_running(env) {
-                let reason = vm_exit_reason(env);
-                emergency_teardown(env, &reason);
+                if !handle_guest_reboot(env, &mut reset_times) {
+                    let reason = vm_exit_reason(env);
+                    emergency_teardown(env, &reason);
+                }
             } else if fs::read_to_string(run.join("state")).is_ok_and(|s| s.trim() == "ready") {
                 let fw_pid = fs::read_to_string(run.join("fuse_watch.pid"))
                     .unwrap_or_default()

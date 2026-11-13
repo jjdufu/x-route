@@ -99,9 +99,14 @@ pub fn start_clash_mux(env: &Env) {
     stop_clash_mux(env);
     let run = env.run_dir();
     let ready = run.join("clash_mux.ready");
-    if spawn_self_detached(env, &["internal", "clash-mux"]).is_err() {
+    let Ok(mut mux) = spawn_self_detached(env, &["internal", "clash-mux"]) else {
         log_info(env, "clash", "clash-mux 启动失败");
         return;
+    };
+    if env.in_daemon {
+        thread::spawn(move || {
+            let _ = mux.wait();
+        });
     }
     for _ in 0..100 {
         if ready.is_file() {

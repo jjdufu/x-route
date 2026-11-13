@@ -145,6 +145,13 @@ pub fn fuse_watch(env: &Env) {
     let mut st = 0_u64;
     while st < stable_sec {
         if !vm_running(env) {
+            if crate::daemon::keepalive::vm_guest_reset_pending(env) {
+                let dpid = crate::daemon::daemon_pid(env);
+                if is_pid_running(env, &dpid) {
+                    let _ = send_signal(&dpid, Signal::USR2);
+                    return;
+                }
+            }
             let _ = fs::remove_file(env.fuse_file());
             vm_fail(env, "稳定期内 crosvm 退出", "服务意外退出");
             return;
@@ -488,6 +495,14 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         let _ = fs::create_dir_all(p);
     }
     let out_f = OpenOptions::new().create(true).append(true).open(&vmm_log);
+    if let Ok(mut mf) = OpenOptions::new().create(true).append(true).open(&vmm_log) {
+        use std::io::Write;
+        let _ = writeln!(
+            mf,
+            "{}ts={boot_ts} ===",
+            crate::daemon::keepalive::VMM_RUN_MARKER
+        );
+    }
     let child = match out_f {
         Ok(f) => {
             let out_std = Stdio::from(f);
@@ -511,7 +526,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
             .spawn(),
     };
 
-    let Ok(ch) = child else {
+    let Ok(mut ch) = child else {
         vm_fail(env, "无法拉起 crosvm", "无法启动");
         let _ = fs::remove_file(env.fuse_file());
         crate::clash::stop_clash_mux(env);
@@ -523,6 +538,13 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     };
     let pid_str = ch.id().to_string();
     let _ = fs::write(run.join("crosvm.pid"), format!("{pid_str}\n"));
+    let notify_daemon = env.in_daemon.then(|| std::process::id().to_string());
+    thread::spawn(move || {
+        let _ = ch.wait();
+        if let Some(dp) = notify_daemon {
+            let _ = send_signal(&dp, Signal::USR2);
+        }
+    });
     blog(env, "vm", &format!("crosvm pid {pid_str}，等待内核输出"));
     thread::sleep(Duration::from_secs(2));
     if !vm_running(env) {
@@ -537,8 +559,13 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         return 1;
     }
 
-    if let Ok(fw) = spawn_self_detached(env, &["internal", "fuse-watch"]) {
+    if let Ok(mut fw) = spawn_self_detached(env, &["internal", "fuse-watch"]) {
         let _ = fs::write(run.join("fuse_watch.pid"), format!("{}\n", fw.id()));
+        if env.in_daemon {
+            thread::spawn(move || {
+                let _ = fw.wait();
+            });
+        }
     }
     let _ = fs::write(run.join("share.mode"), format!("{}\n", share.mode));
     crate::daemon::keepalive::cgroup_escape_tree(env, std::process::id());

@@ -13,5 +13,14 @@ for a in "$@"; do
 done
 [ "${FAKE_NO_READY:-0}" = 1 ] || { sleep 1; echo "XR_READY 1.00" > "$ctl"; }
 [ "${FAKE_EXIT:-0}" = 1 ] && exit 1
-while [ ! -f "${sock}.stop" ]; do sleep 0.2; done
+while [ ! -f "${sock}.stop" ]; do
+  if [ -f "${sock}.reset" ]; then
+    rm -f "${sock}.reset"
+    echo "[INFO] system reset event"
+    echo "[INFO] vcpu requested reset"
+    echo "[INFO] exiting with success"
+    exit 0
+  fi
+  sleep 0.2
+done
 rm -f "${sock}.stop"

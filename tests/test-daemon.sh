@@ -70,8 +70,30 @@ w=0; while [ "$w" -lt 15 ]; do grep -q "异常退出" "$LOG" && grep -q "net dow
 chk 'grep -q "异常退出" "$LOG" && grep -q "net down" "$T/net.calls"'
 chk '[ -f "$RUN/last_error" ]'
 
+# 4a. 客机内部请求重启（如 LuCI 点击重启 -> vcpu requested reset）：守护进程应自动重拉 crosvm，不记异常退出、不留僵尸进程
+rm -f "$RUN/last_error"
+chk '$XR start'
+old_cpid="$(cat "$RUN/crosvm.pid")"
+n_err="$(grep -c "异常退出" "$LOG")"
+touch "$RUN/crosvm.sock.reset"
+w=0
+while [ "$w" -lt 20 ]; do
+  new_cpid="$(cat "$RUN/crosvm.pid" 2>/dev/null || true)"
+  if [ -n "$new_cpid" ] && [ "$new_cpid" != "$old_cpid" ] && is_pid_running "$new_cpid" && $XR running; then
+    break
+  fi
+  sleep 0.5
+  w=$((w+1))
+done
+new_cpid="$(cat "$RUN/crosvm.pid" 2>/dev/null || true)"
+chk '[ -n "$new_cpid" ] && [ "$new_cpid" != "$old_cpid" ] && is_pid_running "$new_cpid" && $XR running'
+chk '[ ! -d "/proc/$old_cpid" ]'
+chk '[ "$(grep -c "异常退出" "$LOG")" = "$n_err" ] && [ ! -f "$RUN/last_error" ]'
+chk 'grep -q "检测到 OpenWrt 重启请求" "$LOG"'
+
 # 4b. 系统关机：crosvm 被 init 一起结束不算崩溃——不写 last_error、不记「异常退出」、只记一行 INFO，守护进程安静退出
 rm -f "$RUN/last_error"
+$XR stop
 chk '$XR start'
 dpid="$(cat "$RUN/daemon.pid")"
 n0="$(grep -c "异常退出" "$LOG")"
