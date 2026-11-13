@@ -303,6 +303,104 @@ md-icon.filled {
   flex-direction: column;
   gap: 14px;
 }
+#page-home {
+  padding: 14px 16px 20px;
+}
+#page-home .page-inner {
+  gap: 16px;
+}
+#page-home .hero-card {
+  padding: 20px 20px 18px;
+  gap: 16px;
+}
+#page-home .hero-emblem {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+}
+#page-home .hero-emblem md-icon {
+  --md-icon-size: 26px;
+}
+#page-home .hero-headline {
+  font-size: 22px;
+  line-height: 28px;
+}
+#page-home .hero-btn {
+  height: 46px;
+}
+#page-home .tile-grid {
+  gap: 12px;
+}
+#page-home .metric-tile {
+  min-height: 112px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 15px 16px;
+  border-radius: 20px;
+}
+#page-home .tile-ico {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+#page-home .tile-label {
+  font-size: 13px;
+}
+#page-home .tile-val {
+  font-size: 17px;
+  line-height: 22px;
+}
+#page-home .tile-sub {
+  font-size: 12px;
+  line-height: 17px;
+}
+#page-home .traffic-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px 18px 18px;
+  border-radius: 24px;
+}
+#page-home .traffic-ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+.tr-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.tr-card-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
+}
+.tr-card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14.5px;
+  line-height: 22px;
+}
+.tr-card-row span {
+  color: var(--md-sys-color-on-surface-variant);
+  flex: none;
+}
+.tr-card-row b {
+  font-family: var(--md-ref-typeface-brand);
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
 
 /* ---- Bottom Navigation Bar (M3 Official Component) ---- */
 .nav-wrap {
@@ -422,6 +520,9 @@ md-icon.filled {
   font-size: 13.5px;
   line-height: 19px;
   opacity: 0.86;
+}
+.hero-sub:empty {
+  display: none;
 }
 .hero-err {
   font-size: 13px;
@@ -698,6 +799,19 @@ md-icon.filled {
   border-bottom-left-radius: var(--xr-group-outer);
   border-bottom-right-radius: var(--xr-group-outer);
 }
+.about-toggle[aria-expanded="false"] {
+  border-radius: var(--xr-group-outer);
+}
+.about-arrow {
+  transition: transform 180ms var(--xr-ease-std);
+}
+.about-toggle[aria-expanded="true"] .about-arrow {
+  transform: rotate(90deg);
+}
+.about-body > :first-child {
+  border-top-left-radius: var(--xr-group-inner);
+  border-top-right-radius: var(--xr-group-inner);
+}
 
 .grow {
   flex: 1;
@@ -757,10 +871,10 @@ md-icon.filled {
 }
 .mono-sub {
   font-family: var(--xr-mono);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: normal;
+  word-break: break-all;
 }
 .item .trail {
   color: var(--md-sys-color-outline);
@@ -777,6 +891,8 @@ md-icon.filled {
   font-family: var(--xr-mono);
   font-size: 13px;
   white-space: pre-line;
+  max-width: 58%;
+  overflow-wrap: anywhere;
 }
 .val.path {
   max-width: 48%;
@@ -800,7 +916,7 @@ md-icon.filled {
   pointer-events: none;
 }
 .soft-off {
-  opacity: 0.48;
+  opacity: 0.62;
 }
 .busy md-switch {
   opacity: 0.6;
@@ -1246,171 +1362,61 @@ md-switch {
   display: none;
 }
 
-/* ---- Inline Traffic Monitoring Card (Status Page) ---- */
-.traffic-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 22px;
-  background: var(--md-sys-color-surface-container-low);
-}
-.tr-hero {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 2px 2px 4px;
-}
-.tr-hero-ico {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  flex: none;
+/* ---- Compact Traffic Entry (Status Page) & Detail Dialog ---- */
+.traffic-ico {
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
-.tr-hero-ico md-icon {
-  --md-icon-size: 20px;
-}
-.tr-hero-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--md-sys-color-on-surface-variant);
-}
-.tr-hero-val {
+.traffic-val {
+  display: block;
+  margin-top: 2px;
   font-family: var(--md-ref-typeface-brand);
-  font-size: 16.5px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 22px;
   color: var(--md-sys-color-on-surface);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.tr-reset-btn {
-  flex: none;
-  --md-outlined-button-container-height: 34px;
-  --md-outlined-button-leading-space: 12px;
-  --md-outlined-button-trailing-space: 14px;
+.dlg-traffic {
+  width: min(92vw, 380px);
 }
-.tr-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.tr-pill {
+.tr-dlg {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--md-sys-color-surface-container);
-  min-width: 0;
+  gap: 14px;
+  padding-top: 2px;
 }
-.tr-pill-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.tr-dlg-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tr-dlg-sec + .tr-dlg-sec {
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 48%, transparent);
+}
+.tr-dlg-head {
   font-size: 12px;
-  font-weight: 500;
-  color: var(--md-sys-color-on-surface-variant);
-}
-.tr-pill-label md-icon {
-  --md-icon-size: 15px;
+  font-weight: 600;
   color: var(--md-sys-color-primary);
 }
-.tr-pill-val {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-surface);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tr-split {
+.tr-dlg-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 4px;
-  border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 42%, transparent);
-}
-.tr-split-head {
-  display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  padding: 2px 2px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 12px;
+  font-size: 14px;
+}
+.tr-dlg-row span {
   color: var(--md-sys-color-on-surface-variant);
-}
-.tr-split-note {
-  font-weight: 400;
-  font-size: 11.5px;
-  color: var(--md-sys-color-outline);
-}
-.tr-source {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--md-sys-color-surface-container);
-}
-.tr-source-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.tr-source-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-surface);
-}
-.tr-source-name md-icon {
-  --md-icon-size: 17px;
-  color: var(--md-sys-color-primary);
-}
-.tr-source-total {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--md-sys-color-on-surface);
-  font-variant-numeric: tabular-nums;
-}
-.tr-source-sub {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  font-size: 12px;
-  color: var(--md-sys-color-on-surface-variant);
-  font-variant-numeric: tabular-nums;
-}
-.tr-source-sub span {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-}
-.tr-source-sub em {
-  font-style: normal;
-  color: var(--md-sys-color-outline);
   flex: none;
 }
-.tr-source-sub b {
-  font-weight: 500;
-  color: var(--md-sys-color-on-surface-variant);
+.tr-dlg-row b {
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ---- M3 Snackbar (Positioned cleanly above Bottom Navigation Bar) ---- */
@@ -1482,8 +1488,6 @@ md-switch {
     flex-wrap: wrap;
   }
   .tile-grid,
-  .tr-pair,
-  .tr-source-sub,
   .mode-cards {
     grid-template-columns: 1fr;
   }

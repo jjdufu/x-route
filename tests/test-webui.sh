@@ -67,27 +67,37 @@ if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得�
 
 // M3 主状态卡、精简话术、高密度只读指标磁贴与页面分区归属
 if (!html.includes('id="hero-card"') || !html.includes('class="wave-svg"') || !html.includes('id="boot-steps"')) fail("状态页应有 M3 主状态卡与波浪进度");
-for (const t of ["开机自启", "运行时长", "上游网络", "热点分流", "组网状态", "打开 LuCI", "导入配置", "连接状态", "路由网段", "运行模式", "管理访问", "IPv6",
-  "异地组网", "常规与通知", "流量监测", "公网流量", "内网流量", "手机流量", "热点流量",
+for (const t of ["开机自启", "运行时长", "上游网络", "热点分流", "组网状态", "打开 LuCI", "导入配置", "路由网段", "运行模式", "管理访问", "IPv6",
+  "异地组网", "常规与通知", "总流量", "公网", "内网", "手机", "热点",
   "存储共享", "目录", "资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "DHCP", "网关地址", "地址/掩码", "整机复位后自启已关闭",
   "关于", "项目地址", "https://github.com/jjdufu/x-route", "作者", "jjdufu", "卸载 XRouter", "立即卸载", "通知显示", "累计流量", "清零"]) {
   if (!html.includes(t)) fail(`缺少文案 ${t}`);
 }
 for (const t of ["谁可以访问", "互联", "上传并启用", "已接入的网段", "共享手机存储", "仅本机", "热点设备", "当前局域网", "控制台", "控制通道", "虚拟机管理器", "SSH", "虚拟机资源", "热点 DHCP", "热点网段", "网关地址/前缀", "op13",
-  "启动服务", "正在启动", "正在停止", "重新启动", "流量与通知"]) {
+  "启动服务", "正在启动", "正在停止", "重新启动", "流量与通知",
+  "开机自动拉起路由服务", "常驻通知展示的流量口径", "挂载手机目录至路由系统", "限制可访问管理后台的来源", "由路由系统接管手机热点地址分配", "启用 IPv6 路由与转发", "记录详细运行快照供排障", "删除全部数据，无需重启", "未运行 · 点击下方启动",
+  "已同步至本机", "引导路由系统中", "配置策略路由与网关转发", "释放规则并恢复本机网络", "服务未就绪，请检查配置后重试", "未配置隧道", "运行稳定"]) {
   if (html.includes(t) || main.includes(t)) fail(`旧文案残留 ${t}`);
 }
 if (!html.includes('<span id="power-btn-text">启动</span>')) fail("主操作按钮初始文案应精简为「启动」");
 if (/<button[^>]*class="metric-tile"|tile-arrow/.test(html + css)) fail("状态页指标磁贴应为只读展示，无无效跳转箭头");
 if (!/flex-wrap:\s*nowrap/.test(css.slice(css.indexOf(".hero-actions {"), css.indexOf("}", css.indexOf(".hero-actions {"))))) fail("主状态卡双按钮在窄屏不应换行挤占");
+if (/\#page-home \.tile-grid\s*\{[^}]*flex:\s*1/.test(css)) fail("状态页 2x2 磁贴不得使用 flex: 1 纵向拉伸变形");
+if (!main.includes("navigator.vibrate") || !main.includes("function haptic") || !main.includes("popstate")) fail("应包含点按震动反馈与系统返回处理");
 
-// 校验模块在三个页面的归属（流量监测在状态页、异地组网在网络页、开机自启与通知显示在系统页）
+// 校验模块在三个页面的归属（状态页紧凑流量入口 + 详情弹窗、异地组网在网络页、开机自启与通知显示在系统页）
 const homeHtml = html.slice(html.indexOf('id="page-home"'), html.indexOf('id="page-net"'));
 const netHtml = html.slice(html.indexOf('id="page-net"'), html.indexOf('id="page-system"'));
 const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf("</main>"));
-if (!homeHtml.includes('id="v-traffic"') || !homeHtml.includes('id="v-tr-wan"') || !homeHtml.includes('id="tr-ph-total"') || html.includes('id="dlg-traffic"')) fail("详细流量监测应内嵌在状态页");
+if (!homeHtml.includes('id="btn-traffic"') || !homeHtml.includes('id="v-traffic"') || !homeHtml.includes('id="v-traffic-wan"') || !homeHtml.includes('id="v-traffic-lan"') || homeHtml.includes('id="tr-ph-total"')) fail("状态页应展示累计流量（总流量/公网/内网）入口");
+const dlgTrafficHtml = html.slice(html.indexOf('id="dlg-traffic"'), html.indexOf('id="dlg-expand"'));
+for (const id of ["v-tr-since", "v-tr-total", "v-tr-wan", "v-tr-lan", "tr-split-sec", "tr-ph-total", "tr-hs-total", "btn-traffic-reset"]) {
+  if (!dlgTrafficHtml.includes(`id="${id}"`)) fail(`流量详情弹窗缺少 ${id}`);
+}
 if (!netHtml.includes('id="vpn-list"') || !netHtml.includes("异地组网")) fail("异地组网应合并在网络页");
 if (!sysHtml.includes('id="row-autostart"') || !sysHtml.includes('id="seg-notify"')) fail("开机自启与通知显示应位于系统页");
+if (!sysHtml.includes('id="btn-about"') || !sysHtml.includes('id="about-body" class="m3-group about-body" hidden')) fail("系统页关于应默认为点击展开折叠状态");
+if (main.includes("当前 ${net.hotspot_net}")) fail("网关地址不应带「当前」前缀");
 
 // 页面切换：150-200ms 干脆横移淡入（WAAPI），无滚动吸附、无 smooth 滚动
 if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得使用滚动吸附动画");
@@ -115,8 +125,9 @@ eq([L.trafficLine(tj, "total"), L.trafficLine(tj, "wan"), L.trafficLine(tj, "lan
 eq(L.fmtSince(0), "累计统计", "fmtSince 缺省");
 if (!/^自 \d\d-\d\d \d\d:\d\d$/.test(L.fmtSince(1731400000))) fail("fmtSince 时间格式");
 
-// 流量监测在「状态」页（page === 0）按需轮询与切回刷新
-if (!/page === 0\) loadTraffic\(\)/.test(main) || !/if \(i === 0\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("流量监测应在状态页实时更新");
+// 累计流量不随 5 秒状态轮询反复刷新，仅在切回状态页、打开详情弹窗或清零时按需拉取
+if (/await refresh\(\);\s*if \(page === 0\) loadTraffic\(\)/.test(main)) fail("不应在定时轮询中实时刷新流量");
+if (!/openTrafficDetail/.test(main) || !/if \(i === 0\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("累计流量应支持按需打开详情与切回刷新");
 
 // 日志统一：系统页「日志」分组按调试模式切换「日志导出 / 诊断导出」
 if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-kinds") || /xr\("log",|"log-clear"/.test(main)) fail("不应再有日志页与日志分类");
@@ -225,7 +236,7 @@ eq(vt.map((t) => [t.name, t.addr, t.routes]), [["home", "10.8.0.5", ["10.8.0.0/2
 const sl = L.splitLines({ ok: true, phone: { wan: { up: 1024, down: 2048 }, lan: { up: 0, down: 0 }, total: { up: 1024, down: 2048 } }, hotspot: { wan: { up: 0, down: 0 }, lan: { up: 0, down: 1024 }, total: { up: 0, down: 1024 } } });
 eq([sl.phone.total, sl.phone.wan, sl.hotspot.lan], ["↑1.0 KB ↓2.0 KB", "↑1.0 KB ↓2.0 KB", "↑0 B ↓1.0 KB"], "splitLines");
 eq(L.splitLines({ ok: false }), null, "splitLines 失败");
-for (const id of ["v-tr-wan", "v-tr-lan", "tr-ph-total", "tr-ph-wan", "tr-ph-lan", "tr-hs-total", "tr-hs-wan", "tr-hs-lan"]) if (!homeHtml.includes(`id="${id}"`)) fail(`状态页流量监测缺少 ${id}`);
+if (!homeHtml.includes('id="btn-traffic"') || !dlgTrafficHtml.includes('id="v-tr-total"')) fail("状态页累计流量入口与详情弹窗不完整");
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 
 process.exit(bad);
