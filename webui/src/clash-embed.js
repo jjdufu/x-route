@@ -40,6 +40,7 @@ export const UI_MOD_PREFIX = "__xrui__/";
 export function rewriteJsModuleImports(jsPath, jsText) {
   const jsDeps = new Set();
   const cssRefs = new Map();
+  const assetRefs = new Map();
   let out = String(jsText || "");
 
   out = out.replace(/(\b(?:from|import)\s*)(["'])(\.\.?\/[^"'\s\\]+\.m?js)\2/g, (_, kw, q, rel) => {
@@ -62,6 +63,15 @@ export function rewriteJsModuleImports(jsPath, jsText) {
     return raw;
   });
 
+  out = out.replace(/\bnew\s+URL\(\s*(["'`])([^"'`\\]+)\1\s*,\s*import\.meta\.url\s*\)/g, (raw, _q, rel) => {
+    if (isSpecialRef(rel)) return raw;
+    const dep = resolveUiPath(jsPath, rel);
+    if (!dep) return raw;
+    const tokenLit = JSON.stringify(`${UI_MOD_PREFIX}asset:${dep}`);
+    assetRefs.set(tokenLit, dep);
+    return `new URL(${tokenLit})`;
+  });
+
   out = out.replace(/(["'])(\.\.?\/[A-Za-z0-9_./-]+\.m?js)\1/g, (raw, q, rel) => {
     const dep = resolveUiPath(jsPath, rel);
     if (!dep) return raw;
@@ -69,13 +79,16 @@ export function rewriteJsModuleImports(jsPath, jsText) {
     return `${q}data:text/javascript,${q}`;
   });
 
-  return { code: out, jsDeps: [...jsDeps], cssRefs };
+  return { code: out, jsDeps: [...jsDeps], cssRefs, assetRefs };
 }
 
-// 注入到同源 blob iframe <head> 最前方的传输垫片：拦截 xrouter.internal（与相对 API 路径）的 fetch / XHR / WebSocket
-function buildShimCode(token) {
+// 注入到同源 blob iframe <head> 最前方的传输垫片：拦截 xrouter.internal（与相对 API 路径）的 fetch / XHR / WebSocket，
+// 修补 blob 上下文下的 URL 解析与会话历史，避免返回手势把内嵌页回退到空白页。
+export function buildShimCode(token) {
   return `(() => {
   var TOKEN = ${JSON.stringify(token)};
+  var INTERNAL_BASE = "http://xrouter.internal/";
+  var NativeURL = window.URL;
   var NativeFetch = window.fetch ? window.fetch.bind(window) : null;
   var NativeXHR = window.XMLHttpRequest;
   var NativeWS = window.WebSocket;
@@ -85,13 +98,73 @@ function buildShimCode(token) {
     return t && t.token === TOKEN ? t : null;
   }
 
-  function parseTarget(raw) {
-    var s = String(raw || "");
-    if (!s || /^(?:blob:|data:|about:)/i.test(s)) return null;
+  if (typeof NativeURL === "function") {
+    var XrURL = class URL extends NativeURL {
+      constructor(input, base) {
+        if (arguments.length > 1 && base !== undefined) {
+          var bs = String(base);
+          if (bs.startsWith("blob:") || bs === "null" || bs === "about:blank") {
+            super(input, INTERNAL_BASE);
+            return;
+          }
+          super(input, base);
+          return;
+        }
+        var us = String(input);
+        if (us === "null" || us === "about:blank") {
+          super(INTERNAL_BASE);
+          return;
+        }
+        try {
+          super(input);
+        } catch (err) {
+          if (typeof input === "string" && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) {
+            super(input, INTERNAL_BASE);
+            return;
+          }
+          throw err;
+        }
+      }
+    };
+    if (typeof NativeURL.createObjectURL === "function") XrURL.createObjectURL = NativeURL.createObjectURL.bind(NativeURL);
+    if (typeof NativeURL.revokeObjectURL === "function") XrURL.revokeObjectURL = NativeURL.revokeObjectURL.bind(NativeURL);
+    if (typeof NativeURL.canParse === "function") XrURL.canParse = NativeURL.canParse.bind(NativeURL);
+    if (typeof NativeURL.parse === "function") XrURL.parse = NativeURL.parse.bind(NativeURL);
+    window.URL = XrURL;
+  }
+
+  if (window.history && typeof window.history.replaceState === "function") {
     try {
-      var u = s.startsWith("/") && !s.startsWith("//")
-        ? new URL(s, "http://xrouter.internal")
-        : new URL(s, window.location.href);
+      window.history.pushState = window.history.replaceState.bind(window.history);
+    } catch (_) {}
+  }
+
+  function reportBootFatal(rawMsg) {
+    var app = document.getElementById("app");
+    if (app && app.children && app.children.length > 0) return;
+    var T = getT();
+    if (T && typeof T.onFatalError === "function") {
+      T.onFatalError(String(rawMsg || "页面初始化失败"));
+    }
+  }
+  window.addEventListener("error", function (ev) {
+    var msg = (ev && (ev.message || (ev.error && ev.error.message))) || "";
+    if (msg) reportBootFatal(msg);
+  });
+  window.addEventListener("unhandledrejection", function (ev) {
+    var r = ev && ev.reason;
+    var msg = (r && r.message) || String(r || "");
+    if (msg) reportBootFatal(msg);
+  });
+
+  function parseTarget(raw) {
+    var s = String(raw || "").trim();
+    if (!s || /^(?:blob:|data:|about:|javascript:|mailto:|#)/i.test(s)) return null;
+    try {
+      var hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s);
+      var u = !hasScheme && !s.startsWith("//")
+        ? new NativeURL(s, INTERNAL_BASE)
+        : new NativeURL(s, window.location && window.location.href ? window.location.href : INTERNAL_BASE);
       if (u.protocol === "blob:" || u.protocol === "data:") return null;
       if (u.hostname === "xrouter.internal") return u;
     } catch (_) {}
@@ -144,7 +217,9 @@ function buildShimCode(token) {
   }
 
   window.fetch = async function (input, init) {
-    var url = typeof input === "string" ? input : (input && input.url) || "";
+    var url = typeof input === "string"
+      ? input
+      : (typeof NativeURL === "function" && input instanceof NativeURL ? input.href : (input && (input.url || input.href)) || "");
     var u = parseTarget(url);
     if (!u) return NativeFetch ? NativeFetch(input, init) : Promise.reject(new TypeError("network disabled"));
     var T = getT();
@@ -444,11 +519,39 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
   const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const activeWs = new Map();
   const blobUrls = [];
+  let curFrame = frame;
   let wsSeq = 0;
   let loadSeq = 0;
   let mountedPort = 0;
   let loading = false;
   let lastEnabled = false;
+
+  function replaceFrame(srcUrl, show) {
+    if (!curFrame) return;
+    const next = document.createElement("iframe");
+    next.id = curFrame.id;
+    next.className = curFrame.className;
+    if (curFrame.title) next.title = curFrame.title;
+    next.hidden = !show;
+    if (srcUrl && srcUrl !== "about:blank") {
+      next.src = srcUrl;
+    }
+    if (curFrame.parentNode) {
+      curFrame.replaceWith(next);
+    }
+    curFrame = next;
+  }
+
+  function isFrameAlive() {
+    if (!curFrame || curFrame.hidden || !curFrame.isConnected) return false;
+    try {
+      const loc = curFrame.contentWindow && curFrame.contentWindow.location;
+      if (!loc || loc.href === "about:blank") return false;
+    } catch {
+      return false;
+    }
+    return true;
+  }
 
   async function clashCall(payload) {
     const r = await xr("clash-call", JSON.stringify(payload));
@@ -478,19 +581,25 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
     if (window.__xrClashTransport && window.__xrClashTransport.token === token) {
       delete window.__xrClashTransport;
     }
-    if (!frame.hidden) frame.hidden = true;
-    if (frame.getAttribute("src") && frame.getAttribute("src") !== "about:blank") {
-      frame.src = "about:blank";
-    }
+    replaceFrame("about:blank", false);
     revokeBlobs();
     stateBox.hidden = false;
     stateMsg.textContent = "等待开启或就绪…";
     reloadBtn.hidden = true;
   }
 
-  function installTransport() {
+  function installTransport(seq) {
     window.__xrClashTransport = {
       token,
+      onFatalError(msg) {
+        if (seq !== loadSeq) return;
+        loading = false;
+        mountedPort = 0;
+        replaceFrame("about:blank", false);
+        stateBox.hidden = false;
+        stateMsg.textContent = `界面初始化失败：${msg}`;
+        reloadBtn.hidden = false;
+      },
       request(req) {
         return clashCall({
           op: "req",
@@ -605,7 +714,7 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
     loading = true;
     closeAllWs();
     revokeBlobs();
-    frame.hidden = true;
+    if (curFrame) curFrame.hidden = true;
     stateBox.hidden = false;
     reloadBtn.hidden = true;
 
@@ -616,7 +725,7 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
     }
 
     stateMsg.textContent = "正在通过内部通道加载界面…";
-    installTransport();
+    installTransport(seq);
 
     const assetCache = new Map();
     const fetchUiAsset = async (relPath, forceMime) => {
@@ -673,13 +782,22 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
         return;
       }
       const rawJs = new TextDecoder("utf-8").decode(b64ToBytes(jsRes.body_b64));
-      let { code, jsDeps, cssRefs } = rewriteJsModuleImports(entryPath, rawJs);
+      let { code, jsDeps, cssRefs, assetRefs } = rewriteJsModuleImports(entryPath, rawJs);
       for (const [rawLit, depCss] of cssRefs) {
         try {
           const cssUrl = await rewriteCssToBlob(depCss);
           if (seq !== loadSeq) return;
           if (cssUrl) code = code.split(rawLit).join(JSON.stringify(cssUrl));
         } catch { /* ignore optional chunk css */ }
+      }
+      for (const [tokenLit, depAsset] of assetRefs) {
+        let assetUrl = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+        try {
+          const fetched = await fetchUiAsset(depAsset);
+          if (seq !== loadSeq) return;
+          if (fetched) assetUrl = fetched;
+        } catch { /* ignore optional static asset */ }
+        code = code.split(tokenLit).join(JSON.stringify(assetUrl));
       }
       const jsBlob = new Blob([code], { type: "application/javascript; charset=utf-8" });
       const jsUrl = URL.createObjectURL(jsBlob);
@@ -775,14 +893,13 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
 
       mountedPort = port;
       loading = false;
-      frame.hidden = false;
       stateBox.hidden = true;
-      frame.src = `${docUrl}#/setup?hostname=xrouter.internal&port=${encodeURIComponent(String(port))}&secret=xrouter-internal&http=1`;
+      replaceFrame(`${docUrl}#/setup?hostname=xrouter.internal&port=${encodeURIComponent(String(port))}&secret=xrouter-internal&http=1`, true);
     } catch (e) {
       if (seq !== loadSeq) return;
       loading = false;
       mountedPort = 0;
-      frame.hidden = true;
+      replaceFrame("about:blank", false);
       stateBox.hidden = false;
       stateMsg.textContent = `加载失败：${(e && e.message) || e}`;
       reloadBtn.hidden = false;
@@ -799,7 +916,7 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
         return;
       }
       lastEnabled = true;
-      if (pageVisible && !loading && mountedPort !== port) {
+      if (pageVisible && !loading && (mountedPort !== port || !isFrameAlive())) {
         mount(port);
       }
     },

@@ -445,8 +445,9 @@ function render(d) {
   tog($("row-autostart"), "disabled", as.disabled);
 
   // 状态页高密度双列指标
-  txt($("v-uptime"), vm.running ? fmtUptime(vm.uptime_s) : "—");
   const v = vmView(d, pending);
+  const isRunning = v.phase === "running";
+  txt($("v-uptime"), isRunning ? fmtUptime(vm.uptime_s) : "—");
   const runMap = {
     running: vm.state === "stable" ? "" : "启动观察期",
     starting: "启动中",
@@ -455,16 +456,16 @@ function render(d) {
   };
   txt($("v-run-st"), runMap[v.phase] || "");
 
-  const kind = vm.running ? upKind(net.up_if) : "—";
+  const kind = isRunning ? upKind(net.up_if) : "—";
   txt($("v-up"), kind);
-  txt($("v-up-sub"), vm.running && net.up_if ? `${net.up_if}${d.ipv6 === true ? " · IPv6" : ""}` : "");
+  txt($("v-up-sub"), isRunning && net.up_if ? `${net.up_if}${d.ipv6 === true ? " · IPv6" : ""}` : "");
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
   setIcon($("i-up"), ic);
 
   const curMode = cfg.XR_MODE || "global";
   const hsAuto = cfg.XR_HOTSPOT_BRIDGE !== "0";
   txt($("v-home-hs"),
-    !vm.running ? (hsAuto ? "自动接管" : "未开启")
+    !isRunning ? (hsAuto ? "自动接管" : "未开启")
       : net.hotspot ? `已接管 ${net.hotspot}`
       : hsAuto ? "待机中" : "未开启");
   txt($("v-home-hs-sub"),
@@ -1152,7 +1153,7 @@ function previewStatus(phase) {
     vm: {
       running: running || starting,
       state: running ? "stable" : starting ? "booting" : "off",
-      uptime_s: running ? 11520 : starting ? 12 : 0,
+      uptime_s: running ? 11520 : 0,
       error: failed ? "180 秒内未就绪，请检查内核镜像" : null,
       tripped: null,
     },
@@ -1224,20 +1225,30 @@ window.__xrPreviewSet = (phase, pageIdx) => {
 };
 
 (async () => {
-  edgeToEdge();
-  bind();
-  await customElements.whenDefined("md-navigation-bar");
-  const pv = !isKsuWebui() ? (window.__XR_PREVIEW__ || { phase: "running" }) : null;
-  if (pv) {
-    render(previewStatus(pv.phase || "running"));
-    previewTraffic(pv.phase || "running");
-    if (typeof pv.page === "number") goPage(pv.page);
-    document.querySelector(".shell").removeAttribute("unresolved");
-    return;
+  let isPreview = false;
+  try {
+    edgeToEdge();
+    bind();
+    await Promise.race([
+      customElements.whenDefined("md-navigation-bar"),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
+    const pv = !isKsuWebui() ? (window.__XR_PREVIEW__ || { phase: "running" }) : null;
+    if (pv) {
+      isPreview = true;
+      render(previewStatus(pv.phase || "running"));
+      previewTraffic(pv.phase || "running");
+      if (typeof pv.page === "number") goPage(pv.page);
+      return;
+    }
+    const cached = loadCache();
+    if (cached) {
+      try { render(cached); } catch { /* 忽略旧缓存异常 */ }
+    }
+  } finally {
+    document.querySelector(".shell")?.removeAttribute("unresolved");
   }
-  const cached = loadCache();
-  if (cached) render(cached);
-  document.querySelector(".shell").removeAttribute("unresolved");
+  if (isPreview) return;
   await refresh();
   loadTraffic();
   schedule();

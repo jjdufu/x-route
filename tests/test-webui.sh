@@ -270,11 +270,91 @@ eq([cvOn.disabled, cvOn.ready, cvOn.showTab, cvOn.port], [false, true, true, 909
 const daisyCss = '.noise{background-image:url("data:image/svg+xml,%3Csvg width=\'200\' filter=\'url(%23a)\'%3E%3C/svg%3E")}@font-face{src:url(./Twemoji.woff2) format("woff2"),url(#clip),url(%23mask)}';
 eq(CE.extractCssAssetRefs(daisyCss).map((x) => x.inner), ["./Twemoji.woff2"], "extractCssAssetRefs 正确跳过双引号 SVG data URI 内嵌 url(%23a) 与锚点");
 eq(CE.resolveUiPath("assets/index.css", "./Twemoji.woff2"), "assets/Twemoji.woff2", "resolveUiPath 相对路径解析");
-const rw = CE.rewriteJsModuleImports("assets/index.js", 'import{a}from"./vendor.js";const m=()=>import("./Overview.js");const d=["assets/Overview.js","./Overview.js","./Overview.css"];');
+const rw = CE.rewriteJsModuleImports(
+  "assets/index.js",
+  'import{a}from"./vendor.js";const m=()=>import("./Overview.js");const bg=new URL("metacubex-BlQkOUXT.jpg",import.meta.url).href;const d=["assets/Overview.js","./Overview.js","./Overview.css"];'
+);
 eq(rw.jsDeps, ["assets/vendor.js", "assets/Overview.js"], "rewriteJsModuleImports 收集静态与动态 JS 依赖");
 eq(rw.cssRefs.get('"./Overview.css"'), "assets/Overview.css", "rewriteJsModuleImports 收集懒加载 CSS");
-if (!rw.code.includes('from"__xrui__/assets/vendor.js"') || !rw.code.includes('import("__xrui__/assets/Overview.js")') || !rw.code.includes('"data:text/javascript,"')) {
-  fail("rewriteJsModuleImports 应重写 import/import() 为 importmap 裸标识符并安全化 preload 相对字面量");
+eq(rw.assetRefs.get('"__xrui__/asset:assets/metacubex-BlQkOUXT.jpg"'), "assets/metacubex-BlQkOUXT.jpg", "rewriteJsModuleImports 收集 import.meta.url 静态资源");
+if (!rw.code.includes('from"__xrui__/assets/vendor.js"') || !rw.code.includes('import("__xrui__/assets/Overview.js")') || !rw.code.includes('new URL("__xrui__/asset:assets/metacubex-BlQkOUXT.jpg")') || !rw.code.includes('"data:text/javascript,"')) {
+  fail("rewriteJsModuleImports 应重写 import/import()/import.meta.url 资源引用并安全化 preload 相对字面量");
+}
+
+// 验证 blob iframe 传输垫片：URL 构造兼容 blob base / null origin、相对路径请求拦截、pushState 不污染返回栈、首屏异常上报
+{
+  const vmMod = await import("vm");
+  const reqCalls = [];
+  let replaceCount = 0;
+  let fatalMsg = "";
+  const listeners = {};
+  const win = {
+    URL,
+    Headers,
+    Response,
+    Request,
+    Blob,
+    Event,
+    EventTarget,
+    MessageEvent,
+    CloseEvent: globalThis.CloseEvent || class CloseEvent extends Event { constructor(t, o = {}) { super(t); Object.assign(this, o); } },
+    TextEncoder,
+    TextDecoder,
+    URLSearchParams,
+    atob,
+    btoa,
+    setTimeout,
+    clearTimeout,
+    queueMicrotask,
+    location: { href: "blob:https://mui.kernelsu.org/doc-uuid#/setup", origin: "null" },
+    navigator: { serviceWorker: { register() { throw new Error("sw forbidden"); } } },
+    history: {
+      pushState() { fail("不应调用原生 history.pushState 污染 WebView 返回栈"); },
+      replaceState() { replaceCount++; },
+    },
+    document: { getElementById: () => ({ children: [] }) },
+    addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+    fetch: async () => { throw new Error("unexpected native fetch"); },
+    XMLHttpRequest: class {},
+    WebSocket: class {},
+    parent: {
+      __xrClashTransport: {
+        token: "tok-test",
+        onFatalError(m) { fatalMsg = m; },
+        async request(r) {
+          reqCalls.push([r.method, r.path]);
+          return { ok: true, status: 200, headers: { "content-type": "application/json" }, body_b64: Buffer.from('{"version":"mihomo"}').toString("base64") };
+        },
+        openWs() { return { send() {}, close() {} }; },
+      },
+    },
+  };
+  win.window = win;
+  vmMod.runInNewContext(CE.buildShimCode("tok-test"), win);
+  eq(new win.URL("metacubex-BlQkOUXT.jpg", "blob:https://mui.kernelsu.org/mod-uuid").href, "http://xrouter.internal/metacubex-BlQkOUXT.jpg", "URL 垫片兼容 blob base");
+  eq(new win.URL("null").href, "http://xrouter.internal/", "URL 垫片兼容 null origin 单参");
+  eq(new win.URL("/configs", "null").href, "http://xrouter.internal/configs", "URL 垫片兼容 null origin 双参");
+  eq(new win.URL("ws://xrouter.internal:9090/traffic?token=xrouter-internal").protocol, "ws:", "URL 垫片保留 ws 协议");
+  if (!(new win.URL("http://xrouter.internal/version") instanceof URL)) fail("URL 垫片实例应继承原生 URL");
+  const rRel = await win.fetch("version");
+  eq(await rRel.json(), { version: "mihomo" }, "相对路径 fetch 经由内部通道");
+  await win.fetch(new win.URL("http://xrouter.internal:9090/configs?mode=rule"));
+  eq(reqCalls, [["GET", "/version"], ["GET", "/configs?mode=rule"]], "fetch 拦截相对路径与 URL 实例");
+  win.history.pushState({}, "", "#/proxies");
+  eq(replaceCount, 1, "iframe 内 pushState 转为 replaceState");
+  for (const fn of listeners.error || []) fn({ message: "Invalid URL" });
+  eq(fatalMsg, "Invalid URL", "首屏未挂载前抛错应通知宿主展示错误态");
+}
+
+// 状态页指标与绿灯状态统一、首屏 unresolved 兜底与无历史污染的 iframe 替换
+if (!html.includes('rel="icon"') || !html.includes("./icon.png")) fail("index.html 应声明本地 icon.png 避免 favicon.ico 404");
+if (!/const isRunning = v\.phase === "running";/.test(main) || !/txt\(\$\("v-uptime"\), isRunning \? fmtUptime\(vm\.uptime_s\) : "—"\);/.test(main)) {
+  fail("运行时长应仅在 v.phase === running（顶栏变绿）时显示");
+}
+if (/vm\.running \? fmtUptime/.test(main) || /const kind = vm\.running \?/.test(main)) fail("状态页指标磁贴不应在启动中提前按 vm.running 展示运行态");
+if (!/finally \{\s*document\.querySelector\("\.shell"\)\?\.removeAttribute\("unresolved"\);/.test(main)) fail("首屏初始化必须在 finally 中移除 unresolved 防止白屏");
+if (!/function replaceFrame\(/.test(ce) || !/curFrame\.replaceWith\(next\)/.test(ce) || !/!isFrameAlive\(\)/.test(ce) || /\bframe\.src\s*=/.test(ce)) {
+  fail("clash-embed 应通过替换 iframe 节点挂载/卸载并检测存活，禁止直接改写已挂载 frame.src 污染返回栈");
 }
 
 eq(L.decodeRpcStdout('{"id":"c1","ok":true}\n'), { id: "c1", ok: true }, "decodeRpcStdout 单行");

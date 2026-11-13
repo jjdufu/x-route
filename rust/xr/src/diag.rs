@@ -536,6 +536,10 @@ pub fn diag_logcat() -> String {
         "wifiservice",
         "xrouter",
         "xrnotify",
+        "chromium",
+        "webview",
+        "console",
+        "sukisu",
     ];
     let filtered: Vec<&str> = out
         .lines()
