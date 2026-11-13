@@ -1,7 +1,11 @@
 pub mod cidr;
+pub mod cli;
 pub mod config;
+pub mod daemon;
+pub mod diag;
 pub mod env;
 pub mod log;
 pub mod net;
 pub mod sys;
 pub mod traffic;
+pub mod vm;
