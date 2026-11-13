@@ -8,7 +8,7 @@ function b64ToBytes(b64) {
   return out;
 }
 
-function resolveUiPath(baseFile, ref) {
+export function resolveUiPath(baseFile, ref) {
   const clean = String(ref || "").split(/[?#]/)[0].trim();
   if (!clean) return "";
   try {
@@ -18,8 +18,58 @@ function resolveUiPath(baseFile, ref) {
   }
 }
 
-function isSpecialRef(ref) {
-  return /^(?:data:|blob:|https?:|mailto:|#)/i.test(String(ref || "").trim());
+export function isSpecialRef(ref) {
+  const s = String(ref || "").trim();
+  return !s || /^(?:data:|blob:|https?:|mailto:|about:|javascript:|#|%23)/i.test(s);
+}
+
+export const CSS_URL_RE = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")\s]+))\s*\)/gi;
+
+export function extractCssAssetRefs(cssText) {
+  const out = [];
+  for (const m of String(cssText || "").matchAll(CSS_URL_RE)) {
+    const inner = m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3];
+    if (!inner || isSpecialRef(inner)) continue;
+    out.push({ raw: m[0], inner });
+  }
+  return out;
+}
+
+export const UI_MOD_PREFIX = "__xrui__/";
+
+export function rewriteJsModuleImports(jsPath, jsText) {
+  const jsDeps = new Set();
+  const cssRefs = new Map();
+  let out = String(jsText || "");
+
+  out = out.replace(/(\b(?:from|import)\s*)(["'])(\.\.?\/[^"'\s\\]+\.m?js)\2/g, (_, kw, q, rel) => {
+    const dep = resolveUiPath(jsPath, rel);
+    if (!dep) return _;
+    jsDeps.add(dep);
+    return `${kw}${q}${UI_MOD_PREFIX}${dep}${q}`;
+  });
+
+  out = out.replace(/(\bimport\s*\(\s*)(["'`])(\.\.?\/[^"'`\s\\]+\.m?js)\2(\s*\))/g, (_, pre, _q, rel, post) => {
+    const dep = resolveUiPath(jsPath, rel);
+    if (!dep) return _;
+    jsDeps.add(dep);
+    return `${pre}"${UI_MOD_PREFIX}${dep}"${post}`;
+  });
+
+  out = out.replace(/(["'`])(\.\.?\/[^"'`\s\\]+\.css)\1/g, (raw, _q, rel) => {
+    const dep = resolveUiPath(jsPath, rel);
+    if (dep) cssRefs.set(raw, dep);
+    return raw;
+  });
+
+  out = out.replace(/(["'])(\.\.?\/[A-Za-z0-9_./-]+\.m?js)\1/g, (raw, q, rel) => {
+    const dep = resolveUiPath(jsPath, rel);
+    if (!dep) return raw;
+    jsDeps.add(dep);
+    return `${q}data:text/javascript,${q}`;
+  });
+
+  return { code: out, jsDeps: [...jsDeps], cssRefs };
 }
 
 // 注入到同源 blob iframe <head> 最前方的传输垫片：拦截 xrouter.internal（与相对 API 路径）的 fetch / XHR / WebSocket
@@ -584,6 +634,64 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
       return url;
     };
 
+    const cssCache = new Map();
+    const rewriteCssToBlob = async (cssPath) => {
+      if (cssCache.has(cssPath)) return cssCache.get(cssPath);
+      const cssRes = await clashCall({ op: "ui", path: cssPath });
+      if (seq !== loadSeq) return "";
+      if (!cssRes || !cssRes.ok || !cssRes.body_b64) {
+        throw new Error(`读取样式失败: ${cssPath}`);
+      }
+      let cssText = new TextDecoder("utf-8").decode(b64ToBytes(cssRes.body_b64));
+      for (const { raw, inner } of extractCssAssetRefs(cssText)) {
+        const assetPath = resolveUiPath(cssPath, inner);
+        if (!assetPath) continue;
+        try {
+          const blobUrl = await fetchUiAsset(assetPath);
+          if (seq !== loadSeq) return "";
+          cssText = cssText.split(raw).join(`url("${blobUrl}")`);
+        } catch {
+          // 非关键字体或装饰资源缺失时不中断面板加载
+        }
+      }
+      const cssBlob = new Blob([cssText], { type: "text/css; charset=utf-8" });
+      const cssUrl = URL.createObjectURL(cssBlob);
+      blobUrls.push(cssUrl);
+      cssCache.set(cssPath, cssUrl);
+      return cssUrl;
+    };
+
+    const importMap = {};
+    const jsVisited = new Set();
+    const loadJsModuleGraph = async (entryPath, required) => {
+      if (!entryPath || jsVisited.has(entryPath)) return;
+      jsVisited.add(entryPath);
+      const jsRes = await clashCall({ op: "ui", path: entryPath });
+      if (seq !== loadSeq) return;
+      if (!jsRes || !jsRes.ok || !jsRes.body_b64) {
+        if (required) throw new Error((jsRes && jsRes.error) || `读取脚本失败: ${entryPath}`);
+        return;
+      }
+      const rawJs = new TextDecoder("utf-8").decode(b64ToBytes(jsRes.body_b64));
+      let { code, jsDeps, cssRefs } = rewriteJsModuleImports(entryPath, rawJs);
+      for (const [rawLit, depCss] of cssRefs) {
+        try {
+          const cssUrl = await rewriteCssToBlob(depCss);
+          if (seq !== loadSeq) return;
+          if (cssUrl) code = code.split(rawLit).join(JSON.stringify(cssUrl));
+        } catch { /* ignore optional chunk css */ }
+      }
+      const jsBlob = new Blob([code], { type: "application/javascript; charset=utf-8" });
+      const jsUrl = URL.createObjectURL(jsBlob);
+      blobUrls.push(jsUrl);
+      importMap[`${UI_MOD_PREFIX}${entryPath}`] = jsUrl;
+
+      for (const dep of jsDeps) {
+        await loadJsModuleGraph(dep, false);
+        if (seq !== loadSeq) return;
+      }
+    };
+
     try {
       const htmlRes = await clashCall({ op: "ui", path: "index.html" });
       if (seq !== loadSeq) return;
@@ -593,53 +701,73 @@ export function createClashEmbed({ xr, spawn, frame, stateBox, stateMsg, reloadB
       const rawHtml = new TextDecoder("utf-8").decode(b64ToBytes(htmlRes.body_b64));
       const doc = new DOMParser().parseFromString(rawHtml, "text/html");
 
-      doc.querySelectorAll('link[rel="manifest"], link[rel="icon"], link[rel="apple-touch-icon"], script[src*="registerSW"]').forEach((el) => el.remove());
+      doc.querySelectorAll('link[rel="manifest"], link[rel="apple-touch-icon"], link[rel="prefetch"], link[rel="modulepreload"], script[src*="registerSW"]').forEach((el) => el.remove());
+      doc.querySelectorAll('link[rel="icon"]').forEach((el) => {
+        if (el.id) {
+          const holder = doc.createElement("template");
+          holder.id = el.id;
+          el.replaceWith(holder);
+        } else {
+          el.remove();
+        }
+      });
 
       for (const link of [...doc.querySelectorAll('link[rel="stylesheet"][href]')]) {
         const href = link.getAttribute("href");
         if (!href || isSpecialRef(href)) continue;
         const cssPath = resolveUiPath("index.html", href);
-        const cssRes = await clashCall({ op: "ui", path: cssPath });
+        const cssUrl = await rewriteCssToBlob(cssPath);
         if (seq !== loadSeq) return;
-        if (!cssRes || !cssRes.ok || !cssRes.body_b64) throw new Error(`读取样式失败: ${cssPath}`);
-        let cssText = new TextDecoder("utf-8").decode(b64ToBytes(cssRes.body_b64));
-        const urlMatches = [...cssText.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g)];
-        for (const m of urlMatches) {
-          const inner = m[2];
-          if (!inner || isSpecialRef(inner)) continue;
-          const assetPath = resolveUiPath(cssPath, inner);
-          const blobUrl = await fetchUiAsset(assetPath);
-          if (seq !== loadSeq) return;
-          cssText = cssText.split(m[0]).join(`url("${blobUrl}")`);
-        }
-        const cssBlob = new Blob([cssText], { type: "text/css; charset=utf-8" });
-        const cssUrl = URL.createObjectURL(cssBlob);
-        blobUrls.push(cssUrl);
         link.setAttribute("href", cssUrl);
       }
 
-      for (const el of [...doc.querySelectorAll('link[rel="modulepreload"][href], img[src]')]) {
-        const attr = el.tagName === "LINK" ? "href" : "src";
-        const ref = el.getAttribute(attr);
+      for (const el of [...doc.querySelectorAll("img[src]")]) {
+        const ref = el.getAttribute("src");
         if (!ref || isSpecialRef(ref)) continue;
         const rel = resolveUiPath("index.html", ref);
-        const blobUrl = await fetchUiAsset(rel);
-        if (seq !== loadSeq) return;
-        el.setAttribute(attr, blobUrl);
+        try {
+          const blobUrl = await fetchUiAsset(rel);
+          if (seq !== loadSeq) return;
+          el.setAttribute("src", blobUrl);
+        } catch { /* ignore optional image */ }
       }
 
       for (const sc of [...doc.querySelectorAll("script[src]")]) {
         const src = sc.getAttribute("src");
         if (!src || isSpecialRef(src)) continue;
         const jsPath = resolveUiPath("index.html", src);
-        const blobUrl = await fetchUiAsset(jsPath, "application/javascript; charset=utf-8");
-        if (seq !== loadSeq) return;
-        sc.setAttribute("src", blobUrl);
+        if ((sc.getAttribute("type") || "").toLowerCase() === "module") {
+          await loadJsModuleGraph(jsPath, true);
+          if (seq !== loadSeq) return;
+          sc.removeAttribute("src");
+          sc.removeAttribute("crossorigin");
+          sc.textContent = `import ${JSON.stringify(`${UI_MOD_PREFIX}${jsPath}`)};`;
+        } else {
+          try {
+            const blobUrl = await fetchUiAsset(jsPath, "application/javascript; charset=utf-8");
+            if (seq !== loadSeq) return;
+            sc.setAttribute("src", blobUrl);
+          } catch (err) {
+            if (!sc.hasAttribute("onerror")) throw err;
+            const onErr = sc.getAttribute("onerror") || "";
+            sc.removeAttribute("src");
+            sc.removeAttribute("onerror");
+            sc.textContent = onErr;
+          }
+        }
       }
 
-      const shim = doc.createElement("script");
-      shim.textContent = buildShimCode(token);
-      if (doc.head) doc.head.prepend(shim);
+      if (doc.head) {
+        if (Object.keys(importMap).length > 0) {
+          const im = doc.createElement("script");
+          im.type = "importmap";
+          im.textContent = JSON.stringify({ imports: importMap });
+          doc.head.prepend(im);
+        }
+        const shim = doc.createElement("script");
+        shim.textContent = buildShimCode(token);
+        doc.head.prepend(shim);
+      }
 
       const finalHtml = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
       const docUrl = URL.createObjectURL(new Blob([finalHtml], { type: "text/html; charset=utf-8" }));

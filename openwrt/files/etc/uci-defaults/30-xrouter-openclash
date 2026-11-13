@@ -23,8 +23,9 @@ if [ -x /etc/uci-defaults/luci-openclash ]; then
 	rm -f /etc/uci-defaults/luci-openclash
 fi
 
-# 预装但不启动：关闭开机自启，并保持主开关关闭
-[ -x /etc/init.d/openclash ] && /etc/init.d/openclash disable
+# 预装但不启动：保留 init.d 自启软链，由 openclash.config.enable=0 控制默认不拉起内核；
+# 用户后续在 LuCI 启用 OpenClash 后重启虚拟机即可正常随系统自启。
+[ -x /etc/init.d/openclash ] && /etc/init.d/openclash enable
 if [ -f /etc/config/openclash ]; then
 	uci -q set openclash.config.enable=0
 	uci -q commit openclash

@@ -345,7 +345,7 @@ export function clashView(d) {
       port,
       ready: false,
       showTab: false,
-      disabled: true,
+      disabled: !enabled,
       warnKind: "err",
       warnText: "核心未启动",
     };
@@ -358,7 +358,7 @@ export function clashView(d) {
       port,
       ready: false,
       showTab: false,
-      disabled: true,
+      disabled: !enabled,
       warnKind: "warn",
       warnText: "未检测到 zashboard，请安装后启用",
     };

@@ -156,6 +156,11 @@ IO.popen(env, ["ruby", clashd], "r+") do |io|
   r2 = JSON.parse(io.gets)
   abort("ui index failed: #{r2}") unless r2["ok"] && r2["body_b64"].unpack1("m0").include?("zashboard")
 
+  File.binwrite(File.join(ui_dir, "logo.webp"), "RIFFwebp")
+  io.puts(JSON.generate(id: 21, op: "ui", path: "logo.webp"))
+  r21 = JSON.parse(io.gets)
+  abort("ui webp mime failed: #{r21}") unless r21["ok"] && r21["mime"] == "image/webp"
+
   io.puts(JSON.generate(id: 3, op: "ui", path: "../etc/passwd"))
   r3 = JSON.parse(io.gets)
   abort("ui traversal not blocked: #{r3}") if r3["ok"]
@@ -175,5 +180,12 @@ end
 srv.close
 PYRB
 fi
+
+# 7. OpenClash 预置自启软链与旧盘自愈检查
+OC_DEF="$ROOT/openwrt/files/etc/uci-defaults/30-xrouter-openclash"
+OC_RDY="$ROOT/openwrt/files/etc/init.d/xrouter-ready"
+chk 'grep -q "/etc/init.d/openclash enable" "$OC_DEF" && ! grep -q "/etc/init.d/openclash disable" "$OC_DEF"'
+chk 'grep -q "openclash.config.enable=0" "$OC_DEF"'
+chk 'grep -q "/etc/init.d/openclash enabled" "$OC_RDY" && grep -q "/etc/init.d/openclash boot" "$OC_RDY"'
 
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi

@@ -19,6 +19,7 @@ const fb = fs.readFileSync(W + "/src/file-browser.js", "utf8");
 const ce = fs.readFileSync(W + "/src/clash-embed.js", "utf8");
 const css = fs.readFileSync(W + "/src/style.css", "utf8");
 const L = await import(W + "/src/logic.js");
+const CE = await import(W + "/src/clash-embed.js");
 const { ICONS } = await import(W + "/src/icons.js");
 const cliMod = fs.readFileSync(root + "/rust/xr/src/cli/mod.rs", "utf8");
 const configRs = fs.readFileSync(root + "/rust/xr/src/config.rs", "utf8");
@@ -51,14 +52,14 @@ for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset
   if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 }
 
-// Material Design 3 导航栏与默认三页 + 条件第四页（状态 · 网络 · 系统 · [分流]）
+// Material Design 3 导航栏与默认三页 + 条件插入分流页（状态 · 网络 · [分流] · 系统）
 const navTabs = [...html.matchAll(/<md-navigation-tab[^>]*label="([^"]+)"/g)].map((m) => m[1]);
-eq(navTabs, ["状态", "网络", "系统", "分流"], "M3 底部导航栏");
+eq(navTabs, ["状态", "网络", "分流", "系统"], "M3 底部导航栏");
 if (!/<md-navigation-tab id="nav-clash" label="分流" hidden>/.test(html)) fail("分流导航项默认应隐藏");
 const pages = [...html.matchAll(/<section class="page(?:\s+[\w-]+)*" id="([^"]+)"/g)].map((m) => m[1]);
-eq(pages, ["page-home", "page-net", "page-system", "page-clash"], "页面容器");
+eq(pages, ["page-home", "page-net", "page-clash", "page-system"], "页面容器");
 if (!/<section class="page clash-page" id="page-clash" hidden>/.test(html)) fail("分流页默认应隐藏");
-if (!/const maxPage = \(\) => \(\$\("nav-clash"\) && !\$\("nav-clash"\)\.hidden \? 3 : 2\);/.test(main)) fail("maxPage 应按分流页显隐动态切换 2/3");
+if (!/const visiblePages = \(\) => \(\$\("nav-clash"\) && !\$\("nav-clash"\)\.hidden \? \[0, 1, 2, 3\] : \[0, 1, 3\]\);/.test(main)) fail("visiblePages 应按分流页显隐动态切换 [0, 1, 2, 3] / [0, 1, 3]");
 if (html.includes("<md-tabs") || html.includes("<md-primary-tab")) fail("不应再使用旧顶部标签栏");
 if (html.indexOf('class="appbar"') > html.indexOf('id="pager"') || html.indexOf('id="pager"') > html.indexOf('id="nav"')) fail("布局顺序应为顶栏 -> 页面容器 -> 底部导航栏");
 
@@ -94,8 +95,8 @@ if (!main.includes("navigator.vibrate") || !main.includes("function haptic") || 
 
 // 校验模块在三个页面的归属（状态页紧凑流量入口 + 详情弹窗、异地组网在网络页、开机自启与通知显示在系统页）
 const homeHtml = html.slice(html.indexOf('id="page-home"'), html.indexOf('id="page-net"'));
-const netHtml = html.slice(html.indexOf('id="page-net"'), html.indexOf('id="page-system"'));
-const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf('id="page-clash"'));
+const netHtml = html.slice(html.indexOf('id="page-net"'), html.indexOf('id="page-clash"'));
+const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf('</main>'));
 if (!homeHtml.includes('id="btn-traffic"') || !homeHtml.includes('id="v-traffic"') || !homeHtml.includes('id="v-traffic-wan"') || !homeHtml.includes('id="v-traffic-lan"') || homeHtml.includes('id="tr-ph-total"')) fail("状态页应展示累计流量（总流量/公网/内网）入口");
 const dlgTrafficHtml = html.slice(html.indexOf('id="dlg-traffic"'), html.indexOf('id="dlg-expand"'));
 for (const id of ["v-tr-since", "v-tr-total", "v-tr-wan", "v-tr-lan", "tr-split-sec", "tr-ph-total", "tr-hs-total", "btn-traffic-reset"]) {
@@ -248,17 +249,33 @@ eq(L.splitLines({ ok: false }), null, "splitLines 失败");
 if (!homeHtml.includes('id="btn-traffic"') || !dlgTrafficHtml.includes('id="v-tr-total"')) fail("状态页累计流量入口与详情弹窗不完整");
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
 
-// 分流管理强校验、分片解码与无 IP 内部通道不变量
+// 分流管理强校验、分片解码、CSS/ESM 资产改写与无 IP 内部通道不变量
+const cvOffVm0 = L.clashView({ vm: { running: false }, clash: { installed: true, running: true, port: 9090 }, config: { XR_CLASH_UI: "0" } });
+eq([cvOffVm0.disabled, cvOffVm0.warnKind, cvOffVm0.warnText, cvOffVm0.showTab], [true, "err", "核心未启动", false], "clashView VM 未运行且未开");
 const cvOffVm = L.clashView({ vm: { running: false }, clash: { installed: true, running: true, port: 9090 }, config: { XR_CLASH_UI: "1" } });
-eq([cvOffVm.disabled, cvOffVm.warnKind, cvOffVm.warnText, cvOffVm.showTab], [true, "err", "核心未启动", false], "clashView VM 未运行");
+eq([cvOffVm.disabled, cvOffVm.warnKind, cvOffVm.warnText, cvOffVm.showTab], [false, "err", "核心未启动", false], "clashView VM 未运行但已开允许关闭");
+const cvNoCore0 = L.clashView({ vm: { running: true }, clash: { installed: true, running: false, port: 9090 }, config: { XR_CLASH_UI: "0" } });
+eq([cvNoCore0.disabled, cvNoCore0.warnKind, cvNoCore0.warnText, cvNoCore0.showTab], [true, "err", "核心未启动", false], "clashView 核心未启动禁止开启");
 const cvNoCore = L.clashView({ vm: { running: true }, clash: { installed: true, running: false, port: 9090 }, config: { XR_CLASH_UI: "1" } });
-eq([cvNoCore.disabled, cvNoCore.warnKind, cvNoCore.warnText, cvNoCore.showTab], [true, "err", "核心未启动", false], "clashView 核心未启动");
+eq([cvNoCore.disabled, cvNoCore.warnKind, cvNoCore.warnText, cvNoCore.showTab], [false, "err", "核心未启动", false], "clashView 核心未启动但已开允许关闭");
+const cvNoUi0 = L.clashView({ vm: { running: true }, clash: { installed: false, running: true, port: 9090 }, config: { XR_CLASH_UI: "0" } });
+eq([cvNoUi0.disabled, cvNoUi0.warnKind, cvNoUi0.warnText, cvNoUi0.showTab], [true, "warn", "未检测到 zashboard，请安装后启用", false], "clashView 未安装 zashboard 禁止开启");
 const cvNoUi = L.clashView({ vm: { running: true }, clash: { installed: false, running: true, port: 9090 }, config: { XR_CLASH_UI: "1" } });
-eq([cvNoUi.disabled, cvNoUi.warnKind, cvNoUi.warnText, cvNoUi.showTab], [true, "warn", "未检测到 zashboard，请安装后启用", false], "clashView 未安装 zashboard");
+eq([cvNoUi.disabled, cvNoUi.warnKind, cvNoUi.warnText, cvNoUi.showTab], [false, "warn", "未检测到 zashboard，请安装后启用", false], "clashView 未安装 zashboard 但已开允许关闭");
 const cvOffSw = L.clashView({ vm: { running: true }, clash: { installed: true, running: true, port: 9092 }, config: { XR_CLASH_UI: "0" } });
 eq([cvOffSw.disabled, cvOffSw.ready, cvOffSw.showTab, cvOffSw.port], [false, true, false, 9092], "clashView 开关关闭不显示分流页");
 const cvOn = L.clashView({ vm: { running: true }, clash: { installed: true, running: true, port: 9092 }, config: { XR_CLASH_UI: "1" } });
 eq([cvOn.disabled, cvOn.ready, cvOn.showTab, cvOn.port], [false, true, true, 9092], "clashView 就绪且开启显示分流页");
+
+const daisyCss = '.noise{background-image:url("data:image/svg+xml,%3Csvg width=\'200\' filter=\'url(%23a)\'%3E%3C/svg%3E")}@font-face{src:url(./Twemoji.woff2) format("woff2"),url(#clip),url(%23mask)}';
+eq(CE.extractCssAssetRefs(daisyCss).map((x) => x.inner), ["./Twemoji.woff2"], "extractCssAssetRefs 正确跳过双引号 SVG data URI 内嵌 url(%23a) 与锚点");
+eq(CE.resolveUiPath("assets/index.css", "./Twemoji.woff2"), "assets/Twemoji.woff2", "resolveUiPath 相对路径解析");
+const rw = CE.rewriteJsModuleImports("assets/index.js", 'import{a}from"./vendor.js";const m=()=>import("./Overview.js");const d=["assets/Overview.js","./Overview.js","./Overview.css"];');
+eq(rw.jsDeps, ["assets/vendor.js", "assets/Overview.js"], "rewriteJsModuleImports 收集静态与动态 JS 依赖");
+eq(rw.cssRefs.get('"./Overview.css"'), "assets/Overview.css", "rewriteJsModuleImports 收集懒加载 CSS");
+if (!rw.code.includes('from"__xrui__/assets/vendor.js"') || !rw.code.includes('import("__xrui__/assets/Overview.js")') || !rw.code.includes('"data:text/javascript,"')) {
+  fail("rewriteJsModuleImports 应重写 import/import() 为 importmap 裸标识符并安全化 preload 相对字面量");
+}
 
 eq(L.decodeRpcStdout('{"id":"c1","ok":true}\n'), { id: "c1", ok: true }, "decodeRpcStdout 单行");
 eq(L.decodeRpcStdout('{"_chunks":2}\n@{"id":"c1",\n@"ok":true,"val":42}\n'), { id: "c1", ok: true, val: 42 }, "decodeRpcStdout 分片重组");

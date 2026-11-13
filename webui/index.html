@@ -220,7 +220,19 @@
         </div>
       </section>
 
-      <!-- 2. 系统（常规与通知、存储共享、资源、日志、关于） -->
+      <!-- 2. 分流（内嵌 zashboard，纯内部通道，未开启或前置未满足时隐藏） -->
+      <section class="page clash-page" id="page-clash" hidden>
+        <div id="clash-state" class="clash-state">
+          <span class="clash-state-ico"><md-icon class="filled" data-icon="alt_route"></md-icon></span>
+          <div id="clash-state-msg" class="clash-state-msg">正在连接内部通道…</div>
+          <md-filled-tonal-button id="btn-clash-reload" hidden>
+            <md-icon slot="icon" data-icon="refresh"></md-icon>重新加载
+          </md-filled-tonal-button>
+        </div>
+        <iframe id="clash-frame" class="clash-frame" title="分流管理" hidden></iframe>
+      </section>
+
+      <!-- 3. 系统（常规与通知、存储共享、资源、日志、关于） -->
       <section class="page" id="page-system">
         <div class="page-inner">
           <div class="section-block">
@@ -372,21 +384,9 @@
           </div>
         </div>
       </section>
-
-      <!-- 3. 分流（内嵌 zashboard，纯内部通道，未开启或前置未满足时隐藏） -->
-      <section class="page clash-page" id="page-clash" hidden>
-        <div id="clash-state" class="clash-state">
-          <span class="clash-state-ico"><md-icon class="filled" data-icon="alt_route"></md-icon></span>
-          <div id="clash-state-msg" class="clash-state-msg">正在连接内部通道…</div>
-          <md-filled-tonal-button id="btn-clash-reload" hidden>
-            <md-icon slot="icon" data-icon="refresh"></md-icon>重新加载
-          </md-filled-tonal-button>
-        </div>
-        <iframe id="clash-frame" class="clash-frame" title="分流管理" hidden></iframe>
-      </section>
     </main>
 
-    <!-- M3 官方底部导航栏（默认 3 目的地：状态 · 网络 · 系统；开启分流管理后动态显示第 4 栏：分流） -->
+    <!-- M3 官方底部导航栏（默认 3 目的地：状态 · 网络 · 系统；开启分流管理后在网络与系统之间动态显示：分流） -->
     <footer class="nav-wrap">
       <md-navigation-bar id="nav" class="navbar" aria-label="主导航">
         <md-navigation-tab label="状态" active>
@@ -397,13 +397,13 @@
           <md-icon slot="inactive-icon" data-icon="lan"></md-icon>
           <md-icon slot="active-icon" class="filled" data-icon="lan"></md-icon>
         </md-navigation-tab>
-        <md-navigation-tab label="系统">
-          <md-icon slot="inactive-icon" data-icon="tune"></md-icon>
-          <md-icon slot="active-icon" class="filled" data-icon="tune"></md-icon>
-        </md-navigation-tab>
         <md-navigation-tab id="nav-clash" label="分流" hidden>
           <md-icon slot="inactive-icon" data-icon="alt_route"></md-icon>
           <md-icon slot="active-icon" class="filled" data-icon="alt_route"></md-icon>
+        </md-navigation-tab>
+        <md-navigation-tab label="系统">
+          <md-icon slot="inactive-icon" data-icon="tune"></md-icon>
+          <md-icon slot="active-icon" class="filled" data-icon="tune"></md-icon>
         </md-navigation-tab>
       </md-navigation-bar>
     </footer>

@@ -525,6 +525,8 @@ function ensureClashEmbed() {
   return clashEmbed;
 }
 
+const CLASH_PAGE = 2;
+
 function renderClash(d) {
   const cv = clashView(d);
   const sw = $("sw-clash-ui");
@@ -536,8 +538,8 @@ function renderClash(d) {
 
   hide($("nav-clash"), !cv.showTab);
   hide($("page-clash"), !cv.showTab);
-  if (!cv.showTab && page === 3) goPage(0);
-  ensureClashEmbed().sync(cv.showTab, cv.port, page === 3);
+  if (!cv.showTab && page === CLASH_PAGE) goPage(0);
+  ensureClashEmbed().sync(cv.showTab, cv.port, page === CLASH_PAGE);
 }
 
 // ---- 状态刷新单飞与本地缓存 ----
@@ -914,7 +916,7 @@ async function exportLogs() {
 
 // ---- M3 页面切换：底部导航栏 + 横向轻扫手势，180ms 空间过渡 ----
 const PAGE_MS = 180;
-const maxPage = () => ($("nav-clash") && !$("nav-clash").hidden ? 3 : 2);
+const visiblePages = () => ($("nav-clash") && !$("nav-clash").hidden ? [0, 1, 2, 3] : [0, 1, 3]);
 
 let subPushed = false;
 let pushedCount = 0;
@@ -987,18 +989,19 @@ function syncAppbarScroll(activePage) {
 }
 
 function goPage(i, fromPop = false) {
-  i = Math.max(0, Math.min(maxPage(), i));
+  const vis = visiblePages();
+  if (!vis.includes(i)) i = vis[0];
   const pages = document.querySelectorAll("#pager > .page");
   pages.forEach((p, k) => p.classList.toggle("on", k === i));
   const nav = $("nav");
   if (nav && nav.activeIndex !== i) nav.activeIndex = i;
   syncAppbarScroll(pages[i]);
-  if (i === 3 && status) {
+  if (i === CLASH_PAGE && status) {
     const cv = clashView(status);
     ensureClashEmbed().sync(cv.showTab, cv.port, true);
   }
   if (page === i) return;
-  const dir = i > page ? 1 : -1;
+  const dir = vis.indexOf(i) > vis.indexOf(page) ? 1 : -1;
   page = i;
   if (!fromPop) {
     if (i > 0 && !subPushed) {
@@ -1031,7 +1034,7 @@ function bindPager() {
 
   let sx = 0; let sy = 0; let st = 0; let track = false;
   pager.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1 || page === 3 || e.target.closest("md-switch, md-outlined-select, .crumbs, #page-clash")) {
+    if (e.touches.length !== 1 || page === CLASH_PAGE || e.target.closest("md-switch, md-outlined-select, .crumbs, #page-clash")) {
       track = false;
       return;
     }
@@ -1044,7 +1047,9 @@ function bindPager() {
     const t = e.changedTouches[0];
     const dx = t.clientX - sx; const dy = t.clientY - sy;
     if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.6 || e.timeStamp - st > 700) return;
-    const next = Math.max(0, Math.min(maxPage(), page + (dx < 0 ? 1 : -1)));
+    const vis = visiblePages();
+    const pos = vis.indexOf(page);
+    const next = vis[Math.max(0, Math.min(vis.length - 1, (pos < 0 ? 0 : pos) + (dx < 0 ? 1 : -1)))];
     if (next !== page) {
       haptic(10);
       goPage(next);
