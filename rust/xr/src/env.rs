@@ -91,9 +91,8 @@ impl Env {
         );
         let notifier_jar = var_nonempty("XR_NOTIFIER_JAR")
             .map_or_else(|| moddir.join("bin/xrnotify.jar"), PathBuf::from);
-        let app_process = PathBuf::from(
-            var_nonempty("XR_APP_PROCESS").unwrap_or_else(|| "/system/bin/app_process".to_string()),
-        );
+        let app_process = var_nonempty("XR_APP_PROCESS")
+            .map_or_else(|| sysbin.join("app_process"), PathBuf::from);
 
         Self {
             moddir,

@@ -1,5 +1,3 @@
 #!/system/bin/sh
-# XRouter: 管理器“操作”按钮：运行中则停止，否则启动
-MODDIR="${0%/*}"
-if sh "${MODDIR}/scripts/xr" running; then sh "${MODDIR}/scripts/xr" stop; else sh "${MODDIR}/scripts/xr" start; fi
-sh "${MODDIR}/scripts/xr" status-line
+# XRouter: 管理器「操作」按钮入口（切换虚拟机启停并输出状态行；转发至 bin/xr）
+exec "${0%/*}/bin/xr" internal action-toggle

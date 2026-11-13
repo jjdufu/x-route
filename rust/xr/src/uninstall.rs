@@ -267,6 +267,10 @@ fn pick_stage_base(env: &Env) -> PathBuf {
     if fs::create_dir_all(&tmp).is_ok() {
         return tmp;
     }
+    let sys_tmp = std::env::temp_dir().join(&name);
+    if fs::create_dir_all(&sys_tmp).is_ok() {
+        return sys_tmp;
+    }
     let dev = Path::new("/dev").join(&name);
     let _ = fs::create_dir_all(&dev);
     dev

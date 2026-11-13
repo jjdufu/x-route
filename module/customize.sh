@@ -47,6 +47,7 @@ rm -rf "${MODPATH}/data"
 sync
 
 set_perm_recursive "${MODPATH}" 0 0 0755 0644
+[ -f "${MODPATH}/bin/xr" ] && set_perm "${MODPATH}/bin/xr" 0 0 0755
 for f in xr vm.sh net.sh share.sh vpnroutes.sh common.sh daemon.sh v6.sh keepalive.sh watchdog.sh traffic.sh diag.sh hotspot.sh; do
   [ -f "${MODPATH}/scripts/${f}" ] && set_perm "${MODPATH}/scripts/${f}" 0 0 0755
 done

@@ -11,10 +11,11 @@ printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_avail
 chmod +x "$T/bin/getprop"
 # 假 net.sh：只记录调用
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
-[ -f "$T/mod/scripts/share.sh" ] || printf 'share_prepare() { share_spec=""; share_mode=off; share_wrap=""; }\n' > "$T/mod/scripts/share.sh"
 export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
 trap 'sh "$T/mod/scripts/vm.sh" stop >/dev/null 2>&1; rm -rf "$T"' EXIT
-. "$T/mod/scripts/common.sh"; ensure_dirs
+CONF="$XR_DATA/config/config.conf"; IMG="$XR_DATA/images"; ROOTFS="$IMG/openwrt-rootfs.img"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"
+FUSE="$XR_DATA/config/vm_booting.fuse"; LAST_GOOD="$XR_DATA/config/last_good"; TRIPPED="$XR_DATA/config/tripped"
+mkdir -p "$XR_DATA/config" "$IMG" "$RUN" "$XR_DATA/log"
 cp "$T/mod/config/config.conf" "$CONF"
 sed -i 's/^READY_TIMEOUT_SEC=.*/READY_TIMEOUT_SEC="6"/; s/^STABLE_SEC=.*/STABLE_SEC="5"/' "$CONF"
 echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"; truncate -s 1M "$T/r"; gzip -c "$T/r" > "$IMG/openwrt-rootfs.img.gz"
@@ -34,23 +35,22 @@ chk 'grep -q "^tap-name=xr0,mac=52:54:00:1d:e9:fe$" "$T/args" && grep -q "net up
 chk 'grep -q -- "--shared-dir" "$T/args" && grep -q "xrctl" "$T/args" && ! grep -q "xrshare" "$T/args"'
 chk '[ -f "$FUSE" ]'
 sleep 10
-chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(config_hash)" ]'
+chk '[ "$(cat "$RUN/state")" = stable ] && [ ! -f "$FUSE" ] && [ "$(cat "$LAST_GOOD")" = "$(sh "$T/mod/scripts/xr" internal config-hash)" ]'
 chk '$VM status | grep -q "\"running\":true.*\"state\":\"stable\".*\"last_good_match\":true.*\"ready_channel\":\"hvc\""'
 $VM start; chk 'grep -q "已在运行" "$LOG"'
 # 磁盘操作在运行中被拒绝
 $VM expand 2048; chk '[ $? -ne 0 ] && [ "$(stat -c %s "$ROOTFS")" -eq $((300*1048576)) ]'
 # 2. 停止
 $VM stop
-chk '! sh -c ". $T/mod/scripts/vm.sh; vm_running" && [ ! -f "$RUN/crosvm.pid" ] && grep -q "net down" "$T/net.calls"'
+chk '! sh "$T/mod/scripts/xr" running && [ ! -f "$RUN/crosvm.pid" ] && grep -q "net down" "$T/net.calls"'
 # 2b. OpenVPN 持久开关：开机按 openvpn.enabled 下发 enable / disable
-. "$T/mod/scripts/vm.sh"
 mkdir -p "$XR_DATA/config" "$RUN/guest/host"
 printf 'client\n' > "$XR_DATA/config/openvpn.ovpn"
 echo 0 > "$XR_DATA/config/openvpn.enabled"
-vpn_boot_prepare
+$VM start; $VM stop
 chk 'grep -q "remote\|^client\|." "$RUN/guest/host/openvpn.ovpn" && grep -qx disable "$RUN/guest/host/openvpn.cmd"'
 echo 1 > "$XR_DATA/config/openvpn.enabled"
-vpn_boot_prepare
+$VM start; $VM stop
 chk 'grep -qx enable "$RUN/guest/host/openvpn.cmd"'
 # 3. 未就绪超时 -> 自动停止、熔断文件删除
 FAKE_NO_READY=1 $VM start; sleep 10

@@ -30,13 +30,13 @@ chk 'grep -q "com.sukisu.ultra" "$N"'
 # 保活通知只在通知栏、不上锁屏（渠道与通知都 SECRET；锁屏可见性只在建渠道时生效，所以换新渠道 ID 并删除旧渠道）
 chk 'grep -q "VISIBILITY_SECRET" "$N" && grep -q "setLockscreenVisibility" "$N" && grep -q "setVisibility(Notification.VISIBILITY_SECRET)" "$N"'
 chk 'grep -q "CHANNEL_ID = \"xrouter_status_v2\"" "$N" && grep -q "deleteNotificationChannel" "$N"'
-# 日志导出 zip（手机上没有 zip 命令时由 jar 打包）
-chk 'grep -q "\"zip\"" "$S/Main.java" && grep -q "ZipOutputStream" "$S/Zipper.java" && grep -q "com.xrouter.notify.Main zip" "$ROOT/module/scripts/xr"'
+# 日志导出 zip（Rust 端使用 zip crate，Java 端仍保留 Zipper）
+chk 'grep -q "\"zip\"" "$S/Main.java" && grep -q "ZipOutputStream" "$S/Zipper.java" && grep -q "ZipWriter" "$ROOT/rust/xr/src/diag.rs"'
 # 进程与守护进程的约定：notify.req / notify.ack / cancel
 M="$S/Main.java"
 chk 'grep -q "systemMain" "$M" && grep -q "\"notify.req\"" "$M" && grep -q "\"notify.ack\"" "$M"'
-chk 'grep -q "notify.req" "$ROOT/module/scripts/keepalive.sh" && grep -q "notify.ack" "$ROOT/module/scripts/keepalive.sh"'
-chk 'grep -q "com.xrouter.notify.Main" "$ROOT/module/scripts/keepalive.sh" && grep -q "bin/xrnotify.jar" "$ROOT/module/scripts/keepalive.sh"'
+chk 'grep -q "notify.req" "$ROOT/rust/xr/src/daemon/keepalive.rs" && grep -q "notify.ack" "$ROOT/rust/xr/src/daemon/keepalive.rs"'
+chk 'grep -q "com.xrouter.notify.Main" "$ROOT/rust/xr/src/daemon/keepalive.rs" && grep -q "bin/xrnotify.jar" "$ROOT/rust/xr/src/env.rs"'
 
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   mkdir -p "$T/src/com/xrouter/notify"
@@ -83,7 +83,7 @@ EOJ
   else
     cat "$T/zjavac.err"; echo "FAIL: Zipper"; fail=1
   fi
-  chk 'grep -q "1024" "$ROOT/module/scripts/traffic.sh"'
+  chk 'grep -q "acct_json" "$ROOT/rust/xr/src/traffic.rs"'
 else
   echo "test-notifier: 无 javac，跳过文案检查"
 fi

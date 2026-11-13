@@ -68,8 +68,15 @@ impl<'a> NetCtx<'a> {
     }
 
     pub fn sysw(&self, path: &Path, val: &str) -> bool {
+        let is_mock = self.env.proc_dir != Path::new("/proc");
+        if is_mock {
+            if let Some(p) = path.parent() {
+                let _ = fs::create_dir_all(p);
+            }
+        }
         let ok = OpenOptions::new()
             .write(true)
+            .create(is_mock)
             .truncate(true)
             .open(path)
             .and_then(|mut f| writeln!(f, "{val}"))

@@ -3,14 +3,17 @@
 # XRouter: net.sh / vpnroutes.sh 模拟测试（假 ip / ndc / iptables，不触碰本机网络）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-T="$(mktemp -d)"; MOCK="$T/mock"; mkdir -p "$MOCK" "$T/proc/sys/net/ipv4/conf/xr0" "$T/proc/sys/net/ipv6/conf/xr0"
+T="$(mktemp -d)"; MOCK="$T/mock"; mkdir -p "$MOCK" "$T/proc/sys/net/ipv4/conf/xr0" "$T/proc/sys/net/ipv6/conf/xr0" "$T/proc/4321"
+printf 'crosvm\0' > "$T/proc/4321/cmdline"
+echo '4321 (crosvm) S 1 1 1 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0' > "$T/proc/4321/stat"
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
 trap 'rm -rf "$T"' EXIT
 echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
-export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" XR_PROC="$T/proc" XR_SYSNET="$T/sysnet"
-. "$ROOT/module/scripts/common.sh"; ensure_dirs
+export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" XR_PROC="$T/proc" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
+CONF="$XR_DATA/config/config.conf"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"; mkdir -p "$XR_DATA/config" "$RUN" "$XR_DATA/log"
 cp "$ROOT/module/config/config.conf" "$CONF"
 NET="sh $ROOT/module/scripts/net.sh"
+set_kv() { sh "$ROOT/module/scripts/xr" internal set-kv "$1" "$2" >/dev/null; }
 FWD="$MOCK/XR_FWD"
 echo "11000:	from all fwmark 0x0/0xffff iif lo lookup rmnet_data2" > "$MOCK/iprule"
 echo "192.168.43.0/24 dev wlan1 proto static scope link" > "$MOCK/lnroutes"
@@ -114,7 +117,7 @@ echo "default via 10.0.0.1" > "$MOCK/devrt.rmnet_data2"
 echo "192.168.43.0/24 proto kernel scope link src 192.168.43.1" > "$MOCK/devrt.wlan1"
 set_kv XR_MODE global
 echo ready > "$RUN/state"
-echo "$$" > "$RUN/crosvm.pid"
+echo 4321 > "$RUN/crosvm.pid"
 : > "$MOCK/calls"
 # 保证 xr0 存在（上次 down 已删）
 mkdir -p "$T/sysnet/xr0"
@@ -137,7 +140,7 @@ rm -f "$RUN/state" "$RUN/crosvm.pid"; : > "$MOCK/calls"; $NET sync
 chk 'grep -q "ip rule del pref 19100" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
 chk '! grep -qx -- "-i wlan1 -o rmnet_data2 -j DROP" "$FWD"'
 # 旁路即使就绪也不接管
-echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
+echo ready > "$RUN/state"; echo 4321 > "$RUN/crosvm.pid"
 set_kv XR_MODE bypass; : > "$MOCK/calls"; $NET sync
 chk '! grep -q "pref 19100 lookup 233" "$MOCK/calls" && [ ! -f "$RUN/net.gw" ]'
 # 仍不改写 VM 出站包（XR_MSS 的 MSS 钳制除外）
@@ -151,7 +154,7 @@ echo "default via fe80::1 dev rmnet_data2 proto ra metric 1024 pref medium" > "$
 echo "2409:8a00:1:2::/64 proto kernel metric 256 expires 7000sec pref medium" > "$MOCK/devrt6.main.rmnet_data2"
 echo "2409:8a00:1:3::/64 proto static metric 1024 pref medium" > "$MOCK/devrt6.local_network.wlan1"
 printf '%s\n' "2: rmnet_data2    inet6 fe80::abcd/64 scope link" "2: rmnet_data2    inet6 2409:8a00:1:2:1111:2222:3333:4444/64 scope global" > "$MOCK/addr6.rmnet_data2"
-mkdir -p "$T/sysnet/xr0"; echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"; echo 1 > "$RUN/guest/guest/ipv6"
+mkdir -p "$T/sysnet/xr0"; echo ready > "$RUN/state"; echo 4321 > "$RUN/crosvm.pid"; echo 1 > "$RUN/guest/guest/ipv6"
 : > "$MOCK/calls"; $NET up
 WAN="2409:8a00:0001:0002:5054:00ff:fe1d:e9fe"
 chk 'grep -q "^ip -6 addr add fd7a:7872:e9::1/64 dev xr0 nodad" "$MOCK/calls" && [ "$(cat "$T/proc/sys/net/ipv6/conf/xr0/disable_ipv6")" = 0 ]'
@@ -183,7 +186,7 @@ chk '[ "$(cat "$RUN/net.gw")" = v6 ] && [ -f "$RUN/net.v6proxy" ] && [ ! -f "$RU
 chk '! grep -q "ip6tables nat 不可用" "$LOG" && grep -q "^ip -6 neigh replace proxy $WAN dev rmnet_data2" "$MOCK/calls"'
 # 上游只有 /128：无法共享前缀，全局下只拦截
 $NET down; printf '%s\n' "2: rmnet_data2    inet6 2409:8a00:1:2:1111:2222:3333:4444/128 scope global" > "$MOCK/addr6.rmnet_data2"
-mkdir -p "$T/sysnet/xr0"; echo 1 > "$RUN/guest/guest/ipv6"; echo ready > "$RUN/state"; echo "$$" > "$RUN/crosvm.pid"
+mkdir -p "$T/sysnet/xr0"; echo 1 > "$RUN/guest/guest/ipv6"; echo ready > "$RUN/state"; echo 4321 > "$RUN/crosvm.pid"
 : > "$MOCK/calls"; $NET up
 chk '[ "$(cat "$RUN/net.gw")" = block ] && [ ! -f "$RUN/net.v6proxy" ] && grep -q "没有可共享的 IPv6 前缀" "$LOG"'
 chk 'grep -q "^ip -6 route replace unreachable default table 233" "$MOCK/calls"'
@@ -225,18 +228,13 @@ $NET down
 # 没有 ip6 nat 表的机型：只探测一次，之后既不去删 XR_NAT6 挂钩，调试日志里也不出现相关错误
 : > "$XR_DATA/log/debug.log"; : > "$MOCK/calls"; NAT6_FAIL=1 $NET up; NAT6_FAIL=1 $NET sync; NAT6_FAIL=1 $NET down
 chk '! grep -q "XR_NAT6" "$XR_DATA/log/debug.log" && [ "$(grep -c "^ip6tables .*-t nat" "$MOCK/calls")" -le 1 ]'
-# SIGPIPE（rc=141，读取方提前关管道）不算错误；真正失败照常记录
-: > "$XR_DATA/log/debug.log"; load_config
-xr_exec sh -c 'kill -PIPE $$'; xr_exec sh -c 'exit 3'
-chk '! grep -q "rc=141" "$XR_DATA/log/debug.log" && grep -q "rc=3 sh -c exit 3" "$XR_DATA/log/debug.log"'
-set_kv XR_DEBUG 0
+sh "$ROOT/module/scripts/xr" set XR_DEBUG 0 >/dev/null
 
 # 对时：控制目录里的 host/time 过期（≥30 分钟）或在未来时才重写，平时不写盘
-eval "$(sed -n '/^time_push() {/,/^}/p' "$ROOT/module/scripts/net.sh")"
 mkdir -p "$RUN/guest/host"; rm -f "$RUN/guest/host/time"
-time_push; chk '[ "$(cat "$RUN/guest/host/time")" -ge "$(( $(date +%s) - 5 ))" ]'
-echo 123 > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" -gt 123 ]'
-t0="$(( $(date +%s) - 60 ))"; echo "$t0" > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" = "$t0" ]'
-tf="$(( $(date +%s) + 86400 ))"; echo "$tf" > "$RUN/guest/host/time"; time_push; chk '[ "$(cat "$RUN/guest/host/time")" -lt "$tf" ]'
+$NET sync; chk '[ "$(cat "$RUN/guest/host/time")" -ge "$(( $(date +%s) - 5 ))" ]'
+echo 123 > "$RUN/guest/host/time"; $NET sync; chk '[ "$(cat "$RUN/guest/host/time")" -gt 123 ]'
+t0="$(( $(date +%s) - 60 ))"; echo "$t0" > "$RUN/guest/host/time"; $NET sync; chk '[ "$(cat "$RUN/guest/host/time")" = "$t0" ]'
+tf="$(( $(date +%s) + 86400 ))"; echo "$tf" > "$RUN/guest/host/time"; $NET sync; chk '[ "$(cat "$RUN/guest/host/time")" -lt "$tf" ]'
 
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

@@ -19,8 +19,8 @@ const fb = fs.readFileSync(W + "/src/file-browser.js", "utf8");
 const css = fs.readFileSync(W + "/src/style.css", "utf8");
 const L = await import(W + "/src/logic.js");
 const { ICONS } = await import(W + "/src/icons.js");
-const xrsh = fs.readFileSync(root + "/module/scripts/xr", "utf8");
-const common = fs.readFileSync(root + "/module/scripts/common.sh", "utf8");
+const cliMod = fs.readFileSync(root + "/rust/xr/src/cli/mod.rs", "utf8");
+const configRs = fs.readFileSync(root + "/rust/xr/src/config.rs", "utf8");
 
 // WebUI X 配置与依赖
 const cfg = JSON.parse(fs.readFileSync(W + "/public/config.json", "utf8"));
@@ -41,7 +41,7 @@ for (const src of [main, fb]) for (const m of src.matchAll(/\$\("([\w-]+)"\)/g))
 for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
 const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
-for (const s of subs) if (!new RegExp(`^  ${s}\\)`, "m").test(xrsh) && !xrsh.includes(`if [ "\${1:-}" = ${s} ]`)) fail(`xr 不支持子命令 ${s}`);
+for (const s of subs) if (!cliMod.includes(`"${s}" =>`) && !cliMod.includes(`cmd == "${s}"`)) fail(`xr 不支持子命令 ${s}`);
 for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "traffic-split", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "vpn-delete", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci", "project"]) {
   if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 }
@@ -104,7 +104,7 @@ eq(L.MODE_OPTS.map((o) => o.label), ["全局接管", "旁路网关"], "运行模
 eq(L.ACCESS_OPTS.map((o) => o.label), ["本机", "内网", "所有"], "管理访问");
 eq(L.SHARE_OPTS.map((o) => o.label), ["只读", "读写"], "权限");
 eq(L.NOTIFY_OPTS.map((o) => o.label), ["总流量", "公网", "内网"], "通知显示");
-const notifyVals = common.match(/XR_NOTIFY_TRAFFIC\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
+const notifyVals = [...configRs.match(/"XR_NOTIFY_TRAFFIC" => matches!\(val, ([^)]+)\)/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
 eq(L.NOTIFY_OPTS.map((o) => o.value), notifyVals, "通知显示取值与 valid_kv 一致");
 if (!/XR_NOTIFY_TRAFFIC="total"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("通知显示默认应为总流量");
 eq([L.fmtBytes(0), L.fmtBytes(1023), L.fmtBytes(1536), L.fmtBytes(1288490189), L.fmtBytes(9234179686), L.fmtBytes(5497558138880)],
@@ -123,11 +123,11 @@ if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-ki
 if (!html.includes('<div class="group-title">日志</div>') || html.includes('<div class="group-title">调试</div>')) fail("分组应为「日志」");
 if (!/"诊断导出" : "日志导出"/.test(main) || !/diag \? await xr\("diag-export"\) : await xr\("log-export"\)/.test(main)) fail("导出按钮应随调试模式切换");
 
-const exposeVals = common.match(/XR_EXPOSE\)\n\s*case "\$2" in ([\w|]+)\)/)[1].split("|");
+const exposeVals = [...configRs.match(/"XR_EXPOSE" => matches!\(val, ([^)]+)\)/)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
 eq(L.ACCESS_OPTS.map((o) => o.value), exposeVals, "管理访问取值与 valid_kv 一致");
 eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");
 if (!/XR_EXPOSE="lan"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("管理访问默认应为内网");
-for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(common)) fail(`SET_KEYS 含未知键 ${k}`);
+for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(configRs)) fail(`SET_KEYS 含未知键 ${k}`);
 
 // 确认弹窗范围（含删除组网配置）
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);

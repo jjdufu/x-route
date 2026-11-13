@@ -9,7 +9,7 @@ trap 'rm -rf "$T"' EXIT
 echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
 export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" \
   XR_PROC="$T/proc" XR_SYSNET="$T/sysnet" XR_DAEMON_FOREGROUND=1
-. "$ROOT/module/scripts/common.sh"; ensure_dirs
+CONF="$XR_DATA/config/config.conf"; RUN="$XR_DATA/run"; mkdir -p "$XR_DATA/config" "$RUN" "$XR_DATA/log"
 cp "$ROOT/module/config/config.conf" "$CONF"
 NET="sh $ROOT/module/scripts/net.sh"
 XR="sh $ROOT/module/scripts/xr"
@@ -67,12 +67,10 @@ setcnt XR_ACCT_UP 5 10
 chk '[ "$($XR traffic | J "d[\"wan\"][\"up\"], d[\"lan\"][\"up\"]")" = "5000000080 1035" ]'
 
 # 5. 守护进程快照：只在变化时写
-. "$ROOT/module/scripts/traffic.sh"
-IPT="$ROOT/tests/mock/net/iptables -w"; IP6T="$ROOT/tests/mock/net/ip6tables -w"
-acct_snapshot
+sh "$ROOT/module/scripts/traffic.sh" snapshot
 chk '[ "$(cat "$XR_DATA/config/traffic.snap")" = "5000000080 9000000080 1035 2040" ]'
 m1="$(stat -c %Y "$XR_DATA/config/traffic.snap")"; touch -d '2000-01-01' "$XR_DATA/config/traffic.snap"
-acct_snapshot
+sh "$ROOT/module/scripts/traffic.sh" snapshot
 chk '[ "$(stat -c %Y "$XR_DATA/config/traffic.snap")" -lt "$m1" ]'
 
 # 6. 停止（down）：折算保存，钩子和链全部删除；再次 up 从保存值接着累计
@@ -86,7 +84,7 @@ setcnt XR_ACCT_UP 1 2
 chk '[ "$($XR traffic | J "d[\"wan\"][\"up\"], d[\"lan\"][\"up\"]")" = "5000000082 1036" ]'
 
 # 7. 整机重启（链被清空、没来得及折算）：从快照接续
-acct_snapshot
+sh "$ROOT/module/scripts/traffic.sh" snapshot
 for c in XR_ACCT XR_ACCT_UP XR_ACCT_DN XR_ACCT6 XR_ACCT6_UP XR_ACCT6_DN; do rm -f "$MOCK/chain.$c" "$MOCK/cnt.$c"; done
 rm -f "$MOCK"/hook*.INPUT "$MOCK"/hook*.OUTPUT
 echo "1 1 1 1" > "$XR_DATA/config/traffic.base"
@@ -109,14 +107,12 @@ chk '[ -f "$MOCK/chain.XR_ACCT_UP" ] && [ ! -f "$MOCK/chain.XR_ACCT6_UP" ]'
 chk '! grep -qx -- "-j XR_ACCT6" "$MOCK/XR_FWD6"'
 chk '[ "$($XR traffic | J "d[\"ipv6\"], d[\"counting\"]")" = "False True" ]'
 
-# 10. 单位换算
-chk '[ "$(acct_human 0)" = "0 B" ] && [ "$(acct_human 1023)" = "1023 B" ] && [ "$(acct_human 1536)" = "1.5 KB" ]'
-chk '[ "$(acct_human 1288490189)" = "1.2 GB" ] && [ "$(acct_human 9234179686)" = "8.6 GB" ] && [ "$(acct_human 5497558138880)" = "5.0 TB" ]'
+# 10. 单位换算已在 rust/xr/tests/net_traffic.rs 中覆盖
 
 # 11. 损坏的保存文件按 0 处理
 echo "garbage x" > "$XR_DATA/config/traffic.base"
-chk '[ "$(acct_read_file "$XR_DATA/config/traffic.base")" = "0 0 0 0" ]'
-chk '[ "$(acct_read_file "$XR_DATA/config/none")" = "0 0 0 0" ]'
+rm -f "$XR_DATA/config/traffic.snap"
+chk '[ "$($XR traffic | J "d[\"wan\"][\"up\"], d[\"wan\"][\"down\"], d[\"lan\"][\"up\"], d[\"lan\"][\"down\"]")" = "0 0 0 0" ]'
 
 # 12. 卸载脚本兜底删除统计链
 chk 'grep -q "XR_ACCT XR_ACCT6" "$ROOT/module/uninstall.sh"'

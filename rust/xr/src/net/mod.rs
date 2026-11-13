@@ -854,6 +854,7 @@ pub fn net_sync(env: &Env) {
     if !env.sysnet.join(XR_IF).is_dir() {
         return;
     }
+    time_push(env);
     let _lock = net_lock(env);
     sync_all_unlocked(env);
 }

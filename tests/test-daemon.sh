@@ -27,7 +27,9 @@ cleanup() {
   rm -rf "$T"
 }
 trap cleanup EXIT
-. "$T/mod/scripts/common.sh"; ensure_dirs
+CONF="$XR_DATA/config/config.conf"; IMG="$XR_DATA/images"; ROOTFS="$IMG/openwrt-rootfs.img"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"
+mkdir -p "$XR_DATA/config" "$IMG" "$RUN" "$XR_DATA/log"
+is_pid_running() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null && ! grep -q '^[^)]*) Z ' "/proc/$1/stat" 2>/dev/null; }
 cp "$T/mod/config/config.conf" "$CONF"
 sed -i 's/^READY_TIMEOUT_SEC=.*/READY_TIMEOUT_SEC="6"/; s/^STABLE_SEC=.*/STABLE_SEC="5"/' "$CONF"
 echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"
@@ -40,8 +42,8 @@ dpid="$(cat "$RUN/daemon.pid")"
 cpid="$(cat "$RUN/crosvm.pid")"
 chk 'is_pid_running "$dpid" && is_pid_running "$cpid"'
 # crosvm / 守护进程都不应还在已退出的启动 shell 的进程组里
-# 守护进程 cmdline 应含 daemon.sh
-chk 'tr "\0" " " < "/proc/$dpid/cmdline" | grep -q daemon.sh'
+# 守护进程 cmdline 应含 internal daemon
+chk 'tr "\0" " " < "/proc/$dpid/cmdline" | grep -q "internal daemon"'
 # 测试进程不是 crosvm 的父进程
 ppid="$(awk "{print \$4}" /proc/"$cpid"/stat)"
 chk '[ "$ppid" != "$$" ]'
