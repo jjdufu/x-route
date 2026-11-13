@@ -10,4 +10,9 @@
 # WebUI：依赖与构建产物（构建输出到 module/webroot，由 package-module.sh 生成）
 /webui/node_modules/
 /module/webroot/
+# Rust 控制面：编译缓存与构建生成的二进制产物（不入库，由 package-module.sh / lint.sh 生成）
+/module/bin/xr
+/rust/target/
+/rust/*/target/
+
 
