@@ -3,6 +3,7 @@ export const XR = "sh /data/adb/modules/xrouter/scripts/xr";
 export const SET_KEYS = [
   "XR_EXPOSE", "XR_MODE", "VM_SHARE", "VM_SHARE_MODE", "VM_SHARE_PATH",
   "AUTOSTART", "VM_CPUS", "VM_MEM_MB", "XR_NOTIFY_TRAFFIC", "XR_DEBUG", "XR_DEBUG_HOURS", "XR_HOTSPOT_BRIDGE", "XR_HOTSPOT_SUBNET",
+  "XR_CLASH_UI",
 ];
 const ARG_RE = /^[A-Za-z0-9_-]+$/;
 export const MEDIA_ROOT = "/storage/emulated/0";
@@ -325,4 +326,66 @@ export function bootStep(pos, target, rows = 16) {
   if (back <= 0) return target;
   if (back > BOOT_LINES - rows) return target - rows;
   return Math.min(target, pos + Math.min(BOOT_MAX_STEP, Math.max(BOOT_MIN_STEP, back * 0.18)));
+}
+
+// 分流管理（OpenClash + zashboard）状态与前提强校验
+export function clashView(d) {
+  const vmOn = !!(d && d.vm && d.vm.running);
+  const cfg = (d && d.config) || {};
+  const c = (d && d.clash) || {};
+  const enabled = cfg.XR_CLASH_UI === "1";
+  const coreRunning = vmOn && !!c.running;
+  const uiInstalled = vmOn && !!c.installed;
+  const port = Number(c.port) || 9090;
+  if (!coreRunning) {
+    return {
+      enabled,
+      coreRunning: false,
+      uiInstalled,
+      port,
+      ready: false,
+      showTab: false,
+      disabled: true,
+      warnKind: "err",
+      warnText: "核心未启动",
+    };
+  }
+  if (!uiInstalled) {
+    return {
+      enabled,
+      coreRunning: true,
+      uiInstalled: false,
+      port,
+      ready: false,
+      showTab: false,
+      disabled: true,
+      warnKind: "warn",
+      warnText: "未检测到 zashboard，请安装后启用",
+    };
+  }
+  return {
+    enabled,
+    coreRunning: true,
+    uiInstalled: true,
+    port,
+    ready: true,
+    showTab: enabled,
+    disabled: false,
+    warnKind: "",
+    warnText: "已就绪 · 内部通道",
+  };
+}
+
+// 解码 xr clash-call 输出（支持直接单行 JSON 与 49KB 分片 {"_chunks":N} + @chunk 协议）
+export function decodeRpcStdout(raw) {
+  const lines = String(raw || "").split(/\r?\n/).map((s) => s.trimEnd()).filter(Boolean);
+  if (!lines.length) return null;
+  let first = null;
+  try { first = JSON.parse(lines[0]); } catch { return null; }
+  if (first && typeof first._chunks === "number" && first._chunks > 0) {
+    if (lines.length < 1 + first._chunks) return null;
+    const body = lines.slice(1, 1 + first._chunks).map((l) => (l.startsWith("@") ? l.slice(1) : l)).join("");
+    try { return JSON.parse(body); } catch { return null; }
+  }
+  return first;
 }

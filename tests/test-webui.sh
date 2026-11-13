@@ -16,6 +16,7 @@ const eq = (a, b, m) => { if (JSON.stringify(a) !== JSON.stringify(b)) fail(`${m
 const html = fs.readFileSync(W + "/index.html", "utf8");
 const main = fs.readFileSync(W + "/src/main.js", "utf8");
 const fb = fs.readFileSync(W + "/src/file-browser.js", "utf8");
+const ce = fs.readFileSync(W + "/src/clash-embed.js", "utf8");
 const css = fs.readFileSync(W + "/src/style.css", "utf8");
 const L = await import(W + "/src/logic.js");
 const { ICONS } = await import(W + "/src/icons.js");
@@ -37,21 +38,27 @@ for (const old of ["/src/pcb.css", "/src/pcb.js", "/src/frame.js", "/scripts/gen
 if (/Rajdhani|pcb-svg|chip-svg|scanline|cyberpunk/i.test(html + main + css)) fail("不得残留赛博朋克样式或组件");
 
 // 元素 id、图标、xr 子命令一致
-for (const src of [main, fb]) for (const m of src.matchAll(/\$\("([\w-]+)"\)/g)) if (!html.includes(`id="${m[1]}"`)) fail(`index.html 缺少 id=${m[1]}`);
+for (const src of [main, fb, ce]) for (const m of src.matchAll(/\$\("([\w-]+)"\)/g)) if (!html.includes(`id="${m[1]}"`)) fail(`index.html 缺少 id=${m[1]}`);
 for (const m of html.matchAll(/data-icon="(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
-for (const src of [main, fb]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
-const subs = new Set([...main.matchAll(/xr\("([\w-]+)"/g), ...fb.matchAll(/xr\("([\w-]+)"/g)].map((m) => m[1]));
+for (const src of [main, fb, ce]) for (const m of src.matchAll(/(?:setIcon\([^,]+,|iconEl\()\s*"(\w+)"/g)) if (!ICONS[m[1]]) fail(`图标未打包 ${m[1]}`);
+const subs = new Set([
+  ...main.matchAll(/xr\("([\w-]+)"/g),
+  ...fb.matchAll(/xr\("([\w-]+)"/g),
+  ...ce.matchAll(/(?:xr|xrCmd)\("([\w-]+)"/g),
+].map((m) => m[1]));
 for (const s of subs) if (!cliMod.includes(`"${s}" =>`) && !cliMod.includes(`cmd == "${s}"`)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "traffic-split", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "vpn-delete", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci", "project"]) {
+for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "traffic-split", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "vpn-delete", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci", "project", "clash-call", "clash-stream", "clash-ws-send", "clash-ws-close"]) {
   if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 }
 
-// Material Design 3 导航栏与三页信息架构（状态 · 网络 · 系统）
+// Material Design 3 导航栏与默认三页 + 条件第四页（状态 · 网络 · 系统 · [分流]）
 const navTabs = [...html.matchAll(/<md-navigation-tab[^>]*label="([^"]+)"/g)].map((m) => m[1]);
-eq(navTabs, ["状态", "网络", "系统"], "M3 底部导航栏");
-const pages = [...html.matchAll(/<section class="page(?:\s+on)?" id="([^"]+)">/g)].map((m) => m[1]);
-eq(pages, ["page-home", "page-net", "page-system"], "三页容器");
-if (!/const PAGE_MAX = 2;/.test(main)) fail("PAGE_MAX 应为 2（对应三页）");
+eq(navTabs, ["状态", "网络", "系统", "分流"], "M3 底部导航栏");
+if (!/<md-navigation-tab id="nav-clash" label="分流" hidden>/.test(html)) fail("分流导航项默认应隐藏");
+const pages = [...html.matchAll(/<section class="page(?:\s+[\w-]+)*" id="([^"]+)"/g)].map((m) => m[1]);
+eq(pages, ["page-home", "page-net", "page-system", "page-clash"], "页面容器");
+if (!/<section class="page clash-page" id="page-clash" hidden>/.test(html)) fail("分流页默认应隐藏");
+if (!/const maxPage = \(\) => \(\$\("nav-clash"\) && !\$\("nav-clash"\)\.hidden \? 3 : 2\);/.test(main)) fail("maxPage 应按分流页显隐动态切换 2/3");
 if (html.includes("<md-tabs") || html.includes("<md-primary-tab")) fail("不应再使用旧顶部标签栏");
 if (html.indexOf('class="appbar"') > html.indexOf('id="pager"') || html.indexOf('id="pager"') > html.indexOf('id="nav"')) fail("布局顺序应为顶栏 -> 页面容器 -> 底部导航栏");
 
@@ -88,7 +95,7 @@ if (!main.includes("navigator.vibrate") || !main.includes("function haptic") || 
 // 校验模块在三个页面的归属（状态页紧凑流量入口 + 详情弹窗、异地组网在网络页、开机自启与通知显示在系统页）
 const homeHtml = html.slice(html.indexOf('id="page-home"'), html.indexOf('id="page-net"'));
 const netHtml = html.slice(html.indexOf('id="page-net"'), html.indexOf('id="page-system"'));
-const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf("</main>"));
+const sysHtml = html.slice(html.indexOf('id="page-system"'), html.indexOf('id="page-clash"'));
 if (!homeHtml.includes('id="btn-traffic"') || !homeHtml.includes('id="v-traffic"') || !homeHtml.includes('id="v-traffic-wan"') || !homeHtml.includes('id="v-traffic-lan"') || homeHtml.includes('id="tr-ph-total"')) fail("状态页应展示累计流量（总流量/公网/内网）入口");
 const dlgTrafficHtml = html.slice(html.indexOf('id="dlg-traffic"'), html.indexOf('id="dlg-expand"'));
 for (const id of ["v-tr-since", "v-tr-total", "v-tr-wan", "v-tr-lan", "tr-split-sec", "tr-ph-total", "tr-hs-total", "btn-traffic-reset"]) {
@@ -97,6 +104,8 @@ for (const id of ["v-tr-since", "v-tr-total", "v-tr-wan", "v-tr-lan", "tr-split-
 if (!netHtml.includes('id="vpn-list"') || !netHtml.includes("异地组网")) fail("异地组网应合并在网络页");
 if (!sysHtml.includes('id="row-autostart"') || !sysHtml.includes('id="seg-notify"')) fail("开机自启与通知显示应位于系统页");
 if (!sysHtml.includes('id="btn-about"') || !sysHtml.includes('id="about-body" class="m3-group about-body" hidden')) fail("系统页关于应默认为点击展开折叠状态");
+const aboutHtml = sysHtml.slice(sysHtml.indexOf('id="about-body"'));
+if (!aboutHtml.includes('id="row-clash-ui"') || !aboutHtml.includes('id="sw-clash-ui"') || !aboutHtml.includes("分流管理")) fail("分流管理开关应位于折叠的关于菜单内");
 if (main.includes("当前 ${net.hotspot_net}")) fail("网关地址不应带「当前」前缀");
 
 // 页面切换：150-200ms 干脆横移淡入（WAAPI），无滚动吸附、无 smooth 滚动
@@ -238,6 +247,24 @@ eq([sl.phone.total, sl.phone.wan, sl.hotspot.lan], ["↑1.0 KB ↓2.0 KB", "↑1
 eq(L.splitLines({ ok: false }), null, "splitLines 失败");
 if (!homeHtml.includes('id="btn-traffic"') || !dlgTrafficHtml.includes('id="v-tr-total"')) fail("状态页累计流量入口与详情弹窗不完整");
 if (!/function diskLocked/.test(main) || !main.includes("停止后可修改")) fail("运行中系统盘应置灰并提示「停止后可修改」");
+
+// 分流管理强校验、分片解码与无 IP 内部通道不变量
+const cvOffVm = L.clashView({ vm: { running: false }, clash: { installed: true, running: true, port: 9090 }, config: { XR_CLASH_UI: "1" } });
+eq([cvOffVm.disabled, cvOffVm.warnKind, cvOffVm.warnText, cvOffVm.showTab], [true, "err", "核心未启动", false], "clashView VM 未运行");
+const cvNoCore = L.clashView({ vm: { running: true }, clash: { installed: true, running: false, port: 9090 }, config: { XR_CLASH_UI: "1" } });
+eq([cvNoCore.disabled, cvNoCore.warnKind, cvNoCore.warnText, cvNoCore.showTab], [true, "err", "核心未启动", false], "clashView 核心未启动");
+const cvNoUi = L.clashView({ vm: { running: true }, clash: { installed: false, running: true, port: 9090 }, config: { XR_CLASH_UI: "1" } });
+eq([cvNoUi.disabled, cvNoUi.warnKind, cvNoUi.warnText, cvNoUi.showTab], [true, "warn", "未检测到 zashboard，请安装后启用", false], "clashView 未安装 zashboard");
+const cvOffSw = L.clashView({ vm: { running: true }, clash: { installed: true, running: true, port: 9092 }, config: { XR_CLASH_UI: "0" } });
+eq([cvOffSw.disabled, cvOffSw.ready, cvOffSw.showTab, cvOffSw.port], [false, true, false, 9092], "clashView 开关关闭不显示分流页");
+const cvOn = L.clashView({ vm: { running: true }, clash: { installed: true, running: true, port: 9092 }, config: { XR_CLASH_UI: "1" } });
+eq([cvOn.disabled, cvOn.ready, cvOn.showTab, cvOn.port], [false, true, true, 9092], "clashView 就绪且开启显示分流页");
+
+eq(L.decodeRpcStdout('{"id":"c1","ok":true}\n'), { id: "c1", ok: true }, "decodeRpcStdout 单行");
+eq(L.decodeRpcStdout('{"_chunks":2}\n@{"id":"c1",\n@"ok":true,"val":42}\n'), { id: "c1", ok: true, val: 42 }, "decodeRpcStdout 分片重组");
+eq(L.decodeRpcStdout('{"_chunks":2}\n@{"id":"c1"\n'), null, "decodeRpcStdout 缺片返回 null");
+if (/172\.29\.|127\.0\.0\.1|192\.168\./.test(ce)) fail("clash-embed 不得硬编码外部或虚拟机 IP");
+if (!ce.includes("xrouter.internal") || !ce.includes("xrouter-internal")) fail("clash-embed 应通过内部域名与占位密钥走 hvc1 通道");
 
 process.exit(bad);
 EOS

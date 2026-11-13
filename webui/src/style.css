@@ -1483,6 +1483,76 @@ md-switch {
   color: var(--md-sys-color-error);
 }
 
+/* ---- Split-Routing (OpenClash Zashboard Embedded Page & Status) ---- */
+.sub.bad {
+  color: var(--md-sys-color-error);
+  font-weight: 500;
+}
+.sub.warn {
+  color: #b26b00;
+  font-weight: 500;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sub.warn {
+    color: #f5b841;
+  }
+}
+:root[data-theme="dark"] .sub.warn {
+  color: #f5b841;
+}
+.item.clash-locked.disabled {
+  opacity: 1;
+}
+.item.clash-locked.disabled .item-ico,
+.item.clash-locked.disabled .item-title,
+.item.clash-locked.disabled md-switch {
+  opacity: 0.42;
+}
+#nav md-navigation-tab[hidden] {
+  display: none !important;
+}
+.clash-page {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.clash-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.clash-state-ico {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.clash-state-ico md-icon {
+  --md-icon-size: 26px;
+}
+.clash-state-msg {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface-variant);
+  max-width: 280px;
+}
+.clash-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--md-sys-color-surface);
+}
+
 @media (max-width: 280px) {
   .hero-actions {
     flex-wrap: wrap;

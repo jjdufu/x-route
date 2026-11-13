@@ -20,9 +20,10 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
   VPN_TXT, labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  trafficLine, fmtSince, hsSubnetCheck, vpnProfiles, splitLines,
+  trafficLine, fmtSince, hsSubnetCheck, vpnProfiles, splitLines, clashView,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
+import { createClashEmbed } from "./clash-embed.js";
 
 const $ = (id) => document.getElementById(id);
 // 只在值真的变化时写 DOM：5 秒一次的状态刷新大多数时候什么都不改，不触发样式重算与重排
@@ -504,6 +505,39 @@ function render(d) {
   prop($("sw-debug"), "selected", cfg.XR_DEBUG === "1");
   txt($("btn-export-text"), cfg.XR_DEBUG === "1" ? "诊断导出" : "日志导出");
   fillSelect($("sel-debug-hours"), DEBUG_HOURS_OPTS, cfg.XR_DEBUG_HOURS || "24");
+
+  renderClash(d);
+}
+
+let clashEmbed = null;
+function ensureClashEmbed() {
+  if (!clashEmbed) {
+    clashEmbed = createClashEmbed({
+      xr,
+      spawn,
+      frame: $("clash-frame"),
+      stateBox: $("clash-state"),
+      stateMsg: $("clash-state-msg"),
+      reloadBtn: $("btn-clash-reload"),
+      isKsu: isKsuWebui,
+    });
+  }
+  return clashEmbed;
+}
+
+function renderClash(d) {
+  const cv = clashView(d);
+  const sw = $("sw-clash-ui");
+  prop(sw, "selected", cv.enabled);
+  prop(sw, "disabled", cv.disabled);
+  tog($("row-clash-ui"), "disabled", cv.disabled);
+  txt($("v-clash-sub"), cv.warnText);
+  cls($("v-clash-sub"), cv.warnKind === "err" ? "sub bad" : cv.warnKind === "warn" ? "sub warn" : "sub");
+
+  hide($("nav-clash"), !cv.showTab);
+  hide($("page-clash"), !cv.showTab);
+  if (!cv.showTab && page === 3) goPage(0);
+  ensureClashEmbed().sync(cv.showTab, cv.port, page === 3);
 }
 
 // ---- 状态刷新单飞与本地缓存 ----
@@ -769,6 +803,7 @@ async function uninstallNow() {
   gone = true;
   clearTimeout(timer);
   clearTimeout(soonTimer);
+  if (clashEmbed) clashEmbed.teardown();
   document.querySelector(".shell").remove();
   $("gone").hidden = false;
   const r = await xr("uninstall-now", "confirm");
@@ -879,7 +914,7 @@ async function exportLogs() {
 
 // ---- M3 页面切换：底部导航栏 + 横向轻扫手势，180ms 空间过渡 ----
 const PAGE_MS = 180;
-const PAGE_MAX = 2;
+const maxPage = () => ($("nav-clash") && !$("nav-clash").hidden ? 3 : 2);
 
 let subPushed = false;
 let pushedCount = 0;
@@ -952,12 +987,16 @@ function syncAppbarScroll(activePage) {
 }
 
 function goPage(i, fromPop = false) {
-  i = Math.max(0, Math.min(PAGE_MAX, i));
+  i = Math.max(0, Math.min(maxPage(), i));
   const pages = document.querySelectorAll("#pager > .page");
   pages.forEach((p, k) => p.classList.toggle("on", k === i));
   const nav = $("nav");
   if (nav && nav.activeIndex !== i) nav.activeIndex = i;
   syncAppbarScroll(pages[i]);
+  if (i === 3 && status) {
+    const cv = clashView(status);
+    ensureClashEmbed().sync(cv.showTab, cv.port, true);
+  }
   if (page === i) return;
   const dir = i > page ? 1 : -1;
   page = i;
@@ -992,7 +1031,7 @@ function bindPager() {
 
   let sx = 0; let sy = 0; let st = 0; let track = false;
   pager.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1 || e.target.closest("md-switch, md-outlined-select, .crumbs")) {
+    if (e.touches.length !== 1 || page === 3 || e.target.closest("md-switch, md-outlined-select, .crumbs, #page-clash")) {
       track = false;
       return;
     }
@@ -1005,7 +1044,7 @@ function bindPager() {
     const t = e.changedTouches[0];
     const dx = t.clientX - sx; const dy = t.clientY - sy;
     if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.6 || e.timeStamp - st > 700) return;
-    const next = Math.max(0, Math.min(PAGE_MAX, page + (dx < 0 ? 1 : -1)));
+    const next = Math.max(0, Math.min(maxPage(), page + (dx < 0 ? 1 : -1)));
     if (next !== page) {
       haptic(10);
       goPage(next);
@@ -1045,6 +1084,16 @@ function bind() {
   bindRowSwitch($("row-ipv6"), $("sw-ipv6"), toggleIpv6);
   bindRowSwitch($("row-hotspot"), $("sw-hotspot"), () => setKey("XR_HOTSPOT_BRIDGE", $("sw-hotspot").selected ? "1" : "0"));
   bindRowSwitch($("row-debug"), $("sw-debug"), () => setKey("XR_DEBUG", $("sw-debug").selected ? "1" : "0"));
+  bindRowSwitch($("row-clash-ui"), $("sw-clash-ui"), () => {
+    if (!$("sw-clash-ui").disabled) setKey("XR_CLASH_UI", $("sw-clash-ui").selected ? "1" : "0");
+  });
+
+  $("btn-clash-reload").addEventListener("click", () => {
+    if (!status) return;
+    const cv = clashView(status);
+    if (cv.showTab) ensureClashEmbed().reload(cv.port);
+  });
+  window.addEventListener("pagehide", () => { if (clashEmbed) clashEmbed.teardown(); });
 
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
   $("btn-export").addEventListener("click", exportLogs);
@@ -1106,7 +1155,9 @@ function previewStatus(phase) {
     config: {
       AUTOSTART: "1", XR_MODE: "global", XR_EXPOSE: "lan", XR_NET_PREFIX: "172.28.221",
       VM_SHARE: "0", VM_CPUS: "2", VM_MEM_MB: "768", VM_DISK_SIZE_MB: "1024", XR_HOTSPOT_BRIDGE: "1",
+      XR_CLASH_UI: "0",
     },
+    clash: { installed: running, running, port: 9090 },
     vpn: {
       configured: true,
       enabled: running,
