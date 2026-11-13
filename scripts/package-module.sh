@@ -26,6 +26,13 @@ for f in index.html config.json icon.png; do
   [ -s "${REPO}/module/webroot/${f}" ] || { echo "WebUI 构建产物缺少 ${f}"; exit 1; }
 done
 
+# 控制面 Rust 静态二进制（aarch64-unknown-linux-musl，产物不入库）
+command -v cargo >/dev/null 2>&1 || { echo "需要 Rust / cargo 构建 bin/xr"; exit 1; }
+if [ -z "${RUSTUP_HOME:-}" ] && [ -d "${HOME:-}/.rustup" ]; then export RUSTUP_HOME="${HOME}/.rustup"; fi
+( cd "${REPO}/rust/xr" && cargo build --release --target aarch64-unknown-linux-musl )
+XR_BIN="${REPO}/rust/xr/target/aarch64-unknown-linux-musl/release/xr"
+[ -s "${XR_BIN}" ] || { echo "缺少 ${XR_BIN}"; exit 1; }
+
 # 通知进程 jar（LSPosed 式，app_process 运行，不是 APK）：有 JDK 与 d8 时现场构建，否则使用已入库的预编译包
 if command -v javac >/dev/null 2>&1 && command -v d8 >/dev/null 2>&1; then
   sh "${REPO}/notifier/build.sh" "${REPO}/module/bin/xrnotify.jar"
@@ -34,6 +41,12 @@ fi
 
 ST="$(mktemp -d)"; trap 'rm -rf "${ST}"' EXIT
 cp -a "${REPO}/module/." "${ST}/"
+mkdir -p "${ST}/bin"
+cp -f "${XR_BIN}" "${ST}/bin/xr"
+chmod 0755 "${ST}/bin/xr"
+if command -v file >/dev/null 2>&1; then
+  file "${ST}/bin/xr" | grep -qE "ARM aarch64|ARM64" || { echo "bin/xr 非 ARM64 产物"; exit 1; }
+fi
 find "${ST}" -name .gitkeep -delete
 rm -rf "${ST}/data"
 chmod 0755 "${ST}"/*.sh "${ST}/scripts/"*.sh "${ST}/scripts/xr"

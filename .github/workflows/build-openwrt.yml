@@ -15,6 +15,7 @@ on:
     paths:
       - 'openwrt/**'
       - 'module/**'
+      - 'rust/**'
       - 'scripts/**'
       - 'webui/**'
       - '.github/workflows/build-openwrt.yml'
@@ -49,12 +50,23 @@ jobs:
       - name: Install WebUI dependencies
         run: npm ci --prefix webui --no-fund --no-audit
 
+      - name: Setup Rust (aarch64-unknown-linux-musl)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: clippy, rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/xr
+
       - name: Install Build Dependencies & ARM64 Cross-Compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential bc bison flex gawk cpio kmod \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu musl-tools \
             libssl-dev libelf-dev python3 rsync unzip zip file wget curl \
             zstd xz-utils e2fsprogs qemu-utils shellcheck mksh busybox
 

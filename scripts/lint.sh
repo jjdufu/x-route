@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 list_sh() {
   for d in module scripts openwrt/files tests; do
     [ -d "$d" ] || continue
-    find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -path '*/libexec/*' -o -name xr \)
+    find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -path '*/libexec/*' -o -path 'module/scripts/xr' \)
   done | sort
 }
 
@@ -31,6 +31,22 @@ echo "== sh -n"
 for f in ${files}; do
   if head -n1 "$f" | grep -q bash; then bash -n "$f"; else sh -n "$f"; fi
 done
+
+if [ -f rust/xr/Cargo.toml ]; then
+  echo "== rust (fmt + clippy + test)"
+  if [ -z "${RUSTUP_HOME:-}" ] && [ -d "${HOME:-}/.rustup" ]; then export RUSTUP_HOME="${HOME}/.rustup"; fi
+  (
+    cd rust/xr
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+    cargo test
+    cargo build --release
+  )
+  mkdir -p module/bin
+  cp -f rust/xr/target/release/xr module/bin/xr
+  chmod 0755 module/bin/xr
+  trap 'rm -f module/bin/xr' EXIT
+fi
 
 for t in tests/test-*.sh; do
   [ -f "$t" ] || continue

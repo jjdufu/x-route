@@ -29,12 +29,23 @@ jobs:
       - name: Install WebUI dependencies
         run: npm ci --prefix webui --no-fund --no-audit
 
-      - name: Install shellcheck
+      - name: Setup Rust (aarch64-unknown-linux-musl)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: clippy, rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/xr
+
+      - name: Install shellcheck & musl-tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck zip mksh busybox
+          sudo apt-get install -y shellcheck zip mksh busybox musl-tools file
 
-      - name: Lint (shellcheck + sh -n + config keys)
+      - name: Lint (shellcheck + sh -n + rust + config keys)
         run: sh scripts/lint.sh
 
 
