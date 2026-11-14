@@ -81,6 +81,43 @@ pub(crate) fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     String::new()
 }
 
+/// 路由表输出中所有 `default` 行里紧跟在 `key` 之后的值，按出现顺序返回。
+fn default_route_values<'a>(stdout: &'a str, key: &str) -> Vec<&'a str> {
+    let mut values = Vec::new();
+    for line in stdout.lines() {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.first().copied() != Some("default") {
+            continue;
+        }
+        for pair in tokens.windows(2) {
+            if let [tok, value] = *pair
+                && tok == key
+            {
+                values.push(value);
+            }
+        }
+    }
+    values
+}
+
+/// 去掉路由行中的 `expires <秒数>` 一对标记，其余标记按原顺序返回。
+fn strip_expires<'a>(tokens: &[&'a str]) -> Vec<&'a str> {
+    let mut kept = Vec::with_capacity(tokens.len());
+    let mut skip_next = false;
+    for &tok in tokens {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if tok == "expires" {
+            skip_next = true;
+            continue;
+        }
+        kept.push(tok);
+    }
+    kept
+}
+
 /// 上游的 `IPv4` 出口接口集合：上游自身加上其路由表中默认路由的 `dev`，排序去重。
 #[must_use]
 pub(crate) fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
@@ -90,17 +127,8 @@ pub(crate) fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     let mut set = BTreeSet::new();
     set.extend(iter::once(up.to_owned()));
     let out = ctx.ip(&["-4", "route", "show", "table", up]);
-    for line in out.stdout.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.first().copied() == Some("default") {
-            for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev"
-                    && let Some(dev) = tokens.get(idx.saturating_add(1))
-                {
-                    set.extend(iter::once((*dev).to_owned()));
-                }
-            }
-        }
+    for dev in default_route_values(&out.stdout, "dev") {
+        set.extend(iter::once(dev.to_owned()));
     }
     set.into_iter().collect()
 }
@@ -116,17 +144,9 @@ pub(crate) fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
         set.extend(iter::once(up.to_owned()));
     }
     let out = ctx.ip6(&["route", "show", "table", up]);
-    for line in out.stdout.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.first().copied() == Some("default") {
-            for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev"
-                    && let Some(dev) = tokens.get(idx.saturating_add(1))
-                    && !dev.starts_with("v4-")
-                {
-                    set.extend(iter::once((*dev).to_owned()));
-                }
-            }
+    for dev in default_route_values(&out.stdout, "dev") {
+        if !dev.starts_with("v4-") {
+            set.extend(iter::once(dev.to_owned()));
         }
     }
     set.into_iter().collect()
@@ -172,20 +192,14 @@ pub(crate) fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
             ctx.ip(&["-4", "route", "show", "table", up]),
             ctx.ip6(&["route", "show", "table", up]),
         ] {
-            for line in out.stdout.lines() {
-                let tokens: Vec<&str> = line.split_whitespace().collect();
-                if tokens.first().copied() == Some("default") {
-                    for (idx, tok) in tokens.iter().enumerate() {
-                        if *tok == "mtu"
-                            && let Some(value) = tokens
-                                .get(idx.saturating_add(1))
-                                .and_then(|text| text.parse::<u32>().ok())
-                            && value < min_mtu
-                        {
-                            min_mtu = value;
-                        }
-                    }
-                }
+            let route_min = default_route_values(&out.stdout, "mtu")
+                .into_iter()
+                .filter_map(|text| text.parse::<u32>().ok())
+                .min();
+            if let Some(value) = route_min
+                && value < min_mtu
+            {
+                min_mtu = value;
             }
         }
     }
@@ -448,18 +462,7 @@ fn copy_dev_routes6(ctx: &NetCtx<'_>, dev: &str) {
             }
             let mut args: Vec<&str> = Vec::with_capacity(tokens.len().saturating_add(5));
             args.extend(["route", "replace"]);
-            let mut skip_next = false;
-            for tok in tokens {
-                if skip_next {
-                    skip_next = false;
-                    continue;
-                }
-                if tok == "expires" {
-                    skip_next = true;
-                    continue;
-                }
-                args.push(tok);
-            }
+            args.extend(strip_expires(&tokens));
             args.extend(["dev", dev, "table", GW_TABLE]);
             ctx.ip6_run(&args);
         }
