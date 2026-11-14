@@ -142,13 +142,13 @@ pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
 
 #[must_use]
 pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
-    let mut m: u32 = 1500;
-    for o in outs {
-        if let Ok(raw) = fs::read_to_string(ctx.env.sysnet.join(o).join("mtu"))
-            && let Ok(v) = raw.trim().parse::<u32>()
-            && v < m
+    let mut min_mtu: u32 = 1500;
+    for out_if in outs {
+        if let Ok(raw) = fs::read_to_string(ctx.env.sysnet.join(out_if).join("mtu"))
+            && let Ok(val) = raw.trim().parse::<u32>()
+            && val < min_mtu
         {
-            m = v;
+            min_mtu = val;
         }
     }
     if !up.is_empty() {
@@ -161,19 +161,19 @@ pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
                 if tokens.first().copied() == Some("default") {
                     for (idx, tok) in tokens.iter().enumerate() {
                         if *tok == "mtu"
-                            && let Some(v) = tokens
+                            && let Some(value) = tokens
                                 .get(idx.saturating_add(1))
-                                .and_then(|s| s.parse::<u32>().ok())
-                            && v < m
+                                .and_then(|text| text.parse::<u32>().ok())
+                            && value < min_mtu
                         {
-                            m = v;
+                            min_mtu = value;
                         }
                     }
                 }
             }
         }
     }
-    m.max(1280)
+    min_mtu.max(1280)
 }
 
 pub fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
@@ -191,14 +191,14 @@ pub fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
         if !run_t(&["-t", "mangle", "-F", "XR_MSS"]).success() {
             continue;
         }
-        for o in &targets {
+        for out_if in &targets {
             note_exec_result(&run_t(&[
                 "-t",
                 "mangle",
                 "-A",
                 "XR_MSS",
                 "-o",
-                o,
+                out_if,
                 "-p",
                 "tcp",
                 "--tcp-flags",
@@ -262,7 +262,7 @@ pub fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     let host_dir = ctx.env.run_dir().join("guest/host");
     fsx::mkdirs_logged(ctx.env, &host_dir);
     let guest_mtu = host_dir.join("mtu");
-    if fs::read_to_string(&guest_mtu).map_or(true, |s| s.trim() != mt_s) {
+    if fs::read_to_string(&guest_mtu).map_or(true, |text| text.trim() != mt_s) {
         fsx::write_logged(ctx.env, guest_mtu, format!("{mt_s}\n"));
     }
     mss_rules(ctx, outs);
@@ -277,10 +277,10 @@ pub fn time_push(env: &Env) {
     let time_file = host_dir.join("time");
     let tp = fs::read_to_string(&time_file)
         .ok()
-        .and_then(|s| {
-            let t = s.trim();
-            if t.len() <= 10 && t.bytes().all(|b| b.is_ascii_digit()) {
-                t.parse::<u64>().ok()
+        .and_then(|text| {
+            let trimmed = text.trim();
+            if trimmed.len() <= 10 && trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+                trimmed.parse::<u64>().ok()
             } else {
                 None
             }
@@ -323,9 +323,9 @@ fn fwd6_first(ctx: &NetCtx<'_>) {
 pub fn ip6_nat_ok(env: &Env) -> bool {
     let cache = env.run_dir().join("net.ip6nat");
     if let Ok(raw) = fs::read_to_string(&cache) {
-        let t = raw.trim();
-        if !t.is_empty() {
-            return t == "1";
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return trimmed == "1";
         }
     }
     let ok = Command::new(env.sysbin_cmd("ip6tables"))
@@ -334,7 +334,7 @@ pub fn ip6_nat_ok(env: &Env) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|s| s.success());
+        .is_ok_and(|exit_status| exit_status.success());
     fsx::write_logged(env, cache, if ok { "1\n" } else { "0\n" });
     ok
 }
@@ -436,11 +436,11 @@ fn copy_dev_routes6(ctx: &NetCtx<'_>, dev: &str) {
     }
 }
 
-fn gw_install(ctx: &NetCtx<'_>, g: &str, outs: &[String], outs6: &[String]) {
+fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]) {
     ctx.ip_run(&["route", "flush", "table", GW_TABLE]);
     let tethers = tether_ifaces(ctx);
-    for d in outs.iter().chain(tethers.iter()) {
-        copy_dev_routes(ctx, d);
+    for dev4 in outs.iter().chain(tethers.iter()) {
+        copy_dev_routes(ctx, dev4);
     }
     let via4 = format!("{}.254", ctx.cfg.net_prefix());
     let src4 = format!("{}.1", ctx.cfg.net_prefix());
@@ -451,10 +451,10 @@ fn gw_install(ctx: &NetCtx<'_>, g: &str, outs: &[String], outs6: &[String]) {
     ctx.ip_run(&["rule", "add", "pref", GW_PREF, "lookup", GW_TABLE]);
 
     ctx.ip6_run(&["route", "flush", "table", GW_TABLE]);
-    for d in outs6.iter().chain(tethers.iter()) {
-        copy_dev_routes6(ctx, d);
+    for dev6 in outs6.iter().chain(tethers.iter()) {
+        copy_dev_routes6(ctx, dev6);
     }
-    if g == "v6" {
+    if gateway == "v6" {
         let via6 = format!("{XR_NET6}::254");
         let src6 = format!("{XR_NET6}::1");
         ctx.ip6_run(&[
@@ -476,7 +476,7 @@ fn gw_install(ctx: &NetCtx<'_>, g: &str, outs: &[String], outs6: &[String]) {
 
     while ctx.ip6(&["rule", "del", "pref", REJ6_PREF]).success() {}
     ctx.ip6_run(&["route", "flush", "table", REJ6_TABLE]);
-    if g == "block" {
+    if gateway == "block" {
         ctx.ip6_run(&[
             "route", "replace", "default", "dev", XR_IF, "table", REJ6_TABLE,
         ]);
@@ -489,7 +489,11 @@ fn gw_install(ctx: &NetCtx<'_>, g: &str, outs: &[String], outs6: &[String]) {
             ]);
         }
     }
-    fsx::write_logged(ctx.env, ctx.env.run_dir().join("net.gw"), format!("{g}\n"));
+    fsx::write_logged(
+        ctx.env,
+        ctx.env.run_dir().join("net.gw"),
+        format!("{gateway}\n"),
+    );
 }
 
 fn gw_remove(ctx: &NetCtx<'_>) {
@@ -564,31 +568,31 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
         "ACCEPT",
     ]);
     if vm_v6(ctx.env) {
-        for o in outs6 {
-            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", XR_IF, "-o", o, "-j", "ACCEPT"]);
+        for out6 in outs6 {
+            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", XR_IF, "-o", out6, "-j", "ACCEPT"]);
         }
     }
     let net6 = format!("{XR_NET6}::/64");
     let active_v6: Vec<String> = fs::read_to_string(run.join("routes.active"))
         .unwrap_or_default()
         .lines()
-        .filter(|l| l.contains(':'))
+        .filter(|line| line.contains(':'))
         .map(str::to_owned)
         .collect();
     for i in ex {
         ctx.ip6t_run(&[
             "-A", "XR_FWD6", "-i", i, "-o", XR_IF, "-d", &net6, "-j", "ACCEPT",
         ]);
-        for c in &active_v6 {
+        for route in &active_v6 {
             ctx.ip6t_run(&[
-                "-A", "XR_FWD6", "-i", i, "-o", XR_IF, "-d", c, "-j", "ACCEPT",
+                "-A", "XR_FWD6", "-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT",
             ]);
         }
     }
     let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
-    for o in outs6 {
-        if !ex_set.contains(o.as_str()) {
-            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", o, "-o", XR_IF, "-j", "DROP"]);
+    for iface in outs6 {
+        if !ex_set.contains(iface.as_str()) {
+            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", iface, "-o", XR_IF, "-j", "DROP"]);
         }
     }
     if gw != "off" {
@@ -624,14 +628,14 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
                     "icmp6-adm-prohibited",
                 ]);
             }
-            for o in outs6 {
+            for out_if in outs6 {
                 ctx.ip6t_run(&[
                     "-A",
                     "XR_FWD6",
                     "-i",
                     &i,
                     "-o",
-                    o,
+                    out_if,
                     "-p",
                     "tcp",
                     "-j",
@@ -645,7 +649,7 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
                     "-i",
                     &i,
                     "-o",
-                    o,
+                    out_if,
                     "-j",
                     "REJECT",
                     "--reject-with",
@@ -684,12 +688,12 @@ fn sync_all_unlocked(env: &Env) {
         || outs_joined != old_outs_raw.trim_end_matches('\n')
         || !up_if_file.is_file()
     {
-        for o in old_outs_raw.split_whitespace() {
-            ctx.ndc_run(&["ipfwd", "remove", XR_IF, o]);
+        for old_out in old_outs_raw.split_whitespace() {
+            ctx.ndc_run(&["ipfwd", "remove", XR_IF, old_out]);
         }
         if !up.is_empty() {
-            for o in &outs {
-                ctx.ndc_run(&["ipfwd", "add", XR_IF, o]);
+            for cur_out in &outs {
+                ctx.ndc_run(&["ipfwd", "add", XR_IF, cur_out]);
             }
         }
         rules_set(&ctx, false, &up);
@@ -707,7 +711,7 @@ fn sync_all_unlocked(env: &Env) {
         } else {
             outs.join(" ")
         };
-        let outs6_disp = if outs6.is_empty() {
+        let v6_outs_disp = if outs6.is_empty() {
             "无".to_owned()
         } else {
             outs6.join(" ")
@@ -722,7 +726,7 @@ fn sync_all_unlocked(env: &Env) {
             &cfg,
             "net",
             &format!(
-                "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {outs6_disp}"
+                "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {v6_outs_disp}"
             ),
         );
         if !old_up_trimmed.is_empty() {
@@ -736,7 +740,7 @@ fn sync_all_unlocked(env: &Env) {
 
     let net4 = format!("{}.0/24", cfg.net_prefix());
     ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
-    for o in &outs {
+    for nat_out in &outs {
         ctx.ipt_run(&[
             "-t",
             "nat",
@@ -745,7 +749,7 @@ fn sync_all_unlocked(env: &Env) {
             "-s",
             &net4,
             "-o",
-            o,
+            nat_out,
             "-j",
             "MASQUERADE",
         ]);
@@ -791,37 +795,37 @@ fn sync_all_unlocked(env: &Env) {
         "-j",
         "ACCEPT",
     ]);
-    for o in &outs {
-        ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-o", o, "-j", "ACCEPT"]);
+    for fwd_out in &outs {
+        ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-o", fwd_out, "-j", "ACCEPT"]);
     }
     let active_v4: Vec<String> = fs::read_to_string(run.join("routes.active"))
         .unwrap_or_default()
         .lines()
-        .filter(|l| !l.contains(':'))
+        .filter(|line| !line.contains(':'))
         .map(str::to_owned)
         .collect();
     for i in &ex {
         ctx.ipt_run(&[
             "-A", "XR_FWD", "-i", i, "-o", XR_IF, "-d", &net4, "-j", "ACCEPT",
         ]);
-        for c in &active_v4 {
+        for route in &active_v4 {
             ctx.ipt_run(&[
-                "-A", "XR_FWD", "-i", i, "-o", XR_IF, "-d", c, "-j", "ACCEPT",
+                "-A", "XR_FWD", "-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT",
             ]);
         }
     }
     let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
-    for o in &outs {
-        if !ex_set.contains(o.as_str()) {
-            ctx.ipt_run(&["-A", "XR_FWD", "-i", o, "-o", XR_IF, "-j", "DROP"]);
+    for iface in &outs {
+        if !ex_set.contains(iface.as_str()) {
+            ctx.ipt_run(&["-A", "XR_FWD", "-i", iface, "-o", XR_IF, "-j", "DROP"]);
         }
     }
     if want_gateway(&ctx) {
         for i in tether_ifaces(&ctx) {
             ctx.ipt_run(&["-A", "XR_FWD", "-i", &i, "-o", XR_IF, "-j", "ACCEPT"]);
             ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-o", &i, "-j", "ACCEPT"]);
-            for o in &outs {
-                ctx.ipt_run(&["-A", "XR_FWD", "-i", &i, "-o", o, "-j", "DROP"]);
+            for out_if in &outs {
+                ctx.ipt_run(&["-A", "XR_FWD", "-i", &i, "-o", out_if, "-j", "DROP"]);
             }
         }
     }
@@ -1027,14 +1031,14 @@ pub fn net_watch(env: &Env) -> i32 {
             format!("{} ", outs.join(" "))
         };
         let outs6 = upstream_out6(&ctx, &up);
-        let outs6_str = if outs6.is_empty() {
+        let v6_outs_str = if outs6.is_empty() {
             String::new()
         } else {
             format!("{} ", outs6.join(" "))
         };
 
         let have_gw = fs::read_to_string(run.join("net.gw")).unwrap_or_else(|_| "off".to_owned());
-        let have_gw = have_gw.trim();
+        let gw_trimmed = have_gw.trim();
         let want_gw = gw_want(&ctx);
         let ck = routes_file_cksum(&ctx);
         let mtu_now = upstream_mtu(&ctx, &up, &outs).to_string();
@@ -1054,8 +1058,8 @@ pub fn net_watch(env: &Env) -> i32 {
         if up != old_up.trim()
             || outs_str.trim() != old_outs.trim()
             || ex_str.trim() != old_ex.trim()
-            || want_gw != have_gw
-            || outs6_str.trim() != old_outs6.trim()
+            || want_gw != gw_trimmed
+            || v6_outs_str.trim() != old_outs6.trim()
             || vm_v6_s != old_v6.trim()
             || v6src_now.trim() != old_v6src.trim()
             || ck != old_ck.trim()
@@ -1066,7 +1070,7 @@ pub fn net_watch(env: &Env) -> i32 {
                 &cfg,
                 "watch",
                 &format!(
-                    "状态变化触发同步：上游 {}->{up} 接管 {have_gw}->{want_gw} 暴露 [{}]->[{ex_str}] MTU {}->{mtu_now}",
+                    "状态变化触发同步：上游 {}->{up} 接管 {gw_trimmed}->{want_gw} 暴露 [{}]->[{ex_str}] MTU {}->{mtu_now}",
                     old_up.trim(),
                     old_ex.trim(),
                     old_mtu.trim()
@@ -1101,7 +1105,7 @@ pub fn net_watch(env: &Env) -> i32 {
             .ip(&["rule"])
             .stdout
             .lines()
-            .any(|l| l.starts_with("4800:") && l.contains(&format!("to {net4}")))
+            .any(|rule4| rule4.starts_with("4800:") && rule4.contains(&format!("to {net4}")))
         {
             ctx.ip_run(&["rule", "add", "pref", "4800", "to", &net4, "lookup", tbl]);
         }
@@ -1109,7 +1113,7 @@ pub fn net_watch(env: &Env) -> i32 {
             .ip6(&["rule"])
             .stdout
             .lines()
-            .any(|l| l.starts_with("4800:") && l.contains(&format!("to {net6}")))
+            .any(|rule6| rule6.starts_with("4800:") && rule6.contains(&format!("to {net6}")))
         {
             ctx.ip6_run(&["rule", "add", "pref", "4800", "to", &net6, "lookup", tbl]);
         }
@@ -1120,10 +1124,9 @@ pub fn net_watch(env: &Env) -> i32 {
                 } else {
                     ctx.ip(&["rule"]).stdout
                 };
-                if !rules_out
-                    .lines()
-                    .any(|l| l.starts_with("18800:") && l.contains(&format!("iif {XR_IF}")))
-                {
+                if !rules_out.lines().any(|rule_line| {
+                    rule_line.starts_with("18800:") && rule_line.contains(&format!("iif {XR_IF}"))
+                }) {
                     let args = ["rule", "add", "pref", "18800", "iif", XR_IF, "lookup", tbl];
                     if use_v6 {
                         ctx.ip6_run(&args);
@@ -1131,8 +1134,9 @@ pub fn net_watch(env: &Env) -> i32 {
                         ctx.ip_run(&args);
                     }
                 }
-                if !rules_out.lines().any(|l| {
-                    l.starts_with("18900:") && l.contains(&format!("iif {XR_IF} lookup {up}"))
+                if !rules_out.lines().any(|entry_line| {
+                    entry_line.starts_with("18900:")
+                        && entry_line.contains(&format!("iif {XR_IF} lookup {up}"))
                 }) {
                     let args = ["rule", "add", "pref", "18900", "iif", XR_IF, "lookup", &up];
                     if use_v6 {
@@ -1143,12 +1147,12 @@ pub fn net_watch(env: &Env) -> i32 {
                 }
             }
         }
-        if fs::read_to_string(run.join("net.mode")).is_ok_and(|s| s.trim() == "fallback") {
+        if fs::read_to_string(run.join("net.mode")).is_ok_and(|text| text.trim() == "fallback") {
             if !ctx
                 .ip(&["route", "show", "table", "97"])
                 .stdout
                 .lines()
-                .any(|l| l.starts_with(&format!("{net4} dev {XR_IF}")))
+                .any(|row| row.starts_with(&format!("{net4} dev {XR_IF}")))
             {
                 ctx.ip_run(&["route", "replace", &net4, "dev", XR_IF, "table", "97"]);
             }
@@ -1156,7 +1160,7 @@ pub fn net_watch(env: &Env) -> i32 {
                 .ip6(&["route", "show", "table", "97"])
                 .stdout
                 .lines()
-                .any(|l| l.starts_with(&format!("{net6} dev {XR_IF}")))
+                .any(|line| line.starts_with(&format!("{net6} dev {XR_IF}")))
             {
                 ctx.ip6_run(&["route", "replace", &net6, "dev", XR_IF, "table", "97"]);
             }
@@ -1202,8 +1206,8 @@ pub fn net_down(env: &Env) -> i32 {
     ctx.ipt_run(&["-t", "nat", "-X", "XR_NAT"]);
 
     if let Ok(old_outs) = fs::read_to_string(run.join("net.up_out")) {
-        for o in old_outs.split_whitespace() {
-            ctx.ndc_run(&["ipfwd", "remove", XR_IF, o]);
+        for out_if in old_outs.split_whitespace() {
+            ctx.ndc_run(&["ipfwd", "remove", XR_IF, out_if]);
         }
     }
 
@@ -1229,8 +1233,8 @@ pub fn net_down(env: &Env) -> i32 {
     ctx.ndc_run(&["ipfwd", "disable", "xrouter"]);
     let orig_fwd = run.join("ip_forward.orig");
     if orig_fwd.is_file() {
-        let v = fs::read_to_string(&orig_fwd).unwrap_or_default();
-        ctx.sysw_run(&env.proc_dir.join("sys/net/ipv4/ip_forward"), v.trim());
+        let value = fs::read_to_string(&orig_fwd).unwrap_or_default();
+        ctx.sysw_run(&env.proc_dir.join("sys/net/ipv4/ip_forward"), value.trim());
     }
     let net4 = format!("{}.0/24", cfg.net_prefix());
     let net6 = format!("{XR_NET6}::/64");
@@ -1244,8 +1248,8 @@ pub fn net_down(env: &Env) -> i32 {
     if let Ok(entries) = fs::read_dir(&run) {
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let s = name.to_string_lossy();
-            if s.starts_with("net.") {
+            let text = name.to_string_lossy();
+            if text.starts_with("net.") {
                 fsx::remove_logged(env, entry.path());
             }
         }
@@ -1274,8 +1278,8 @@ pub fn net_status(env: &Env) -> NetStatusJson {
     let run = env.run_dir();
     let mode = fs::read_to_string(run.join("net.mode"))
         .ok()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
+        .map(|value_text| value_text.trim().to_owned())
+        .filter(|content| !content.is_empty())
         .unwrap_or_else(|| "down".to_owned());
     let up_if = fs::read_to_string(run.join("net.up_if"))
         .unwrap_or_default()
@@ -1288,8 +1292,8 @@ pub fn net_status(env: &Env) -> NetStatusJson {
         .collect();
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
+        .map(|raw| raw.trim().to_owned())
+        .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "off".to_owned());
     let hotspot = fs::read_to_string(run.join("net.hs_if"))
         .unwrap_or_default()
