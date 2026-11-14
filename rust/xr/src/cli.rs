@@ -22,6 +22,7 @@ use crate::env::Env;
 use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
 use crate::net::run_net_cli;
+use crate::out::{emit, emit_lines};
 use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
 use crate::sys::spawn::{exec_crosvm_trampoline, spawn_self_detached};
@@ -146,8 +147,7 @@ fn bg_run(env: &Env, action: &str) -> i32 {
         "xr internal bg-exec",
         spawn_self_detached(env, &["internal", "bg-exec", action]),
     );
-    println!("{{\"ok\":true}}");
-    0
+    emit(env, OK_JSON, 0)
 }
 
 fn bg_exec(env: &Env, action: &str) -> i32 {
@@ -221,18 +221,14 @@ fn action_toggle(env: &Env) -> i32 {
     } else {
         note_rc(env, "vm_start", vm_start(env));
     }
-    println!("{}", status_line(env));
-    0
+    emit(env, &status_line(env), 0)
 }
 
 fn run_traffic_cmd(env: &Env, sub: &str) -> i32 {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
     match sub {
-        "json" | "summary" | "" => {
-            println!("{}", acct_json(&ctx));
-            0
-        }
+        "json" | "summary" | "" => emit(env, &acct_json(&ctx), 0),
         "reset" => {
             acct_reset(&ctx);
             0
@@ -257,11 +253,15 @@ fn run_traffic_cmd(env: &Env, sub: &str) -> i32 {
     }
 }
 
+/// 通用成功应答。
+const OK_JSON: &str = "{\"ok\":true}";
+/// `xr set` 参数个数不对时的应答。
+const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
+
 pub fn run_cli(args: &[String]) -> i32 {
     let env = Env::from_process();
     let Some(cmd) = args.first().map(String::as_str) else {
-        println!("usage: xr <subcommand>");
-        return 2;
+        return emit(&env, "usage: xr <subcommand>", 2);
     };
     let rest = args.get(1..).unwrap_or(&[]);
 
@@ -294,74 +294,54 @@ pub fn run_cli(args: &[String]) -> i32 {
                 );
             }
             log_info(&env, "xr", "流量统计已清零");
-            println!("{{\"ok\":true}}");
-            0
+            emit(&env, OK_JSON, 0)
         }
         "traffic-split" => {
             let (rc, out) = traffic_split(&env, 4);
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "running" => i32::from(!vm_running(&env)),
-        "status-json" => {
-            println!("{}", status_json(&env));
-            0
-        }
-        "status-line" => {
-            println!("{}", status_line(&env));
-            0
-        }
+        "status-json" => emit(&env, &status_json(&env), 0),
+        "status-line" => emit(&env, &status_line(&env), 0),
         "get" => {
             let cfg = Config::load(&env);
-            for k in KEYS {
-                println!("{k}={}", cfg.get_raw(k));
-            }
-            0
+            emit_lines(
+                &env,
+                KEYS.iter().map(|key| format!("{key}={}", cfg.get_raw(key))),
+                0,
+            )
         }
         "set" => {
             let (Some(k), Some(v)) = (rest.first(), rest.get(1)) else {
-                println!("{{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}}");
-                return 2;
+                return emit(&env, SET_USAGE_JSON, 2);
             };
             if rest.len() != 2 {
-                println!("{{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}}");
-                return 2;
+                return emit(&env, SET_USAGE_JSON, 2);
             }
             let cfg = Config::load(&env);
             if k == "XR_HOTSPOT_SUBNET" && !v.is_empty() {
                 if !hs_subnet_valid(v) {
-                    println!(
-                        "{}",
-                        json!({"ok": false, "error": "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24"})
-                    );
-                    return 1;
+                    let msg = json!({"ok": false, "error": "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24"});
+                    return emit(&env, &msg.to_string(), 1);
                 }
                 if let Some(clash) = hs_subnet_clash(&env, cfg.net_prefix(), v, None) {
-                    println!(
-                        "{}",
-                        json!({"ok": false, "error": format!("与 {clash} 冲突")})
-                    );
-                    return 1;
+                    let msg = json!({"ok": false, "error": format!("与 {clash} 冲突")});
+                    return emit(&env, &msg.to_string(), 1);
                 }
             }
             if !set_kv(&env, k, v) {
-                println!(
-                    "{}",
-                    json!({"ok": false, "error": format!("取值不合法：{k}")})
-                );
-                return 1;
+                let msg = json!({"ok": false, "error": format!("取值不合法：{k}")});
+                return emit(&env, &msg.to_string(), 1);
             }
             if let Err(msg) = after_set(&env, k) {
-                println!("{}", json!({"ok": false, "error": msg}));
-                return 1;
+                return emit(&env, &json!({"ok": false, "error": msg}).to_string(), 1);
             }
-            println!("{}", json!({"ok": true, "restart": needs_restart(&env, k)}));
-            0
+            let done = json!({"ok": true, "restart": needs_restart(&env, k)});
+            emit(&env, &done.to_string(), 0)
         }
         "ipv6" => {
             let (rc, out) = ipv6_set(&env, rest.first().map_or("", String::as_str));
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "ack-trip" => {
             fsx::remove_logged(&env, env.tripped_file());
@@ -370,12 +350,10 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
         "expand" => {
             let Some(mb) = rest.first() else {
-                println!("usage: xr expand MB");
-                return 2;
+                return emit(&env, "usage: xr expand MB", 2);
             };
             if mb.trim().parse::<u64>().is_err() {
-                println!("usage: xr expand MB");
-                return 2;
+                return emit(&env, "usage: xr expand MB", 2);
             }
             disk_expand(&env, mb)
         }
@@ -393,23 +371,19 @@ pub fn run_cli(args: &[String]) -> i32 {
                 rest.first().map_or("", String::as_str),
                 rest.get(1).map_or("1", String::as_str),
             );
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "vpn-enable" => {
             let (rc, out) = vpn_set(&env, "enable", rest.first().map_or("", String::as_str));
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "vpn-disable" => {
             let (rc, out) = vpn_set(&env, "disable", rest.first().map_or("", String::as_str));
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "vpn-delete" => {
             let (rc, out) = vpn_delete(&env, rest.first().map_or("", String::as_str));
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "project" => {
             let st = Command::new("am")
@@ -443,27 +417,21 @@ pub fn run_cli(args: &[String]) -> i32 {
                 rest.first().map_or("", String::as_str),
                 rest.get(1).map_or("dir", String::as_str),
             );
-            for it in items {
-                println!("{it}");
-            }
-            rc
+            emit_lines(&env, items, rc)
         }
         "log-export" => {
             let st_j = status_json(&env);
             let out = export_pack(&env, "xrouter-logs", false, &st_j);
-            println!("{out}");
-            i32::from(!out.contains("\"ok\":true"))
+            emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
         }
         "diag-export" => {
             let st_j = status_json(&env);
             let out = export_pack(&env, "xrouter-diag", true, &st_j);
-            println!("{out}");
-            i32::from(!out.contains("\"ok\":true"))
+            emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
         }
         "uninstall-now" => {
             let (rc, out) = uninstall_now(&env, rest.first().map_or("", String::as_str));
-            println!("{out}");
-            rc
+            emit(&env, &out, rc)
         }
         "clash-bridge" => crate::clash::run_clash_bridge(&env),
         "clash-ping" => crate::clash::run_clash_ping(&env),
@@ -483,16 +451,8 @@ pub fn run_cli(args: &[String]) -> i32 {
             crate::clash::run_clash_ws_close(&env, rest.first().map_or("", String::as_str))
         }
         "internal" => match rest.first().map(String::as_str) {
-            Some("dump-config-keys") => {
-                for k in KEYS {
-                    println!("{k}");
-                }
-                0
-            }
-            Some("config-hash") => {
-                println!("{}", config_hash(&env));
-                0
-            }
+            Some("dump-config-keys") => emit_lines(&env, KEYS, 0),
+            Some("config-hash") => emit(&env, &config_hash(&env), 0),
             Some("valid-kv") => {
                 let (Some(k), Some(v)) = (rest.get(1), rest.get(2)) else {
                     return 2;
@@ -511,10 +471,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             Some("vm") => match rest.get(1).map(String::as_str) {
                 Some("start") => vm_start(&env),
                 Some("stop") => vm_stop(&env),
-                Some("status") => {
-                    println!("{}", crate::vm::vm_status_json(&env));
-                    0
-                }
+                Some("status") => emit(&env, &crate::vm::vm_status_json(&env), 0),
                 Some("expand") => {
                     let Some(mb) = rest.get(2) else {
                         return 2;
@@ -562,11 +519,10 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
             _ => 2,
         },
-        _ => {
-            println!(
-                "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"
-            );
-            2
-        }
+        _ => emit(
+            &env,
+            "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm",
+            2,
+        ),
     }
 }
