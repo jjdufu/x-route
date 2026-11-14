@@ -6,7 +6,7 @@ use crate::sys::{ce_ready, fsx};
 #[derive(Debug, Clone)]
 pub struct Spec {
     pub mode: String,
-    pub spec: String,
+    pub shared_dir: String,
     pub wrap: Vec<String>,
 }
 
@@ -14,7 +14,7 @@ pub struct Spec {
 pub fn prepare(env: &Env, cfg: &Config) -> Spec {
     let mut res = Spec {
         mode: "off".to_owned(),
-        spec: String::new(),
+        shared_dir: String::new(),
         wrap: Vec::new(),
     };
     if !cfg.vm_share() {
@@ -46,7 +46,7 @@ pub fn prepare(env: &Env, cfg: &Config) -> Spec {
             );
             return res;
         }
-        res.spec = format!("{base}:{}", env.rw_map_opt);
+        res.shared_dir = format!("{base}:{}", env.rw_map_opt);
         "rw".clone_into(&mut res.mode);
     } else {
         let bb = env.bb.to_string_lossy();
@@ -56,7 +56,7 @@ pub fn prepare(env: &Env, cfg: &Config) -> Spec {
         let ro_path = env.run_dir().join("share-ro.sh");
         fsx::write_logged(env, &ro_path, script.as_bytes());
         fsx::chmod_logged(env, &ro_path, 0o700);
-        res.spec = base;
+        res.shared_dir = base;
         "ro".clone_into(&mut res.mode);
         res.wrap = vec![
             bb.into_owned(),

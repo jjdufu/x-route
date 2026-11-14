@@ -530,9 +530,9 @@ pub fn start_exec(env: &Env) -> i32 {
         "--shared-dir".to_owned(),
         ctl_spec,
     ]);
-    if !share.spec.is_empty() {
+    if !share.shared_dir.is_empty() {
         tramp_args.push("--shared-dir".to_owned());
-        tramp_args.push(share.spec);
+        tramp_args.push(share.shared_dir);
     }
     tramp_args.extend([
         "--params".to_owned(),

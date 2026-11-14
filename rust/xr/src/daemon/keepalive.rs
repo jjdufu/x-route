@@ -445,7 +445,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             fsx::remove_logged(env, file_path);
         }
         routes_emergency_down(env);
-        crate::sys::wakelock_off(env);
+        sys::wakelock_off(env);
         fsx::remove_logged(env, run.join("net.gw"));
         return;
     }
@@ -471,7 +471,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             fsx::remove_logged(env, path);
         }
         routes_emergency_down(env);
-        crate::sys::wakelock_off(env);
+        sys::wakelock_off(env);
         notify_cancel(env);
         return;
     }
@@ -491,7 +491,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     fsx::remove_logged(env, run.join("crosvm.pid"));
     fsx::remove_logged(env, run.join("guest/guest/openclash.status"));
     routes_emergency_down(env);
-    crate::sys::wakelock_off(env);
+    sys::wakelock_off(env);
     notify_cancel(env);
 }
 
