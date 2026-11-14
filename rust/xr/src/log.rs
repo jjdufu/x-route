@@ -1,3 +1,5 @@
+//! 日志：`module.log`、`boot.log`、`debug.log` 的写入与轮转，调试开关的到期处理，以及尽力而为操作的失败计数。
+
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::Path;
@@ -14,7 +16,9 @@ use crate::sys::fsx;
 #[cfg(test)]
 pub(crate) mod tests;
 
+/// `module.log`、`vmm.log` 等日志超过这个字节数（512 KiB）时轮转为 `.1`。
 const LOG_ROTATE_BYTES: u64 = 524_288;
+/// `debug.log` 超过这个字节数（2 MiB）时轮转为 `debug.log.1`。
 const DEBUG_ROTATE_BYTES: u64 = 2_097_152;
 
 /// 尽力而为操作的失败计数（文件、命令、日志自身）。只增不减，进程内有效。
@@ -81,6 +85,7 @@ fn format_failures_line(fs_n: u64, exec_n: u64, log_n: u64) -> String {
     format!("best_effort_failures fs={fs_n} exec={exec_n} log={log_n}\n")
 }
 
+/// 当前 Unix 时间（秒）；系统时钟早于 1970 年时返回 0。
 #[must_use]
 pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
@@ -88,11 +93,15 @@ pub(crate) fn unix_now() -> u64 {
         .map_or(0, |dur| dur.as_secs())
 }
 
+/// 本地时间的 `时:分:秒`，用于 `boot.log` 行首。
 #[must_use]
 pub(crate) fn time_hms() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
 
+/// 日志时间戳 `YYYY-MM-DD HH:MM:SS`（本地时间）。
+///
+/// 取不到时依次退回 `busybox date +%F %T` 和 `uptime+<秒>s`。
 #[must_use]
 pub fn xr_now(env: &Env) -> String {
     if !env.fake_date_fail {
@@ -118,6 +127,9 @@ pub fn xr_now(env: &Env) -> String {
     format!("uptime+{up}s")
 }
 
+/// `path` 是普通文件且超过 512 KiB 时轮转到 `<path>.1`。
+///
+/// `use_mv` 为 true 时改名；否则复制后清空原文件（适合仍被其他进程以追加方式打开的日志）。
 pub(crate) fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
     let Ok(meta) = fs::metadata(path) else {
         return;
@@ -136,6 +148,7 @@ pub(crate) fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
     }
 }
 
+/// `debug.log` 超过 2 MiB 时改名为 `debug.log.1`。
 pub(crate) fn rotate_debug(env: &Env) {
     let dlog = env.debug_log();
     let Ok(meta) = fs::metadata(&dlog) else {
@@ -147,6 +160,7 @@ pub(crate) fn rotate_debug(env: &Env) {
     }
 }
 
+/// 依次轮转 `module.log`、`debug.log`、`vmm.log`、`console.log`、`ctl.log`。
 pub(crate) fn rotate_all_logs(env: &Env) {
     rotate_file(env, &env.module_log(), true);
     rotate_debug(env);
@@ -179,6 +193,7 @@ fn ensure_log_dir(dir: &Path) {
     }
 }
 
+/// 写一行 `module.log`（格式 `时间 [级别] [模块] 文本`），开机日志存在时同时写一行到 `boot.log`。
 pub(crate) fn msg(env: &Env, level: &str, module: &str, text: &str) {
     ensure_log_dir(&env.log_dir());
     let log_path = env.module_log();
@@ -192,14 +207,17 @@ pub(crate) fn msg(env: &Env, level: &str, module: &str, text: &str) {
     }
 }
 
+/// 写一行 INFO 级别的 `module.log`。
 pub fn info(env: &Env, module: &str, text: &str) {
     msg(env, "INFO", module, text);
 }
 
+/// 写一行 ERROR 级别的 `module.log`。
 pub(crate) fn err(env: &Env, module: &str, text: &str) {
     msg(env, "ERROR", module, text);
 }
 
+/// 只在 `boot.log` 存在时追加一行开机进度（`时:分:秒 [模块] 文本`）。
 pub fn blog(env: &Env, module: &str, msg: &str) {
     let boot_log = env.boot_log();
     if !boot_log.is_file() {
@@ -208,6 +226,7 @@ pub fn blog(env: &Env, module: &str, msg: &str) {
     append_line_counted(&boot_log, &format!("{} [{module}] {msg}", time_hms()));
 }
 
+/// 调试开关打开时写一行 `debug.log`（带 pid）；关闭时什么都不做。
 pub(crate) fn dlog(env: &Env, cfg: &Config, module: &str, msg: &str) {
     if !cfg.debug_on() {
         return;
@@ -226,6 +245,9 @@ pub(crate) fn dlog_env(env: &Env, module: &str, msg: &str) {
     dlog(env, &cfg, module, msg);
 }
 
+/// 按 `XR_DEBUG`、`XR_DEBUG_HOURS` 写入或删除调试到期时间文件。
+///
+/// 调试打开且时长非 0 时写入"现在 + 时长"的 Unix 时间，否则删除该文件。
 pub(crate) fn debug_arm(env: &Env) {
     let cfg = Config::load(env);
     let until_file = env.debug_until_file();
@@ -239,6 +261,7 @@ pub(crate) fn debug_arm(env: &Env) {
     }
 }
 
+/// 调试到期时间已过时把 `XR_DEBUG` 改回 0、删除到期文件并记一行 INFO。
 pub(crate) fn debug_expire(env: &Env) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
@@ -261,6 +284,9 @@ pub(crate) fn debug_expire(env: &Env) {
     }
 }
 
+/// 开机清理 `run/`：保留上次的 `console.log` 为 `console.prev.log`，删除 `run/` 下全部内容。
+///
+/// `run/` 下存在挂载点时记 ERROR 并返回 false（跳过清理）；其余情况返回 true。
 #[must_use]
 pub fn boot_clean_run(env: &Env) -> bool {
     let run = env.run_dir();
