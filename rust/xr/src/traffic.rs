@@ -7,11 +7,19 @@ use crate::net::common::{
     NetCtx, TrafficCounters, TrafficSummary, combine_quad_add, combine_quad_max, read_quad,
     write_quad,
 };
-use crate::sys::DirLock;
 use crate::sys::fsx;
+use crate::sys::{LockWait, PathLock};
 
-fn acct_lock<'env>(ctx: &NetCtx<'env>) -> DirLock<'env> {
-    DirLock::acquire(ctx.env, ctx.env.run_dir().join("acct.lock"), 30, 100, false)
+fn acct_lock(ctx: &NetCtx<'_>) -> PathLock {
+    PathLock::acquire(
+        ctx.env,
+        ctx.env.run_dir().join("acct.lock"),
+        LockWait {
+            max_iters: 30,
+            sleep_ms: 100,
+            check_pid: false,
+        },
+    )
 }
 
 /// `run/routes.active` 中按地址族筛出的非空行（`want_v6` 为真时取含 `:` 的行）。

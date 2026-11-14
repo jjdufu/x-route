@@ -28,7 +28,7 @@ use crate::out::emit;
 use crate::sys::exec::note_exec_result;
 use crate::sys::fsx;
 use crate::sys::spawn::spawn_self_detached;
-use crate::sys::{DirLock, send_signal};
+use crate::sys::{LockWait, PathLock, send_signal};
 use crate::traffic::{acct_hooks, acct_present, acct_present6, acct_setup, acct_teardown};
 
 const GW_PREF: &str = "19100";
@@ -44,8 +44,16 @@ fn is_cell_iface(name: &str) -> bool {
         || name.starts_with("v4-ccmni")
 }
 
-fn net_lock(env: &Env) -> DirLock<'_> {
-    DirLock::acquire(env, env.run_dir().join(".net.lock"), 120, 500, true)
+fn net_lock(env: &Env) -> PathLock {
+    PathLock::acquire(
+        env,
+        env.run_dir().join(".net.lock"),
+        LockWait {
+            max_iters: 120,
+            sleep_ms: 500,
+            check_pid: true,
+        },
+    )
 }
 
 #[must_use]

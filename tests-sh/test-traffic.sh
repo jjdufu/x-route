@@ -72,6 +72,10 @@ chk '[ "$(cat "$XR_DATA/config/traffic.snap")" = "5000000080 9000000080 1035 204
 m1="$(stat -c %Y "$XR_DATA/config/traffic.snap")"; touch -d '2000-01-01' "$XR_DATA/config/traffic.snap"
 sh "$ROOT/module/scripts/traffic.sh" snapshot
 chk '[ "$(stat -c %Y "$XR_DATA/config/traffic.snap")" -lt "$m1" ]'
+# 跨进程互斥（D11-B 锁文件 run/acct.lock）：4 个 snapshot 并行，全部成功、快照合法、锁不残留
+for i in 1 2 3 4; do ( sh "$ROOT/module/scripts/traffic.sh" snapshot; echo $? > "$T/par.$i" ) & done; wait
+chk '[ "$(cat "$T/par.1" "$T/par.2" "$T/par.3" "$T/par.4" | tr -d "\n")" = 0000 ]'
+chk '[ "$(cat "$XR_DATA/config/traffic.snap")" = "5000000080 9000000080 1035 2040" ] && [ ! -e "$RUN/acct.lock" ]'
 
 # 6. 停止（down）：折算保存，钩子和链全部删除；再次 up 从保存值接着累计
 rmdir "$T/sysnet/xr0"; $NET down

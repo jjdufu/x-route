@@ -1,6 +1,8 @@
 pub mod exec;
 pub(crate) mod fsx;
 pub mod spawn;
+#[cfg(test)]
+mod tests;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
@@ -13,7 +15,7 @@ use rustix::fs::{FlockOperation, flock};
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 
 use crate::env::Env;
-use crate::log::log_info;
+use crate::log::{FAILURES, log_info, note_failure};
 
 pub struct FileLock {
     _file: File,
@@ -36,72 +38,118 @@ impl FileLock {
     }
 }
 
-pub struct DirLock<'env> {
-    /// 释放锁时记录失败用的环境。
-    env: &'env Env,
+/// 进程间互斥锁：以 `create_new`（`O_CREAT|O_EXCL`）原子创建的锁文件表示"已占用"，Drop 时删除。
+///
+/// 取代原来的 mkdir 目录锁（D11-B）：路径已存在（文件或旧版本留下的目录）即视为被占用，
+/// 互斥、stale 判定与超时接管的语义与目录锁相同。
+#[derive(Debug)]
+pub struct PathLock {
+    /// 锁文件路径。
     path: PathBuf,
 }
 
-impl<'env> DirLock<'env> {
-    pub fn acquire(
-        env: &'env Env,
-        path: PathBuf,
-        max_iters: u32,
-        sleep_ms: u64,
-        check_pid: bool,
-    ) -> Self {
+/// 获取 [`PathLock`] 时的等待参数。
+#[derive(Debug, Clone, Copy)]
+pub struct LockWait {
+    /// 最多等待的轮数；用完后强制接管。
+    pub max_iters: u32,
+    /// 每轮间隔（毫秒）。
+    pub sleep_ms: u64,
+    /// 是否按锁内记录的 pid 判断持有者已退出（已退出则立即清理并重试）。
+    pub check_pid: bool,
+}
+
+impl PathLock {
+    /// 获取锁：路径已被占用时按 `wait` 等待；持有者已退出（`check_pid`）时清理后重试；
+    /// 等满 `max_iters` 轮后强制接管。总会返回（与原目录锁一致，不报错）。
+    #[must_use]
+    pub fn acquire(env: &Env, path: PathBuf, wait: LockWait) -> Self {
         if let Some(parent) = path.parent() {
             fsx::mkdirs_logged(env, parent);
         }
-        let mut n = 0_u32;
-        while fs::create_dir(&path).is_err() {
-            if let Some(parent) = path.parent() {
-                if !parent.exists() && fs::create_dir_all(parent).is_err() {
-                    break;
-                }
+        let mut rounds = 0_u32;
+        let held = loop {
+            if let Ok(file) = create_lock_file(&path) {
+                break Some(file);
             }
-            let stale_pid = if check_pid {
-                fs::read_to_string(path.join("pid"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<i32>().ok())
-                    .and_then(Pid::from_raw)
-                    .is_some_and(|pid| test_kill_process(pid).is_err())
-            } else {
-                false
-            };
-            if stale_pid {
-                fsx::remove_tree_logged(env, &path);
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+                && fs::create_dir_all(parent).is_err()
+            {
+                break None;
+            }
+            if wait.check_pid && lock_holder_dead(&path) {
+                remove_lock_path(env, &path);
                 continue;
             }
-            if n >= max_iters {
-                force_take_dir_lock(env, &path);
-                break;
+            if rounds >= wait.max_iters {
+                break force_take_lock(env, &path);
             }
-            thread::sleep(Duration::from_millis(sleep_ms));
-            n = n.saturating_add(1);
+            thread::sleep(Duration::from_millis(wait.sleep_ms));
+            rounds = rounds.saturating_add(1);
+        };
+        if wait.check_pid
+            && let Some(mut file) = held
+            && let Err(err) = writeln!(file, "{}", std::process::id())
+        {
+            fsx::record_failure(env, "write", &path, &err);
         }
-        if check_pid && path.is_dir() {
-            fsx::write_logged(
-                env,
-                &path.join("pid"),
-                format!("{}\n", std::process::id()).as_bytes(),
-            );
-        }
-        Self { env, path }
+        Self { path }
     }
 }
 
-/// 等待目录锁超时后强行接管：删掉旧锁目录再新建。失败时计数并记录，调用方照常继续（与原行为一致）。
-fn force_take_dir_lock(env: &Env, path: &Path) {
-    fsx::remove_tree_logged(env, path);
-    if let Err(err) = fs::create_dir(path) {
-        fsx::record_failure(env, "mkdir", path, &err);
+/// 以 `create_new` 原子创建锁文件；路径已存在（文件或目录）时返回 `AlreadyExists`。
+///
+/// # Errors
+///
+/// 路径已存在或无法创建时返回对应的 `io::Error`。
+fn create_lock_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// 锁内记录的持有者 pid 是否已不存在：锁文件读其内容，旧版本的目录锁读 `pid` 文件；
+/// 读不到或不是合法 pid 时视为仍被持有。
+fn lock_holder_dead(path: &Path) -> bool {
+    let pid_file = if path.is_dir() {
+        path.join("pid")
+    } else {
+        path.to_path_buf()
+    };
+    fs::read_to_string(pid_file)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i32>().ok())
+        .and_then(Pid::from_raw)
+        .is_some_and(|pid| test_kill_process(pid).is_err())
+}
+
+/// 删除锁路径：旧版本留下的目录锁递归删除，锁文件直接删除。失败时计数并记录。
+fn remove_lock_path(env: &Env, path: &Path) {
+    if path.is_dir() {
+        fsx::remove_tree_logged(env, path);
+    } else {
+        fsx::remove_logged(env, path);
     }
 }
 
-impl Drop for DirLock<'_> {
+/// 等待超时后强行接管：删掉旧锁再新建一次。新建失败时计数并记录，调用方照常继续（与原行为一致）。
+fn force_take_lock(env: &Env, path: &Path) -> Option<File> {
+    remove_lock_path(env, path);
+    match create_lock_file(path) {
+        Ok(file) => Some(file),
+        Err(err) => {
+            fsx::record_failure(env, "create_new", path, &err);
+            None
+        }
+    }
+}
+
+impl Drop for PathLock {
     fn drop(&mut self) {
-        fsx::remove_tree_logged(self.env, &self.path);
+        if let Err(err) = fs::remove_file(&self.path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            note_failure(&FAILURES.fs);
+        }
     }
 }
 

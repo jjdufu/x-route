@@ -16,9 +16,9 @@ use crate::env::Env;
 use crate::log::FAILURES;
 use crate::log::note_failure;
 use crate::log::{log_info, rotate_debug, unix_now};
-use crate::sys::DirLock;
 use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
+use crate::sys::{LockWait, PathLock};
 
 fn sys_cmd_output(bin: &Path, args: &[&str]) -> String {
     match Command::new(bin).args(args).output() {
@@ -504,7 +504,15 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
         return;
     }
     let lock_path = env.run_dir().join(".snap.lock");
-    let lock = DirLock::acquire(env, lock_path, 600, 100, false);
+    let lock = PathLock::acquire(
+        env,
+        lock_path,
+        LockWait {
+            max_iters: 600,
+            sleep_ms: 100,
+            check_pid: false,
+        },
+    );
     let mut raw = String::new();
     let now = Local::now().format("%Y-%m-%d %H:%M:%S");
     raw.push_str("======== ");
