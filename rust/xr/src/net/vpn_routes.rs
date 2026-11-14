@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::iter;
 
 use crate::cidr::{cidr_aligned, cidr_overlap, norm_route};
 use crate::env::{XR_IF, XR_NET6};
 use crate::log::{dlog, log_err};
 use crate::net::common::NetCtx;
+use crate::sys::fsx;
 
 pub fn guest_routes_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
     ctx.env.run_dir().join("guest/guest/openvpn.routes")
@@ -56,7 +58,7 @@ pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
             if *tok == "dev" {
                 if let Some(dev) = tokens.get(idx.saturating_add(1)) {
                     if *dev != XR_IF {
-                        set.insert((*dev).to_string());
+                        set.extend(iter::once((*dev).to_string()));
                     }
                 }
             }
@@ -125,7 +127,7 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
             log_err(ctx.env, "vpn", "超过 64 条，其余忽略");
             break;
         }
-        valid_set.insert(nc);
+        valid_set.extend(iter::once(nc));
     }
     valid_set.into_iter().collect()
 }
@@ -146,13 +148,18 @@ fn ipx(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) -> crate::sys::exec::ExecRes
     }
 }
 
+/// 与 [`ipx`] 相同（按 `cidr` 的地址族执行 `ip` 或 `ip -6`），只关心成败：失败时计数，不返回结果。
+fn ipx_run(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) {
+    crate::sys::exec::note_exec_result(&ipx(ctx, cidr, args));
+}
+
 pub fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
     let mode = fs::read_to_string(ctx.env.run_dir().join("net.mode")).unwrap_or_default();
     if mode.trim() == "ndc" {
-        let _ = ctx.ndc(&["network", "route", "add", "local", XR_IF, cidr, &via]);
+        ctx.ndc_run(&["network", "route", "add", "local", XR_IF, cidr, &via]);
     } else {
-        let _ = ipx(
+        ipx_run(
             ctx,
             cidr,
             &[
@@ -160,9 +167,9 @@ pub fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
             ],
         );
     }
-    let _ = ipx(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
+    ipx_run(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
     let tbl = ctx.lnt();
-    let _ = ipx(
+    ipx_run(
         ctx,
         cidr,
         &["rule", "add", "pref", "4801", "to", cidr, "lookup", tbl],
@@ -171,9 +178,9 @@ pub fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
 
 pub fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
-    let _ = ctx.ndc(&["network", "route", "remove", "local", XR_IF, cidr, &via]);
-    let _ = ipx(ctx, cidr, &["route", "del", cidr, "table", "97"]);
-    let _ = ipx(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
+    ctx.ndc_run(&["network", "route", "remove", "local", XR_IF, cidr, &via]);
+    ipx_run(ctx, cidr, &["route", "del", cidr, "table", "97"]);
+    ipx_run(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
 }
 
 pub fn cksum_crc_like(bytes: &[u8]) -> String {
@@ -230,8 +237,9 @@ pub fn routes_sync(ctx: &NetCtx<'_>) {
     } else {
         format!("{}\n", want.join("\n"))
     };
-    let _ = fs::write(&active_path, body);
-    let _ = fs::write(
+    fsx::write_logged(ctx.env, &active_path, body);
+    fsx::write_logged(
+        ctx.env,
         ctx.env.run_dir().join("vpn.cksum"),
         format!("{}\n", routes_file_cksum(ctx)),
     );
@@ -257,5 +265,5 @@ pub fn routes_clear(ctx: &NetCtx<'_>) {
             route_del(ctx, c);
         }
     }
-    let _ = fs::remove_file(&active_path);
+    fsx::remove_logged(ctx.env, &active_path);
 }
