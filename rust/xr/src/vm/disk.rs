@@ -19,7 +19,7 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
         return 1;
     };
     let rootfs = env.rootfs_img();
-    let cur_bytes = fs::metadata(&rootfs).map_or(0, |m| m.len());
+    let cur_bytes = fs::metadata(&rootfs).map_or(0, |meta| meta.len());
     let cur_mb = cur_bytes / 1_048_576;
     if new_mb <= cur_mb {
         log_err(env, "vm", &format!("新大小必须大于当前 {cur_mb}MB"));
