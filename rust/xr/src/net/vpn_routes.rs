@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::iter;
 
-use crate::cidr::{cidr_aligned, cidr_overlap, norm_route};
+use crate::cidr;
+use crate::cidr::norm_route;
 use crate::env::{XR_IF, XR_NET6};
 use crate::log::{dlog, log_err};
 use crate::net::common::NetCtx;
@@ -119,13 +120,13 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
         if is_default_route(&nc) {
             continue;
         }
-        if !cidr_aligned(&nc) {
+        if !cidr::is_aligned(&nc) {
             log_err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
             continue;
         }
         if let Some(conflict) = busy
             .iter()
-            .find(|used| !used.is_empty() && cidr_overlap(&nc, used))
+            .find(|used| !used.is_empty() && cidr::overlap(&nc, used))
         {
             log_err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
             continue;

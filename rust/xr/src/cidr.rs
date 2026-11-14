@@ -248,12 +248,12 @@ pub fn norm_route(raw: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn valid_cidr(raw: &str) -> bool {
+pub fn is_valid(raw: &str) -> bool {
     norm_route(raw).is_some()
 }
 
 #[must_use]
-pub fn cidr_private(raw: &str) -> bool {
+pub fn is_private(raw: &str) -> bool {
     let Some((addr, plen_s)) = raw.split_once('/') else {
         return false;
     };
@@ -282,7 +282,7 @@ pub fn cidr_private(raw: &str) -> bool {
 }
 
 #[must_use]
-pub fn cidr_aligned(raw: &str) -> bool {
+pub fn is_aligned(raw: &str) -> bool {
     let Some(norm) = norm_route(raw) else {
         return false;
     };
@@ -312,7 +312,7 @@ pub fn cidr_aligned(raw: &str) -> bool {
 }
 
 #[must_use]
-pub fn cidr_overlap(lhs: &str, rhs: &str) -> bool {
+pub fn overlap(lhs: &str, rhs: &str) -> bool {
     let (Some(ca), Some(cb)) = (norm_route(lhs), norm_route(rhs)) else {
         return false;
     };
@@ -344,7 +344,7 @@ pub fn cidr_overlap(lhs: &str, rhs: &str) -> bool {
 }
 
 #[must_use]
-pub fn cidr_net(raw: &str) -> Option<String> {
+pub fn network(raw: &str) -> Option<String> {
     let (addr, plen_s) = raw.split_once('/')?;
     let plen: u8 = plen_s.parse().ok()?;
     let ip = ip2int(addr)?;
@@ -474,7 +474,7 @@ pub fn hs_subnet_valid(raw: &str) -> bool {
     let Ok(plen_u8) = u8::try_from(plen) else {
         return false;
     };
-    if addr.starts_with("100.") || !cidr_private(raw) {
+    if addr.starts_with("100.") || !is_private(raw) {
         return false;
     }
     let (Some(ip), Some(mask)) = (ip2int(addr), prefix_mask(plen_u8)) else {
@@ -493,7 +493,7 @@ pub fn hs_subnet_clash(
     skip_if: Option<&str>,
 ) -> Option<String> {
     let xr_net = format!("{net_prefix}.0/24");
-    if cidr_overlap(subnet, &xr_net) {
+    if overlap(subnet, &xr_net) {
         return Some(format!("{XR_IF} {xr_net}"));
     }
     let ip_bin = env.sysbin_cmd("ip");
@@ -536,7 +536,7 @@ pub fn hs_subnet_clash(
             if skip.iter().any(|raw| raw == dev) {
                 continue;
             }
-            if cidr_overlap(subnet, addr_cidr) {
+            if overlap(subnet, addr_cidr) {
                 return Some(format!("{dev} {addr_cidr}"));
             }
         }

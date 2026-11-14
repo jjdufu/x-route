@@ -3,7 +3,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use crate::cidr::{cidr_net, cidr_overlap, hs_subnet_clash};
+use crate::cidr;
+use crate::cidr::hs_subnet_clash;
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF, is_executable};
 use crate::log::{dlog, log_err, log_info, unix_now};
 use crate::net::common::{NetCtx, trigger_diag_snap_bg};
@@ -216,7 +217,7 @@ pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     if gw == android_cidr {
         return;
     }
-    let Some(hn) = cidr_net(gw) else {
+    let Some(hn) = cidr::network(gw) else {
         return;
     };
     let via = format!("{}.254", ctx.cfg.net_prefix());
@@ -247,7 +248,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         return false;
     }
     let gw = hs_gw_cidr(ctx, iface, &cidr);
-    let alias = if gw != cidr && !cidr_overlap(&gw, &cidr) {
+    let alias = if gw != cidr && !cidr::overlap(&gw, &cidr) {
         format!("+{cidr}")
     } else {
         String::new()

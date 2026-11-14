@@ -3,10 +3,10 @@ use std::os::unix::fs::PermissionsExt;
 
 use proptest::prelude::*;
 use tempfile::TempDir;
+use xr::cidr;
 use xr::cidr::{
-    cidr_aligned, cidr_net, cidr_overlap, cidr_private, hs_mac, hs_subnet_clash, hs_subnet_valid,
-    ip2int, ip6_expand, ip6_format, ip6_mask, mac_eui64, mask2len, norm_route, v6_compose,
-    v6_is_ll, v6_is_ula, v6_pick_addr, valid_cidr, valid_ip4,
+    hs_mac, hs_subnet_clash, hs_subnet_valid, ip2int, ip6_expand, ip6_format, ip6_mask, mac_eui64,
+    mask2len, norm_route, v6_compose, v6_is_ll, v6_is_ula, v6_pick_addr, valid_ip4,
 };
 use xr::config::{Config, KEYS, config_hash, set_kv, valid_kv};
 use xr::daemon::keepalive::{
@@ -91,21 +91,21 @@ fn test_common_parity_valid_kv_and_cidr() {
     assert!(valid_kv(&env, &cfg, "VM_SHARE_PATH", "/sdcard/DCIM"));
     assert!(!valid_kv(&env, &cfg, "UNKNOWN", "1"));
 
-    assert!(cidr_private("10.20.0.0/16"));
-    assert!(cidr_private("172.16.0.0/12"));
-    assert!(cidr_private("192.168.50.0/24"));
-    assert!(cidr_private("100.64.0.0/10"));
-    assert!(!cidr_private("8.8.8.0/24"));
-    assert!(!cidr_private("172.32.0.0/16"));
-    assert!(!cidr_private("192.0.0.0/8"));
-    assert!(!cidr_private("10.0.0.0/7"));
+    assert!(cidr::is_private("10.20.0.0/16"));
+    assert!(cidr::is_private("172.16.0.0/12"));
+    assert!(cidr::is_private("192.168.50.0/24"));
+    assert!(cidr::is_private("100.64.0.0/10"));
+    assert!(!cidr::is_private("8.8.8.0/24"));
+    assert!(!cidr::is_private("172.32.0.0/16"));
+    assert!(!cidr::is_private("192.0.0.0/8"));
+    assert!(!cidr::is_private("10.0.0.0/7"));
 
-    assert!(cidr_aligned("192.168.50.0/24"));
-    assert!(!cidr_aligned("192.168.50.1/24"));
-    assert!(cidr_overlap("192.168.0.0/16", "192.168.50.0/24"));
-    assert!(!cidr_overlap("192.168.50.0/24", "192.168.51.0/24"));
+    assert!(cidr::is_aligned("192.168.50.0/24"));
+    assert!(!cidr::is_aligned("192.168.50.1/24"));
+    assert!(cidr::overlap("192.168.0.0/16", "192.168.50.0/24"));
+    assert!(!cidr::overlap("192.168.50.0/24", "192.168.51.0/24"));
     assert_eq!(
-        cidr_net("192.168.250.254/30").as_deref(),
+        cidr::network("192.168.250.254/30").as_deref(),
         Some("192.168.250.252/30")
     );
 
@@ -122,10 +122,10 @@ fn test_common_parity_valid_kv_and_cidr() {
         ip6_expand("2001:db8::1").as_deref(),
         Some("20010db8000000000000000000000001")
     );
-    assert!(!valid_cidr("10.0.0.0/0"));
-    assert!(!valid_cidr("2001:db8::/129"));
-    assert!(!valid_cidr("2001:db8:::1"));
-    assert!(!valid_cidr("10.8.0.0/255.0.255.0"));
+    assert!(!cidr::is_valid("10.0.0.0/0"));
+    assert!(!cidr::is_valid("2001:db8::/129"));
+    assert!(!cidr::is_valid("2001:db8:::1"));
+    assert!(!cidr::is_valid("10.8.0.0/255.0.255.0"));
 }
 
 #[test]
@@ -337,10 +337,10 @@ proptest! {
         prop_assert_eq!(ip2int(&s), Some(expected));
 
         let cidr = format!("{s}/{plen}");
-        prop_assert!(valid_cidr(&cidr));
-        let net = cidr_net(&cidr).unwrap_or_default();
-        prop_assert!(cidr_aligned(&net));
-        prop_assert!(cidr_overlap(&cidr, &net));
+        prop_assert!(cidr::is_valid(&cidr));
+        let net = cidr::network(&cidr).unwrap_or_default();
+        prop_assert!(cidr::is_aligned(&net));
+        prop_assert!(cidr::overlap(&cidr, &net));
     }
 
     #[test]
@@ -364,8 +364,8 @@ proptest! {
         let masked = ip6_mask(&exp, plen).unwrap_or_default();
         let formatted = ip6_format(&masked).unwrap_or_default();
         let cidr = format!("{formatted}/{plen}");
-        prop_assert!(cidr_aligned(&cidr));
-        prop_assert!(cidr_overlap(&s, &cidr));
+        prop_assert!(cidr::is_aligned(&cidr));
+        prop_assert!(cidr::overlap(&s, &cidr));
     }
 
     #[test]
@@ -375,9 +375,9 @@ proptest! {
         let _ = mask2len(&raw);
         let _ = ip6_expand(&raw);
         let _ = norm_route(&raw);
-        let _ = valid_cidr(&raw);
-        let _ = cidr_private(&raw);
-        let _ = cidr_aligned(&raw);
+        let _ = cidr::is_valid(&raw);
+        let _ = cidr::is_private(&raw);
+        let _ = cidr::is_aligned(&raw);
         let _ = hs_subnet_valid(&raw);
         let _ = mac_eui64(&raw);
     }
