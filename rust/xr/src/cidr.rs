@@ -1,3 +1,7 @@
+//! `IPv4`/`IPv6` 地址、前缀与 MAC 的解析和校验，以及热点子网冲突检测。
+//!
+//! 纯字符串运算为主，与原 shell 实现逐条对齐（见集成测试 `prop_core`）。
+
 use std::process::Command;
 
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
@@ -5,11 +9,13 @@ use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
 #[cfg(test)]
 mod tests;
 
+/// 判断 `text` 是否为 1–6 位十进制数字（不含符号、空串返回 false）。
 #[must_use]
 pub(crate) fn is_uint(text: &str) -> bool {
     !text.is_empty() && text.len() <= 6 && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// 把 1–6 位十进制数字串解析为 `u32`；格式不符时返回 `None`。
 #[must_use]
 pub(crate) fn parse_uint(text: &str) -> Option<u32> {
     if !is_uint(text) {
@@ -18,11 +24,13 @@ pub(crate) fn parse_uint(text: &str) -> Option<u32> {
     text.parse::<u32>().ok()
 }
 
+/// `text` 是十进制整数且落在闭区间 `[min, max]` 内时返回 true。
 #[must_use]
 pub(crate) fn in_range(text: &str, min: u32, max: u32) -> bool {
     parse_uint(text).is_some_and(|value| value >= min && value <= max)
 }
 
+/// 判断 `raw` 是否为点分十进制 `IPv4` 地址：恰好 4 段，每段 0–255、无前导零。
 #[must_use]
 pub fn valid_ip4(raw: &str) -> bool {
     let mut parts = raw.split('.');
@@ -52,6 +60,7 @@ pub fn valid_ip4(raw: &str) -> bool {
     true
 }
 
+/// 把点分十进制 `IPv4` 地址转成大端序 `u32`；不是合法地址时返回 `None`。
 #[must_use]
 pub fn ip2int(raw: &str) -> Option<u32> {
     let mut parts = raw.split('.');
@@ -83,6 +92,7 @@ pub fn ip2int(raw: &str) -> Option<u32> {
     Some(out)
 }
 
+/// 前缀长度 `plen`（0–32）对应的 `IPv4` 网络掩码；超过 32 返回 `None`。
 #[must_use]
 pub(crate) const fn prefix_mask(plen: u8) -> Option<u32> {
     if plen == 0 {
@@ -95,6 +105,7 @@ pub(crate) const fn prefix_mask(plen: u8) -> Option<u32> {
     }
 }
 
+/// 把点分掩码（如 `255.255.255.0`）换算成前缀长度；不是连续掩码时返回 `None`。
 #[must_use]
 pub fn mask2len(text: &str) -> Option<u8> {
     if !valid_ip4(text) {
@@ -104,6 +115,7 @@ pub fn mask2len(text: &str) -> Option<u8> {
     (0_u8..=32_u8).find(|&plen| prefix_mask(plen) == Some(mask_val))
 }
 
+/// 把用 `:` 分隔的 `IPv6` 片段补零成 4 位一组；空串得到空列表，任一组非法时返回 `None`。
 fn collect_v6_groups(text: &str) -> Option<Vec<String>> {
     if text.is_empty() {
         return Some(Vec::new());
@@ -121,6 +133,7 @@ fn collect_v6_groups(text: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// 把 `IPv6` 地址（可含 `::`）展开成 32 个小写十六进制字符；格式非法时返回 `None`。
 #[must_use]
 pub fn ip6_expand(text: &str) -> Option<String> {
     if text.is_empty() {
@@ -169,6 +182,7 @@ pub fn ip6_expand(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// 对 32 位十六进制形式的 `IPv6` 地址按前缀长度 `plen` 清零主机位，结果仍为 32 个十六进制字符。
 #[must_use]
 pub fn ip6_mask(hex32: &str, plen: u8) -> Option<String> {
     if hex32.len() != 32 || plen > 128 {
@@ -186,6 +200,7 @@ pub fn ip6_mask(hex32: &str, plen: u8) -> Option<String> {
     Some(format!("{masked:032x}"))
 }
 
+/// 把 32 个十六进制字符按 4 个一组用 `:` 连接（不压缩零）；长度或字符不符时返回 `None`。
 #[must_use]
 pub fn ip6_format(hex32: &str) -> Option<String> {
     if hex32.len() != 32 || !hex32.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -200,6 +215,9 @@ pub fn ip6_format(hex32: &str) -> Option<String> {
     Some(groups.join(":"))
 }
 
+/// 把路由写法规范成 `地址/前缀长度`：支持 `IPv4` 点分掩码、前缀长度、裸地址（补 `/32`、`/128`）与 `IPv6`。
+///
+/// `default`、空串和任何非法写法返回 `None`。
 #[must_use]
 pub fn norm_route(raw: &str) -> Option<String> {
     if raw.is_empty() || raw == "default" {
@@ -247,11 +265,13 @@ pub fn norm_route(raw: &str) -> Option<String> {
     None
 }
 
+/// `raw` 能被 [`norm_route`] 规范化时返回 true。
 #[must_use]
 pub fn is_valid(raw: &str) -> bool {
     norm_route(raw).is_some()
 }
 
+/// `raw`（`地址/前缀`）完全落在 `10/8`、`172.16/12`、`192.168/16` 或 `100.64/10` 内时返回 true。
 #[must_use]
 pub fn is_private(raw: &str) -> bool {
     let Some((addr, plen_s)) = raw.split_once('/') else {
@@ -281,6 +301,7 @@ pub fn is_private(raw: &str) -> bool {
     }
 }
 
+/// 规范化后的路由地址没有主机位（地址恰为网络号）时返回 true，`IPv4`、`IPv6` 都支持。
 #[must_use]
 pub fn is_aligned(raw: &str) -> bool {
     let Some(norm) = norm_route(raw) else {
@@ -311,6 +332,7 @@ pub fn is_aligned(raw: &str) -> bool {
     }
 }
 
+/// 两条路由（同为 `IPv4` 或同为 `IPv6`）按较短前缀比较网络号相同时返回 true，即二者有交集。
 #[must_use]
 pub fn overlap(lhs: &str, rhs: &str) -> bool {
     let (Some(ca), Some(cb)) = (norm_route(lhs), norm_route(rhs)) else {
@@ -343,6 +365,7 @@ pub fn overlap(lhs: &str, rhs: &str) -> bool {
     }
 }
 
+/// 求 `IPv4` 路由 `地址/前缀` 的网络号，格式为 `a.b.c.d/前缀`。
 #[must_use]
 pub fn network(raw: &str) -> Option<String> {
     let (addr, plen_s) = raw.split_once('/')?;
@@ -359,6 +382,7 @@ pub fn network(raw: &str) -> Option<String> {
     ))
 }
 
+/// 由 MAC 地址生成 EUI-64 接口标识（16 个十六进制字符，翻转 U/L 位并插入 `fffe`）。
 #[must_use]
 pub fn mac_eui64(mac: &str) -> Option<String> {
     let lower = mac.to_ascii_lowercase();
@@ -380,6 +404,7 @@ pub fn mac_eui64(mac: &str) -> Option<String> {
     ))
 }
 
+/// 热点桥接口使用的 MAC：取虚拟机 MAC，把最后一个字节的最低位取反。
 #[must_use]
 pub fn hs_mac(vm_mac: &str) -> Option<String> {
     let (prefix, last) = vm_mac.rsplit_once(':')?;
@@ -387,6 +412,7 @@ pub fn hs_mac(vm_mac: &str) -> Option<String> {
     Some(format!("{prefix}:{:02x}", byte ^ 0x01))
 }
 
+/// 地址（可带前缀）属于链路本地段 `fe80::/10` 时返回 true。
 #[must_use]
 pub fn v6_is_ll(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
@@ -398,12 +424,14 @@ pub fn v6_is_ll(addr: &str) -> bool {
     })
 }
 
+/// 地址（可带前缀）属于唯一本地段 `fc00::/7` 时返回 true。
 #[must_use]
 pub fn v6_is_ula(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
     ip6_expand(bare).is_some_and(|hex| hex.starts_with("fc") || hex.starts_with("fd"))
 }
 
+/// 用前缀 `pfx`（长度不超过 64）的前 64 位与 16 位十六进制接口标识 `iid16` 拼出完整 `IPv6` 地址。
 #[must_use]
 pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
     let (addr, plen_s) = pfx.split_once('/')?;
@@ -418,6 +446,7 @@ pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
     ip6_format(&full)
 }
 
+/// 两个 `IPv6` 地址（忽略前缀部分）展开后相同时返回 true。
 #[must_use]
 pub(crate) fn v6_addr_eq(lhs: &str, rhs: &str) -> bool {
     let aa = lhs.split('/').next().unwrap_or(lhs);
@@ -428,6 +457,9 @@ pub(crate) fn v6_addr_eq(lhs: &str, rhs: &str) -> bool {
     ea == eb
 }
 
+/// 在前缀 `pfx`（48–64 位）内挑一个未被 `busy` 占用的地址，带前缀长度返回。
+///
+/// 候选依次是 MAC 的 EUI-64、固定接口标识 `787200e900000254`、`787200e90000{1..8}`；全部被占用时返回 `None`。
 #[must_use]
 pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
     let (_, plen_s) = pfx.split_once('/')?;
@@ -457,6 +489,7 @@ pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
     None
 }
 
+/// 判断热点子网设置是否可用：私有 `IPv4`、前缀 16–30、不在 `100.64/10`，且地址不是网络号或广播地址。
 #[must_use]
 pub fn hs_subnet_valid(raw: &str) -> bool {
     let Some((addr, plen_s)) = raw.split_once('/') else {
@@ -485,6 +518,9 @@ pub fn hs_subnet_valid(raw: &str) -> bool {
     host != 0 && host != bcast
 }
 
+/// 检查热点子网 `subnet` 是否与 `xr0` 的 `/24` 或手机上其他接口的 `IPv4` 地址冲突。
+///
+/// 跳过 `lo`、`xr0`、`xr1`、`xrbr1`、`local_network` 表里的接口以及 `skip_if`；冲突时返回"接口名 地址段"，无冲突返回 `None`。
 #[must_use]
 pub fn hs_subnet_clash(
     env: &Env,
