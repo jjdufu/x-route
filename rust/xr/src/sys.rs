@@ -33,7 +33,7 @@ impl FileLock {
             .truncate(false)
             .open(lock_path)?;
         flock(&file, FlockOperation::LockExclusive)
-            .map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
+            .map_err(|err| std::io::Error::from_raw_os_error(err.raw_os_error()))?;
         Ok(Self { _file: file })
     }
 }
@@ -161,7 +161,7 @@ pub fn is_zombie_stat(stat_content: &str) -> bool {
 #[must_use]
 pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();
-    if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
+    if trimmed.is_empty() || !trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
         return false;
     }
     let Ok(raw_pid) = trimmed.parse::<i32>() else {
@@ -233,7 +233,7 @@ pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
         .ok()?;
     let mapped: Vec<u8> = bytes
         .into_iter()
-        .map(|b| if b == 0 { b' ' } else { b })
+        .map(|byte| if byte == 0 { b' ' } else { byte })
         .collect();
     Some(String::from_utf8_lossy(&mapped).to_string())
 }
@@ -253,7 +253,7 @@ pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
     let Some(start_ticks) = after_comm
         .split_whitespace()
         .nth(19)
-        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|content| content.parse::<u64>().ok())
     else {
         return 0;
     };
@@ -265,8 +265,8 @@ pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
     let Some(now_secs) = up_s
         .split_whitespace()
         .next()
-        .and_then(|s| s.split('.').next())
-        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|raw| raw.split('.').next())
+        .and_then(|text| text.parse::<u64>().ok())
     else {
         return 0;
     };
@@ -280,7 +280,7 @@ pub fn getprop(name: &str) -> String {
         .arg(name)
         .output()
         .ok()
-        .map_or_default(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .map_or_default(|result| String::from_utf8_lossy(&result.stdout).trim().to_owned())
 }
 
 #[must_use]
@@ -315,8 +315,8 @@ pub fn shutdown_note(env: &Env, module: &str) {
     }
     fsx::mkdirs_logged(env, env.run_dir());
     fsx::touch_logged(env, &noted);
-    let m = if module.is_empty() { "daemon" } else { module };
-    log_info(env, m, "系统关机，服务随之停止");
+    let module_name = if module.is_empty() { "daemon" } else { module };
+    log_info(env, module_name, "系统关机，服务随之停止");
 }
 
 pub fn wakelock_on(env: &Env) {
@@ -373,8 +373,8 @@ pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
         }
         let mut parts = line.splitn(3, ':');
         let (_id, _ctrl, path) = (parts.next(), parts.next(), parts.next());
-        if let Some(p) = path {
-            return Some(p.to_owned());
+        if let Some(file_path) = path {
+            return Some(file_path.to_owned());
         }
     }
     None
@@ -382,14 +382,14 @@ pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
 
 #[must_use]
 pub fn cgroup_in_apps(env: &Env, pid_str: &str) -> bool {
-    let Some(p) = cgroup_path(env, pid_str) else {
+    let Some(cg) = cgroup_path(env, pid_str) else {
         return false;
     };
-    p.starts_with("/apps/")
-        || p.starts_with("apps/")
-        || p.contains("/apps/uid_")
-        || p.contains("suki")
-        || is_uid_pid_cgroup(&p)
+    cg.starts_with("/apps/")
+        || cg.starts_with("apps/")
+        || cg.contains("/apps/uid_")
+        || cg.contains("suki")
+        || is_uid_pid_cgroup(&cg)
 }
 
 fn is_uid_pid_cgroup(path: &str) -> bool {
@@ -453,7 +453,7 @@ fn escape_pid(env: &Env, trimmed: &str) {
 
 pub fn cgroup_escape_tree(env: &Env, self_pid: Option<&str>) {
     let own = std::process::id().to_string();
-    let target = self_pid.filter(|s| !s.is_empty()).unwrap_or(&own);
+    let target = self_pid.filter(|text| !text.is_empty()).unwrap_or(&own);
     escape_if_running(env, target);
     let run = env.run_dir();
     for name in [
@@ -464,8 +464,8 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: Option<&str>) {
         "daemon.pid",
         "notifier.pid",
     ] {
-        if let Ok(p) = fs::read_to_string(run.join(name)) {
-            let trimmed = p.trim();
+        if let Ok(pid_text) = fs::read_to_string(run.join(name)) {
+            let trimmed = pid_text.trim();
             if !trimmed.is_empty() {
                 escape_if_running(env, trimmed);
             }
