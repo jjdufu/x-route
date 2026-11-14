@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use xr::env::Env;
-use xr::uninstall::{uninstall_now, uninstall_worker};
+use xr::uninstall;
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -25,7 +25,7 @@ fn test_uninstall_now_requires_confirm() {
     let mut env = Env::from_process();
     env.moddir = base.join("modules/xrouter");
     env.xr_data = base.join("xr_data");
-    let (rc, out) = uninstall_now(&env, "");
+    let (rc, out) = uninstall::now(&env, "");
     assert_eq!(rc, 2);
     assert!(out.contains("\"ok\":false"));
     let _ = fs::remove_dir_all(&base);
@@ -61,7 +61,7 @@ fn test_uninstall_now_removes_moddir_without_remove_marker_and_runs_worker() {
     env.xr_data = xr_data.clone();
     env.tmpdir = Some(tmpdir.clone());
 
-    let (rc, out) = uninstall_now(&env, "confirm");
+    let (rc, out) = uninstall::now(&env, "confirm");
     assert_eq!(rc, 0, "uninstall_now failed: {out}");
     assert!(out.contains("\"ok\":true"));
 
@@ -105,7 +105,7 @@ fn test_uninstall_worker_cleans_dirs_without_staged_sh() {
     env.sysbin = base.join("nosysbin");
     env.proc_base = base.join("noproc");
 
-    let rc = uninstall_worker(
+    let rc = uninstall::worker(
         &env,
         &stage.to_string_lossy(),
         &moddir.to_string_lossy(),

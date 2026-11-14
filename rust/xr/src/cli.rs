@@ -32,7 +32,7 @@ use crate::sys::spawn;
 use crate::sys::spawn::exec_crosvm_trampoline;
 use crate::sys::{ce_ready, wait_boot_completed};
 use crate::traffic::{acct_hooks, acct_json, acct_reset, acct_setup, acct_snapshot, acct_teardown};
-use crate::uninstall::{uninstall_now, uninstall_standard, uninstall_worker};
+use crate::uninstall;
 use crate::vm::disk::{disk_expand, disk_reset};
 use crate::vm::{fuse_watch, run_net_hook, vm_running};
 
@@ -434,7 +434,7 @@ pub fn run(args: &[String]) -> i32 {
             emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
         }
         "uninstall-now" => {
-            let (rc, out) = uninstall_now(&env, rest.first().map_or("", String::as_str));
+            let (rc, out) = uninstall::now(&env, rest.first().map_or("", String::as_str));
             emit(&env, &out, rc)
         }
         "clash-bridge" => crate::clash::run_clash_bridge(&env),
@@ -512,14 +512,14 @@ pub fn run(args: &[String]) -> i32 {
                 0
             }
             Some("exec-crosvm") => exec_crosvm_trampoline(&env, rest.get(1..).unwrap_or(&[])),
-            Some("uninstall") => uninstall_standard(&env),
+            Some("uninstall") => uninstall::standard(&env),
             Some("uninstall-worker") => {
                 let (Some(stage), Some(moddir), Some(upd)) =
                     (rest.get(1), rest.get(2), rest.get(3))
                 else {
                     return 2;
                 };
-                uninstall_worker(&env, stage, moddir, upd)
+                uninstall::worker(&env, stage, moddir, upd)
             }
             _ => 2,
         },

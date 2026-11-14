@@ -138,7 +138,7 @@ fn cancel_notifications(env: &Env) {
 }
 
 #[must_use]
-pub fn uninstall_standard(env: &Env) -> i32 {
+pub fn standard(env: &Env) -> i32 {
     let run = env.run_dir();
     note_rc(env, "vm_stop", vm_stop(env));
     note_rc(env, "run_net_cli", run_net_cli(env, &["down".to_owned()]));
@@ -294,7 +294,7 @@ fn pick_stage_base(env: &Env) -> PathBuf {
 }
 
 #[must_use]
-pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
+pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
     if confirm_arg != "confirm" {
         return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_owned());
     }
@@ -384,7 +384,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
 }
 
 #[must_use]
-pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
+pub fn worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
     crate::sys::spawn::enter_detached_session(env);
     if let Err(err) = std::env::set_current_dir("/") {
         fsx::record_failure(env, "chdir", Path::new("/"), &err);
@@ -414,7 +414,7 @@ pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -
             .status();
         note_status(env, "uninstall.sh", status);
     } else {
-        note_rc(env, "uninstall_standard", uninstall_standard(env));
+        note_rc(env, "uninstall_standard", standard(env));
     }
 
     fsx::remove_tree_logged(env, moddir_s);
