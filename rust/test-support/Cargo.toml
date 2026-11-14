@@ -1,0 +1,15 @@
+[package]
+name = "xr-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "XRouter 测试辅助：用返回 Err 的检查替代 assert!"
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

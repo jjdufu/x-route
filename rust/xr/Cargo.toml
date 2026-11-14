@@ -29,6 +29,7 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 [dev-dependencies]
 proptest = "1.6"
 tempfile = "3.19"
+xr-test-support = { path = "../test-support" }
 
 [lints]
 workspace = true
