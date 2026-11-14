@@ -702,7 +702,7 @@ pub fn stop_exec(env: &Env, in_watch: bool) -> i32 {
     0
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct StatusJson {
     pub running: bool,
     pub pid: Option<u64>,

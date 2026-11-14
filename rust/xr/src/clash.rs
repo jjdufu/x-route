@@ -24,7 +24,7 @@ use crate::sys::{is_pid_running, send_signal_logged};
 use crate::vm;
 use crate::vm::reap_in_background;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Status {
     pub installed: bool,
     pub running: bool,

@@ -168,13 +168,13 @@ pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
     crate::sys::exec::note_spawn(env, "diag-snap", child);
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct TrafficCounters {
     pub up: u64,
     pub down: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TrafficSummary {
     pub wan: TrafficCounters,
     pub lan: TrafficCounters,
