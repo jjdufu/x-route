@@ -45,8 +45,7 @@ pub fn status_json(env: &Env) -> String {
             .env("XR_DATA", &env.xr_data)
             .output()
             .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
+            .map_or_default(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     } else {
         net_status_json(env)
     };

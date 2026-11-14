@@ -280,8 +280,7 @@ pub fn getprop(name: &str) -> String {
         .arg(name)
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default()
+        .map_or_default(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
 }
 
 #[must_use]

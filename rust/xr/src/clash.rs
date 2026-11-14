@@ -122,6 +122,14 @@ struct ClientHandle {
     ws_ids: HashSet<String>,
 }
 
+/// 按原 `ws_id` 查不到外部客户端 ws 归属的原因。
+enum WsMiss {
+    /// 登记表的锁已中毒：放弃本行且不回复（与原来 `Err(_) => None` 后直接返回相同）。
+    Unavailable,
+    /// 没有登记。
+    Unknown,
+}
+
 struct MuxState {
     hvc_writer: Mutex<Option<UnixStream>>,
     clients: Mutex<HashMap<u64, ClientHandle>>,
@@ -213,6 +221,48 @@ impl MuxState {
             if !self.write_hvc_line(&close_cmd) {
                 // 客机通道未连接：客机侧的 ws 随通道一起失效，这条关闭通知无处可发，只计数
                 note_failure(&FAILURES.log);
+            }
+        }
+    }
+
+    /// 按原 `ws_id` 查外部客户端打开的 ws 的归属（客户端号、mux 内 `ws_id`）；`close` 时同时移除登记。
+    ///
+    /// # Errors
+    ///
+    /// 登记表锁中毒返回 [`WsMiss::Unavailable`]，没有登记返回 [`WsMiss::Unknown`]。
+    fn lookup_ws_key(&self, orig_ws: &str, close: bool) -> Result<(u64, String), WsMiss> {
+        let Ok(mut by_key) = self.ws_by_key.lock() else {
+            return Err(WsMiss::Unavailable);
+        };
+        let found = if close {
+            by_key.remove(orig_ws)
+        } else {
+            by_key.get(orig_ws).cloned()
+        };
+        found.ok_or(WsMiss::Unknown)
+    }
+
+    /// 本连接没有映射时，按登记表找外部客户端打开的 ws。
+    /// 未登记时，带 id 的请求直接回复（`ws_close` 回 ok=true，其它回 ok=false）并返回 `None`；
+    /// 锁中毒时不回复、返回 `None`。
+    fn resolve_external_ws(
+        &self,
+        client_id: u64,
+        orig_id: Option<&Value>,
+        op: &str,
+        orig_ws: &str,
+    ) -> Option<(u64, String)> {
+        match self.lookup_ws_key(orig_ws, op == "ws_close") {
+            Ok(found) => Some(found),
+            Err(WsMiss::Unavailable) => None,
+            Err(WsMiss::Unknown) => {
+                if let Some(oid) = orig_id {
+                    self.send_to_client(
+                        client_id,
+                        json!({"id": oid, "ok": op == "ws_close"}).to_string(),
+                    );
+                }
+                None
             }
         }
     }
@@ -334,33 +384,16 @@ impl MuxState {
                 } else {
                     ws_map.get(&orig_ws).cloned()
                 };
-                let (owner_cid, mux_ws) = if let Some(m) = local_mapped {
-                    (client_id, m)
-                } else {
-                    let lookup = match self.ws_by_key.lock() {
-                        Ok(mut by_key) => Some(if op == "ws_close" {
-                            by_key.remove(&orig_ws)
-                        } else {
-                            by_key.get(&orig_ws).cloned()
-                        }),
-                        Err(_) => None,
-                    };
-                    let Some(found) = lookup else {
-                        return;
-                    };
-                    if let Some((ocid, m)) = found {
-                        external_ws_owner = Some((ocid, orig_ws.clone(), m.clone()));
-                        (ocid, m)
-                    } else {
-                        if let Some(oid) = orig_id {
-                            self.send_to_client(
-                                client_id,
-                                json!({"id": oid, "ok": op == "ws_close"}).to_string(),
-                            );
-                        }
-                        return;
-                    }
+                let is_local = local_mapped.is_some();
+                let owner = local_mapped.map(|m| (client_id, m)).or_else(|| {
+                    self.resolve_external_ws(client_id, orig_id.as_ref(), &op, &orig_ws)
+                });
+                let Some((owner_cid, mux_ws)) = owner else {
+                    return;
                 };
+                if !is_local {
+                    external_ws_owner = Some((owner_cid, orig_ws.clone(), mux_ws.clone()));
+                }
                 if op == "ws_close" {
                     if let Ok(mut by_key) = self.ws_by_key.lock() {
                         let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);

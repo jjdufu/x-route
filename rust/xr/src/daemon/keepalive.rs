@@ -307,11 +307,12 @@ pub fn notify_update(env: &Env) {
         return;
     }
     fsx::remove_logged(env, run.join("notify.idle"));
-    let mut force = false;
-    if run.join("notify.force").is_file() {
+    let force = if run.join("notify.force").is_file() {
         fsx::remove_logged(env, run.join("notify.force"));
-        force = true;
-    }
+        true
+    } else {
+        false
+    };
     if run.join("notify.on").is_file() && !notifier_running(env) {
         fsx::remove_logged(env, run.join("notify.on"));
     }

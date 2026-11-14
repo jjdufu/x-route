@@ -200,10 +200,8 @@ pub fn cksum_crc_like(bytes: &[u8]) -> String {
 
 #[must_use]
 pub fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
-    match fs::read(guest_routes_file(ctx)) {
-        Ok(bytes) => cksum_crc_like(&bytes),
-        Err(_) => "none".to_owned(),
-    }
+    fs::read(guest_routes_file(ctx))
+        .map_or_else(|_| "none".to_owned(), |bytes| cksum_crc_like(&bytes))
 }
 
 pub fn routes_sync(ctx: &NetCtx<'_>) {

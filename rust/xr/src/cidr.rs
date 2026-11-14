@@ -2,6 +2,9 @@ use std::process::Command;
 
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
 
+#[cfg(test)]
+mod tests;
+
 #[must_use]
 pub fn is_uint(s: &str) -> bool {
     !s.is_empty() && s.len() <= 6 && s.bytes().all(|b| b.is_ascii_digit())
@@ -184,7 +187,7 @@ pub fn ip6_format(hex32: &str) -> Option<String> {
     }
     let mut groups = Vec::with_capacity(8);
     let bytes = hex32.as_bytes();
-    for chunk in bytes.chunks_exact(4) {
+    for chunk in bytes.as_chunks::<4>().0 {
         let g = std::str::from_utf8(chunk).ok()?;
         groups.push(g);
     }

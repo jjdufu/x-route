@@ -65,13 +65,11 @@ fn format_cmd_for_log(env: &Env, prog: &Path, args: &[&str]) -> String {
 }
 
 fn exit_code_from_output(out: &Output) -> i32 {
-    if let Some(code) = out.status.code() {
-        code
-    } else if let Some(sig) = out.status.signal() {
-        128_i32.saturating_add(sig)
-    } else {
-        1
-    }
+    out.status.code().unwrap_or_else(|| {
+        out.status
+            .signal()
+            .map_or(1_i32, |sig| 128_i32.saturating_add(sig))
+    })
 }
 
 #[must_use]

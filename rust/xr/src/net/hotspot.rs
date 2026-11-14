@@ -23,7 +23,7 @@ pub fn vm_alive(env: &Env) -> bool {
     if !is_pid_running(env, trimmed) {
         return false;
     }
-    proc_cmdline(env, trimmed).map_or(true, |c| c.contains("crosvm"))
+    proc_cmdline(env, trimmed).is_none_or(|c| c.contains("crosvm"))
 }
 
 #[must_use]

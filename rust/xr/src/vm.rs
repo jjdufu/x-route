@@ -32,7 +32,7 @@ pub fn vm_running(env: &Env) -> bool {
     if !is_pid_running(env, p) {
         return false;
     }
-    proc_cmdline(env, p).map_or(true, |c| c.contains("crosvm"))
+    proc_cmdline(env, p).is_none_or(|c| c.contains("crosvm"))
 }
 
 pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
@@ -314,6 +314,7 @@ pub fn vpn_boot_prepare(env: &Env) {
     }
 }
 
+#[must_use]
 pub fn vm_start_exec(env: &Env) -> i32 {
     let cfg = Config::load(env);
     if vm_running(env) {
@@ -547,8 +548,16 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     {
         fsx::record_failure(env, "write", &vmm_log, &err);
     }
-    let child = match out_f {
-        Ok(f) => {
+    let child = out_f.map_or_else(
+        |_| {
+            Command::new(env.self_exe())
+                .args(&tramp_args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        },
+        |f| {
             let out_std = Stdio::from(f);
             let err_std = OpenOptions::new()
                 .create(true)
@@ -561,14 +570,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
                 .stdout(out_std)
                 .stderr(err_std)
                 .spawn()
-        }
-        Err(_) => Command::new(env.self_exe())
-            .args(&tramp_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn(),
-    };
+        },
+    );
 
     let Ok(mut ch) = child else {
         vm_fail(env, "无法拉起 crosvm", "无法启动");

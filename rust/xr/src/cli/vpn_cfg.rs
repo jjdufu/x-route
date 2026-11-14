@@ -218,14 +218,13 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
         }
     }
     if out.is_empty() && env.xr_data.join("config/openvpn.ovpn").is_file() {
-        let mut st = if summary_st == "up" {
+        let st = if !alive {
+            "down"
+        } else if summary_st == "up" {
             "connecting"
         } else {
             summary_st
         };
-        if !alive {
-            st = "down";
-        }
         let nm = if vn.is_empty() { "OpenVPN" } else { &vn };
         out.push(json!({
             "dev": "",

@@ -352,14 +352,12 @@ pub fn daemon_loop(env: &Env) -> i32 {
                         .ok()
                         .and_then(|s| s.trim().parse::<u64>().ok())
                         .or_else(|| {
-                            fs::read_to_string(env.proc_base.join(&cp).join("stat"))
-                                .ok()
-                                .and_then(|s| {
-                                    s.split_whitespace()
-                                        .nth(21)
-                                        .and_then(|x| x.parse::<u64>().ok())
-                                        .map(|ticks| ticks / 100)
-                                })
+                            let s =
+                                fs::read_to_string(env.proc_base.join(&cp).join("stat")).ok()?;
+                            s.split_whitespace()
+                                .nth(21)
+                                .and_then(|x| x.parse::<u64>().ok())
+                                .map(|ticks| ticks / 100)
                         });
                     if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env))
                         && now.saturating_sub(r0) >= cfg.stable_sec()
@@ -389,7 +387,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
         rotate_all_logs(env);
 
         tick = tick.saturating_add(1);
-        if tick % 12 == 0 {
+        if tick.is_multiple_of(12) {
             let cfg = Config::load(env);
             let ctx = NetCtx::new(env, &cfg);
             acct_snapshot(&ctx);
