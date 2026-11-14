@@ -24,9 +24,9 @@ impl ExecResult {
 
 #[must_use]
 pub fn is_mutating_args(args: &[&str]) -> bool {
-    args.iter().any(|a| {
+    args.iter().any(|arg| {
         matches!(
-            *a,
+            *arg,
             "add"
                 | "del"
                 | "delete"
@@ -84,8 +84,8 @@ pub fn xr_exec(
     let boot_log = env.boot_log();
     if boot_log.is_file() && mutating {
         let cmd_str = format_cmd_for_log(env, prog, args);
-        if let Ok(mut f) = OpenOptions::new().append(true).open(&boot_log)
-            && writeln!(f, "  $ {cmd_str}").is_err()
+        if let Ok(mut file) = OpenOptions::new().append(true).open(&boot_log)
+            && writeln!(file, "  $ {cmd_str}").is_err()
         {
             note_failure(&FAILURES.log);
         }
@@ -116,7 +116,7 @@ pub fn xr_exec(
         let de: String = stderr
             .chars()
             .take(600)
-            .map(|c| if c == '\n' { ' ' } else { c })
+            .map(|ch| if ch == '\n' { ' ' } else { ch })
             .collect();
         let de_trimmed = de.trim();
         let sigpipe_readonly = code == 141_i32 && de_trimmed.is_empty() && !mutating;
