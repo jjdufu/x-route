@@ -1,3 +1,5 @@
+//! `xr boot-tail <MOFF> <COFF>`：增量读取开机日志与串口日志，供界面显示启动进度。
+
 use std::fs::{self, File};
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
@@ -5,6 +7,9 @@ use std::path::Path;
 use crate::env::Env;
 use crate::out::emit_raw;
 
+/// 从 `offset_str` 处读取文件的新增内容（最多最后 6 KiB，滤掉控制字符），返回（文件当前大小, 内容）。
+///
+/// 偏移为 `-1` 时只返回大小；偏移超过文件大小（文件被截断）时从头读。
 fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
     let sz = fs::metadata(path).map_or(0, |meta| meta.len());
     if offset_str == "-1" {
@@ -39,6 +44,7 @@ fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
     (sz, String::from_utf8_lossy(&cleaned).into_owned())
 }
 
+/// 输出一帧启动进度：后台结果码、状态、开机日志与串口日志各自的新大小和新增内容，以 `\x1f` 分隔；返回 0。
 #[must_use]
 pub(crate) fn run(env: &Env, moff: &str, coff: &str) -> i32 {
     let run = env.run_dir();

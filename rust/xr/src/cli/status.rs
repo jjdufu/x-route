@@ -1,3 +1,5 @@
+//! `xr status-json` 与 `xr status-line`：汇总虚拟机、网络、`OpenClash`、`VPN`、共享与配置的状态。
+
 use std::fs;
 use std::process::Command;
 
@@ -10,11 +12,13 @@ use crate::net;
 use crate::sys::ce_ready;
 use crate::vm;
 
+/// 修改 `key` 需要重启服务（在 [`RESTART_KEYS`] 中）且虚拟机正在运行时返回 true。
 #[must_use]
 pub(crate) fn needs_restart(env: &Env, key: &str) -> bool {
     RESTART_KEYS.contains(&key) && vm::running(env)
 }
 
+/// `xr status-json` 的 JSON 文本：虚拟机、手机侧网络（`scripts/net.sh status` 或内置实现）、客机 `IPv6`、`OpenClash`、`VPN`、共享目录与当前配置。
 #[must_use]
 pub(crate) fn json(env: &Env) -> String {
     let cfg = Config::load(env);
@@ -144,6 +148,7 @@ pub(crate) fn json(env: &Env) -> String {
     .to_string()
 }
 
+/// `xr status-line` 的一行文字：运行状态、管理地址、管理访问方式、已生效 `VPN` 网段数与熔断提示。
 #[must_use]
 pub(crate) fn line(env: &Env) -> String {
     let cfg = Config::load(env);

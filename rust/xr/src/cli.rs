@@ -1,5 +1,10 @@
+//! 命令行入口：解析 `xr` 子命令并分发到各模块，输出给 `WebUI` 和脚本使用的文本或 JSON。
+
+/// `xr boot-tail <MOFF> <COFF>`：增量读取开机日志与串口日志，供界面显示启动进度。
 pub(crate) mod boot_tail;
+/// `xr status-json` 与 `xr status-line`：汇总服务状态。
 pub(crate) mod status;
+/// `VPN` 配置管理：导入、启用停用、删除，以及流量分流与目录浏览。
 pub(crate) mod vpn_cfg;
 
 use std::fs;
@@ -104,6 +109,9 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `xr ipv6 on|off`：请客机开启或关闭 `IPv6` 并等待生效，返回（退出码, JSON 结果）。
+///
+/// 参数非法返回 2；服务未就绪或客机未响应返回 1。
 fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     let want = match arg {
         "on" => "1",
@@ -143,6 +151,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     }
 }
 
+/// `xr start-bg`/`xr stop-bg`：在后台执行启动或停止并立即输出成功应答；结果码稍后写入 `run/bg.rc`。
 fn bg_run(env: &Env, action: &str) -> i32 {
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("bg.rc"));
@@ -160,6 +169,7 @@ fn bg_run(env: &Env, action: &str) -> i32 {
     emit(env, OK_JSON, 0)
 }
 
+/// `xr internal bg-exec`：执行启动或停止，把退出码原子写入 `run/bg.rc` 并返回它。
 fn bg_exec(env: &Env, action: &str) -> i32 {
     let rc = match action {
         "start" => vm_start(env),
@@ -175,6 +185,9 @@ fn bg_exec(env: &Env, action: &str) -> i32 {
     rc
 }
 
+/// `xr internal boot-service`：开机后拉起守护进程与看门狗，按自启设置、熔断状态和 `last_good` 决定是否自动启动虚拟机。
+///
+/// 上次启动后整机复位（保险丝仍在）时熔断并关闭自启。
 fn boot_service(env: &Env) -> i32 {
     note_ok(env, "boot_clean_run", boot_clean_run(env));
     if let Err(err) = env.ensure_dirs() {
@@ -222,6 +235,7 @@ fn boot_service(env: &Env) -> i32 {
     vm_start(env)
 }
 
+/// `xr internal action-toggle`：模块管理器的操作按钮，运行中则停止、否则启动，然后输出一行状态。
 fn action_toggle(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
@@ -234,6 +248,7 @@ fn action_toggle(env: &Env) -> i32 {
     emit(env, &status::line(env), 0)
 }
 
+/// `xr traffic <子命令>`：流量统计的输出（`json`）、清零、规则安装、钩子、快照与撤销；未知子命令返回 2。
 fn run_traffic_cmd(env: &Env, sub: &str) -> i32 {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
@@ -268,6 +283,7 @@ const OK_JSON: &str = "{\"ok\":true}";
 /// `xr set` 参数个数不对时的应答。
 const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
 
+/// `xr` 的入口：按第一个参数分发子命令，返回进程退出码。
 pub fn run(args: &[String]) -> i32 {
     let env = Env::from_process();
     let Some(cmd) = args.first().map(String::as_str) else {

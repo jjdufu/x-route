@@ -1,3 +1,5 @@
+//! `VPN` 配置管理：多配置的导入、启用停用与删除，隧道和配置列表，旧版单文件配置的迁移与镜像，以及分流流量查询和目录浏览。
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -15,6 +17,7 @@ use crate::sys::fsx;
 use crate::vm;
 use crate::vm::vpn_sync_host;
 
+/// 由显示名生成配置编号：只保留字母、数字和下划线（连续的其它字符合并为一个下划线），最长 32 字节；结果为空时用名字的哈希生成 `p_<数字>`。
 #[must_use]
 pub(crate) fn vpn_slug(name: &str) -> String {
     let mut out = String::new();
@@ -45,6 +48,7 @@ pub(crate) fn vpn_slug(name: &str) -> String {
     }
 }
 
+/// 没有多配置目录但有旧版单文件 `config/openvpn.ovpn` 时，把它迁移为多配置目录里的一份配置（保留名字与启用状态）。
 pub(crate) fn vpn_migrate_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     let legacy = env.xr_data.join("config/openvpn.ovpn");
@@ -77,6 +81,7 @@ pub(crate) fn vpn_migrate_legacy(env: &Env) {
     }
 }
 
+/// 把多配置目录中已启用（没有则第一个）的配置镜像回旧版单文件 `config/openvpn.*`，没有配置时删除旧版文件。
 pub(crate) fn vpn_mirror_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     if !vpn_dir.is_dir() {
@@ -136,6 +141,7 @@ pub(crate) fn vpn_mirror_legacy(env: &Env) {
     }
 }
 
+/// 客机推送了但手机侧未生效的 `VPN` 路由（规范化后不在 `routes.active` 中，忽略默认路由）；虚拟机不在时为空。
 pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
     if !vm::running(env) {
         return Vec::new();
@@ -166,6 +172,7 @@ pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
     out
 }
 
+/// `VPN` 隧道列表（JSON）：取自客机的 `openvpn.tunnels`；没有已连接隧道但有配置时给出一条按 `summary_st` 推断状态的占位项。
 #[must_use]
 pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let vn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
@@ -242,6 +249,7 @@ pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     out
 }
 
+/// `VPN` 配置列表（JSON）：每份配置的编号、名字、启用状态、连接状态与对应隧道的地址、`MTU` 和路由。
 #[must_use]
 pub(crate) fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     vpn_migrate_legacy(env);
@@ -339,6 +347,7 @@ pub(crate) fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     out
 }
 
+/// 生成下发给客机的 `openvpn.cmd` 一行（`动作 时间戳`），保证与当前内容不同，客机才会再次执行。
 fn vpn_next_cmd(env: &Env, act: &str) -> String {
     let mut ts = unix_now().to_string();
     let cur = fs::read_to_string(env.run_dir().join("guest/host/openvpn.cmd")).unwrap_or_default();
@@ -349,6 +358,7 @@ fn vpn_next_cmd(env: &Env, act: &str) -> String {
     format!("{act} {ts}\n")
 }
 
+/// 配置编号非空且只含字母、数字和下划线时返回 true。
 fn valid_profile_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -356,6 +366,9 @@ fn valid_profile_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
+/// `xr vpn-import <路径> [0|1]`：从内部存储导入一个 `OpenVPN` 文本配置（同名覆盖），按参数或原状态决定是否启用，运行中时同步给客机。
+///
+/// 返回（退出码, JSON 结果）；路径不在内部存储下、文件不存在、大小不在 8 字节到 256 KiB 之间或不是文本时返回 1。
 #[must_use]
 pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
     let src_s = env.canon_share_path(path_arg);
@@ -469,6 +482,9 @@ pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, 
     )
 }
 
+/// `xr vpn-enable|vpn-disable [ID]`：启用或停用一份配置，同步给客机并等待其应答；不指定编号时停用全部配置，或在没有已启用配置时启用第一份。
+///
+/// 客机不支持多隧道时启用一份会停用其它配置；返回（退出码, JSON 结果），参数非法返回 2，配置无效、不存在、服务未运行或客机未响应返回 1。
 #[must_use]
 pub(crate) fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     let want = match act {
@@ -637,6 +653,7 @@ pub(crate) fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned())
 }
 
+/// `xr vpn-delete <ID>`：删除一份配置，原来启用时同步给客机；返回（退出码, JSON 结果），配置无效或不存在时返回 1。
 #[must_use]
 pub(crate) fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     vpn_migrate_legacy(env);
@@ -669,6 +686,9 @@ pub(crate) fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     (0, "{\"ok\":true}".to_owned())
 }
 
+/// `xr traffic-split`：请客机统计一次分流流量，最多等 `wait_secs` 秒，返回手机与热点两部分的出网、局域网与合计流量。
+///
+/// 服务未运行或客机未响应时返回 1。
 #[must_use]
 pub(crate) fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     if !vm::running(env) {
@@ -718,6 +738,9 @@ pub(crate) fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
 }
 
+/// `xr ls <路径> [dir|ovpn]`：列出内部存储下某个目录的子目录（`d/名字`）与文件（`f/名字`，`ovpn` 模式只列 `.ovpn`/`.conf`），按名字排序。
+///
+/// 路径不在内部存储下或不是目录时返回 1 和空列表。
 #[must_use]
 pub(crate) fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
     let raw = if path_arg.is_empty() {
