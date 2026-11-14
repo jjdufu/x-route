@@ -112,7 +112,7 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
 - Rust 门禁入口：`bash scripts/gate.sh`（工具链核对、`lint-guard.py`、fmt、clippy、文档、测试），另加交叉目标
   `cargo clippy --workspace --all-targets --all-features --locked --target aarch64-unknown-linux-musl -- -D warnings`。
   标准是《门禁-Rust最严Lint.md》（门禁全绿后放入 `docs/`）；本项目额外开启 `clippy::cognitive_complexity`（阈值 15）。
-- 不得用任何方式压制或降级告警（`allow`/`expect`/`cfg_attr`、`--cap-lints`、`RUSTFLAGS` 等）。
+- 不得用任何方式压制或降级告警（`allow`/`expect`/`cfg_attr`、降级 lint 级别的编译器参数、`RUSTFLAGS` 等）。
 - 产物路径不变：`rust/xr/target/aarch64-unknown-linux-musl/release/xr`（根目录 `.cargo/config.toml` 的 `target-dir` 指回 `rust/xr/target`）。
 
 ## 附：本机已跑过的检查（发版前）
