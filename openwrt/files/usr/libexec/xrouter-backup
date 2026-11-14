@@ -1,0 +1,31 @@
+#!/bin/sh
+# XRouter: OpenWrt 配置备份 / 恢复（sysupgrade 原生格式），由 xrouter-vpn 按 host/backup.cmd 调用
+#   xrouter-backup export TS   生成 guest/backup.tar.gz，回执 guest/backup.ack
+#   xrouter-backup import TS   校验并还原 host/backup.in.tar.gz（不重启），回执 guest/backup.ack
+# 回执：第一行 ts=TS；第二行 ok 或 err <原因>；导出成功时另有 fw=<版本> <修订> 与 size=<字节>。先写完归档，最后写回执。
+# 路径可由环境覆盖（仅测试用）
+CTL="${XRG_CTL:-/var/run/xrouter}"; TMP="${XRG_TMP:-/tmp}"; REL="${XRG_RELEASE:-/etc/openwrt_release}"
+ack() { { echo "ts=$1"; shift; printf '%s\n' "$@"; } > "${CTL}/guest/backup.ack.tmp" && mv -f "${CTL}/guest/backup.ack.tmp" "${CTL}/guest/backup.ack"; }
+fw() {
+  # shellcheck source=/dev/null
+  . "$REL" 2>/dev/null
+  echo "fw=${DISTRIB_RELEASE:-?} ${DISTRIB_REVISION:-?}"
+}
+case "$1" in
+  export)
+    f="$TMP/xrouter-backup.tar.gz"; rm -f "$f"
+    if ! sysupgrade -b "$f" >/dev/null 2>&1 || [ ! -s "$f" ]; then ack "$2" "err sysupgrade -b 失败"; rm -f "$f"; exit 1; fi
+    if ! { cp -f "$f" "${CTL}/guest/backup.tar.gz.tmp" && mv -f "${CTL}/guest/backup.tar.gz.tmp" "${CTL}/guest/backup.tar.gz"; }; then
+      ack "$2" "err 写入控制目录失败"; rm -f "$f"; exit 1
+    fi
+    ack "$2" ok "$(fw)" "size=$(($(wc -c < "$f") + 0))"; rm -f "$f" ;;
+  import)
+    src="${CTL}/host/backup.in.tar.gz"; f="$TMP/xrouter-restore.tar.gz"
+    [ -s "$src" ] || { ack "$2" "err 未找到归档"; exit 1; }
+    cp -f "$src" "$f"
+    tar -tzf "$f" >/dev/null 2>&1 || { ack "$2" "err 归档损坏"; rm -f "$f"; exit 1; }
+    tar -tzf "$f" 2>/dev/null | grep -q '^etc/config/' || { ack "$2" "err 不是 OpenWrt 配置备份"; rm -f "$f"; exit 1; }
+    sysupgrade -r "$f" >/dev/null 2>&1 || { ack "$2" "err sysupgrade -r 失败"; rm -f "$f"; exit 1; }
+    sync; rm -f "$f"; ack "$2" ok ;;
+  *) echo "usage: xrouter-backup export|import TS"; exit 2 ;;
+esac

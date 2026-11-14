@@ -266,4 +266,46 @@ chk '[ "$(head -n 1 "$T/stw/ctl/guest/stats")" = ts=111 ] && grep -qx cpu_pct=5 
 chk '[ -n "$(find "$T/stw/ctl/guest/stats" -mtime +1000)" ]'   # 同一请求第二轮不重写
 chk 'grep -q "echo 1 > \"\${CTL}/guest/stats.cap\"" "$VPN_INIT"'
 
+# 11. xrouter-backup：导出 / 导入（sysupgrade 原生格式）、校验失败不还原、watch 同一请求只执行一次（需求 9a）
+BK="$T/bk"; mkdir -p "$BK/bin" "$BK/ctl/host" "$BK/ctl/guest" "$BK/tmp" "$BK/src/etc/config" "$BK/bad/usr"
+echo "config interface 'lan'" > "$BK/src/etc/config/network"; echo x > "$BK/bad/usr/x"
+printf "DISTRIB_RELEASE='24.10.2'\nDISTRIB_REVISION='r28739'\n" > "$BK/release"
+cat > "$BK/bin/sysupgrade" <<EOS
+#!/bin/sh
+echo "sysupgrade \$*" >> "$BK/sysupgrade.calls"
+case "\$1" in
+  -b) tar -czf "\$2" -C "$BK/src" etc ;;
+  -r) [ -s "\$2" ] ;;
+  *) exit 1 ;;
+esac
+EOS
+chmod +x "$BK/bin/sysupgrade"
+BKR() { XRG_CTL="$BK/ctl" XRG_TMP="$BK/tmp" XRG_RELEASE="$BK/release" PATH="$BK/bin:$PATH" sh "$LX/xrouter-backup" "$@"; }
+BKR export 111
+chk '[ "$(sed -n 1,3p "$BK/ctl/guest/backup.ack")" = "$(printf "ts=111\nok\nfw=24.10.2 r28739")" ] && [ "$(sed -n 4p "$BK/ctl/guest/backup.ack")" = "size=$(($(wc -c < "$BK/ctl/guest/backup.tar.gz") + 0))" ]'
+chk 'tar -tzf "$BK/ctl/guest/backup.tar.gz" | grep -qx "etc/config/network" && [ ! -e "$BK/ctl/guest/backup.tar.gz.tmp" ] && [ -z "$(ls "$BK/tmp")" ]'
+cp "$BK/ctl/guest/backup.tar.gz" "$BK/ctl/host/backup.in.tar.gz"
+BKR import 222
+chk '[ "$(cat "$BK/ctl/guest/backup.ack")" = "$(printf "ts=222\nok")" ] && grep -q "^sysupgrade -r " "$BK/sysupgrade.calls" && [ -z "$(ls "$BK/tmp")" ]'
+head -c 300 /dev/urandom > "$BK/ctl/host/backup.in.tar.gz"; : > "$BK/sysupgrade.calls"
+BKR import 333
+chk '[ "$(cat "$BK/ctl/guest/backup.ack")" = "$(printf "ts=333\nerr 归档损坏")" ] && ! grep -q -- "-r" "$BK/sysupgrade.calls"'
+tar -czf "$BK/ctl/host/backup.in.tar.gz" -C "$BK/bad" usr
+BKR import 444
+chk '[ "$(cat "$BK/ctl/guest/backup.ack")" = "$(printf "ts=444\nerr 不是 OpenWrt 配置备份")" ] && ! grep -q -- "-r" "$BK/sysupgrade.calls"'
+rm -f "$BK/ctl/host/backup.in.tar.gz"; BKR import 555
+chk '[ "$(cat "$BK/ctl/guest/backup.ack")" = "$(printf "ts=555\nerr 未找到归档")" ]'
+# watch 单步：同一个 backup.cmd 连续两轮只执行一次；无请求不写
+mkdir -p "$BK/w/ctl/host" "$BK/w/ctl/guest"
+printf '#!/bin/sh\necho "$*" >> "%s/w/run.calls"\n' "$BK" > "$BK/w/xrouter-backup"; chmod +x "$BK/w/xrouter-backup"
+sed -n '/# backup-cmd-begin/,/# backup-cmd-end/p' "$VPN_INIT" | sed -e "s#/usr/libexec/xrouter-backup#$BK/w/xrouter-backup#g" > "$BK/w/step.sh"
+chk '[ "$(grep -c . "$BK/w/step.sh")" -ge 6 ]'
+printf 'lastbackup=""\n. "%s/w/step.sh"\n. "%s/w/step.sh"\n' "$BK" "$BK" > "$BK/w/round.sh"
+CTL="$BK/w/ctl" sh "$BK/w/round.sh"
+chk '[ ! -e "$BK/w/run.calls" ] && [ -z "$(ls "$BK/w/ctl/guest")" ]'
+echo "export 777" > "$BK/w/ctl/host/backup.cmd"
+CTL="$BK/w/ctl" sh "$BK/w/round.sh"
+chk '[ "$(cat "$BK/w/run.calls")" = "export 777" ]'
+chk 'grep -q "echo 1 > \"\${CTL}/guest/backup.cap\"" "$VPN_INIT"'
+
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi
