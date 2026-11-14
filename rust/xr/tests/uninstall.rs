@@ -62,7 +62,7 @@ fn test_uninstall_now_removes_moddir_without_remove_marker_and_runs_worker() {
     env.tmpdir = Some(tmpdir.clone());
 
     let (rc, out) = uninstall::now(&env, "confirm");
-    assert_eq!(rc, 0, "uninstall_now failed: {out}");
+    assert_eq!(rc, 0, "uninstall::now failed: {out}");
     assert!(out.contains("\"ok\":true"));
 
     // Synchronous deletion: moddir & modules_update/id must be gone, with NO `remove` marker left behind.

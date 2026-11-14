@@ -68,7 +68,7 @@ pub(crate) fn snapshot_env(dir: &Path) -> Result<Env, Failure> {
     Ok(env)
 }
 
-/// `diag_phone` 的输出（去掉时间与宿主机取值后）与 fixture 逐行一致。
+/// `diag::phone` 的输出（去掉时间与宿主机取值后）与 fixture 逐行一致。
 ///
 /// # Errors
 ///
