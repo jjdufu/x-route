@@ -34,23 +34,23 @@ pub fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
     } else {
         scrape_ctl_routes(ctx)
     };
-    raw.split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|s| !s.is_empty())
+    raw.split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|text| !text.is_empty())
         .map(str::to_owned)
         .collect()
 }
 
 #[must_use]
-pub fn is_default_route(r: &str) -> bool {
+pub fn is_default_route(route: &str) -> bool {
     matches!(
-        r,
+        route,
         "default" | "0.0.0.0/0" | "0.0.0.0/1" | "128.0.0.0/1" | "::/0" | "::/1" | "8000::/1"
     )
 }
 
 #[must_use]
-pub fn is_ip6_cidr(r: &str) -> bool {
-    r.contains(':')
+pub fn is_ip6_cidr(route: &str) -> bool {
+    route.contains(':')
 }
 
 #[must_use]
@@ -74,7 +74,7 @@ pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
 #[must_use]
 pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
-    let up = up.trim();
+    let up_trimmed = up.trim();
     let mut busy = vec![
         format!("{}.0/24", ctx.cfg.net_prefix()),
         "127.0.0.0/8".to_owned(),
@@ -87,8 +87,8 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
         }
     }
     let mut ifaces = Vec::new();
-    if !up.is_empty() {
-        ifaces.push(up.to_owned());
+    if !up_trimmed.is_empty() {
+        ifaces.push(up_trimmed.to_owned());
     }
     ifaces.extend(tether_ifaces(ctx));
     for iface in ifaces {
@@ -123,7 +123,10 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
             log_err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
             continue;
         }
-        if let Some(conflict) = busy.iter().find(|b| !b.is_empty() && cidr_overlap(&nc, b)) {
+        if let Some(conflict) = busy
+            .iter()
+            .find(|used| !used.is_empty() && cidr_overlap(&nc, used))
+        {
             log_err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
             continue;
         }
@@ -192,8 +195,8 @@ pub fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
 pub fn cksum_crc_like(bytes: &[u8]) -> String {
     // Simple deterministic fingerprint matching cksum presence/absence semantics for net_watch
     let mut crc: u32 = 0;
-    for &b in bytes {
-        crc = crc.wrapping_mul(31).wrapping_add(u32::from(b));
+    for &byte in bytes {
+        crc = crc.wrapping_mul(31).wrapping_add(u32::from(byte));
     }
     format!("{crc} {}", bytes.len())
 }
@@ -211,7 +214,7 @@ pub fn routes_sync(ctx: &NetCtx<'_>) {
         .unwrap_or_default()
         .lines()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|text| !text.is_empty())
         .map(str::to_owned)
         .collect();
 
@@ -227,9 +230,9 @@ pub fn routes_sync(ctx: &NetCtx<'_>) {
             ),
         );
     }
-    for h in &have {
-        if !want.contains(h) {
-            route_del(ctx, h);
+    for route in &have {
+        if !want.contains(route) {
+            route_del(ctx, route);
         }
     }
     for w in &want {
@@ -254,11 +257,15 @@ pub fn routes_reassert(ctx: &NetCtx<'_>) {
     let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) else {
         return;
     };
-    for c in active.lines().map(str::trim).filter(|s| !s.is_empty()) {
-        let out = ipx(ctx, c, &["route", "show", "table", "97"]);
-        let needle = format!("{c} via");
-        if !out.stdout.lines().any(|l| l.starts_with(&needle)) {
-            route_add(ctx, c);
+    for route_cidr in active
+        .lines()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        let out = ipx(ctx, route_cidr, &["route", "show", "table", "97"]);
+        let needle = format!("{route_cidr} via");
+        if !out.stdout.lines().any(|line| line.starts_with(&needle)) {
+            route_add(ctx, route_cidr);
         }
     }
 }
@@ -266,8 +273,12 @@ pub fn routes_reassert(ctx: &NetCtx<'_>) {
 pub fn routes_clear(ctx: &NetCtx<'_>) {
     let active_path = ctx.env.run_dir().join("routes.active");
     if let Ok(active) = fs::read_to_string(&active_path) {
-        for c in active.lines().map(str::trim).filter(|s| !s.is_empty()) {
-            route_del(ctx, c);
+        for route in active
+            .lines()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            route_del(ctx, route);
         }
     }
     fsx::remove_logged(ctx.env, &active_path);
