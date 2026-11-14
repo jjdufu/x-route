@@ -157,7 +157,7 @@ pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
-    crate::sys::exec::note_spawn(env, cfg, "diag-snap", child);
+    crate::sys::exec::note_spawn(env, "diag-snap", child);
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

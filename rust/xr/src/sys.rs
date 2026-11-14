@@ -156,6 +156,20 @@ pub fn send_signal(pid_str: &str, sig: Signal) -> bool {
     kill_process(pid, sig).is_ok()
 }
 
+/// 发送信号；失败（进程已退出或无权限）时（调试开关打开）写调试日志，调用方照常继续。
+pub(crate) fn send_signal_logged(env: &Env, pid_str: &str, sig: Signal) {
+    if !send_signal(pid_str, sig) {
+        crate::log::dlog_env(
+            env,
+            "proc",
+            &format!(
+                "向 {} 发送 {sig:?} 未成功（进程可能已退出）",
+                pid_str.trim()
+            ),
+        );
+    }
+}
+
 pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() {

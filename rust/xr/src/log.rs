@@ -50,6 +50,20 @@ pub(crate) fn record_setup_failure(env: &Env, what: &str, err: &dyn std::fmt::Di
     dlog_env(env, "proc", &format!("{what} 失败：{err}"));
 }
 
+/// 读取一个返回码：非 0 时（调试开关打开）写一行调试日志，调用方照常继续。
+pub(crate) fn note_rc(env: &Env, what: &str, rc: i32) {
+    if rc != 0_i32 {
+        dlog_env(env, "rc", &format!("{what} 返回 {rc}"));
+    }
+}
+
+/// 读取一个成败标志：失败时（调试开关打开）写一行调试日志，调用方照常继续。
+pub(crate) fn note_ok(env: &Env, what: &str, ok: bool) {
+    if !ok {
+        dlog_env(env, "rc", &format!("{what} 未成功"));
+    }
+}
+
 /// 诊断包 `summary.txt` 的失败计数行：三个计数全为 0 时返回空串，否则返回带换行的一行。
 pub(crate) fn failures_summary_line() -> String {
     format_failures_line(

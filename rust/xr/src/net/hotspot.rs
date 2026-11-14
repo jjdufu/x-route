@@ -473,7 +473,7 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        note_spawn(ctx.env, ctx.cfg, "arping", child);
+        note_spawn(ctx.env, "arping", child);
     }
     fsx::remove_logged(ctx.env, run.join("net.hs_if"));
     fsx::remove_logged(ctx.env, run.join("net.hs_cidr"));

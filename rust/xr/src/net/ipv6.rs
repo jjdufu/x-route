@@ -118,7 +118,7 @@ pub fn v6_tether_offload_off(ctx: &NetCtx<'_>) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        note_status(ctx.env, ctx.cfg, prog, status);
+        note_status(ctx.env, prog, status);
     }
 }
 
