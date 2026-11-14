@@ -13,8 +13,12 @@ use zip::write::SimpleFileOptions;
 
 use crate::config::Config;
 use crate::env::Env;
+use crate::log::FAILURES;
+use crate::log::note_failure;
 use crate::log::{log_info, rotate_debug, unix_now};
 use crate::sys::DirLock;
+use crate::sys::exec::note_spawn;
+use crate::sys::fsx;
 
 fn sys_cmd_output(bin: &Path, args: &[&str]) -> String {
     match Command::new(bin).args(args).output() {
@@ -74,7 +78,7 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
             if parts.next() == Some("remote") {
                 if let Some(host) = parts.next() {
                     if !host.is_empty() {
-                        hosts.insert(host.to_string());
+                        hosts.extend(std::iter::once(host.to_owned()));
                     }
                 }
             }
@@ -472,7 +476,7 @@ pub fn diag_guest(env: &Env, wait_secs: u64) -> Result<String, String> {
         return Err("### OpenWrt 快照：服务未运行\n".to_string());
     }
     let ts = format!("{}{}", unix_now(), std::process::id());
-    let _ = fs::write(host_dir.join("diag.cmd"), format!("snap {ts}\n"));
+    fsx::write_logged(env, host_dir.join("diag.cmd"), format!("snap {ts}\n"));
     let diag_txt = env.run_dir().join("guest/guest/diag.txt");
     let expected = format!("ts={ts}");
     let iters = wait_secs.saturating_mul(2);
@@ -518,8 +522,10 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
         .create(true)
         .append(true)
         .open(env.debug_log())
+        && writeln!(f, "{}", redacted.trim_end_matches('\n')).is_err()
     {
-        let _ = writeln!(f, "{}", redacted.trim_end_matches('\n'));
+        // 写的就是调试日志本身：失败只计数，不再写日志
+        note_failure(&FAILURES.log);
     }
     drop(lock);
     rotate_debug(env);
@@ -532,12 +538,13 @@ pub fn diag_snap_bg(env: &Env, reason: &str) {
     }
     let bin = env.moddir.join("bin/xr");
     if bin.is_file() {
-        let _ = Command::new(bin)
+        let child = Command::new(bin)
             .args(["internal", "diag-snap", reason])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
+        note_spawn(env, "diag-snap", child);
     } else {
         diag_snap(env, reason, 10);
     }
@@ -641,7 +648,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     let name = format!("{prefix}-{stamp}");
     let tmpd = env.run_dir().join(format!("export.{}", std::process::id()));
-    let _ = fs::remove_dir_all(&tmpd);
+    fsx::remove_tree_logged(env, &tmpd);
     let raw_dir = tmpd.join("raw");
     let pack_dir = tmpd.join(&name);
     if fs::create_dir_all(&raw_dir).is_err() || fs::create_dir_all(&pack_dir).is_err() {
@@ -666,7 +673,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         rel.trim()
     );
     summary.push_str(&crate::log::failures_summary_line());
-    let _ = fs::write(raw_dir.join("summary.txt"), summary);
+    fsx::write_logged(env, raw_dir.join("summary.txt"), summary);
 
     let log_files = [
         env.module_log(),
@@ -679,28 +686,30 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         if let Some(bn) = f.file_name().and_then(|s| s.to_str()) {
             let f1 = PathBuf::from(format!("{}.1", f.display()));
             if f1.is_file() {
-                let _ = fs::copy(&f1, raw_dir.join(format!("{bn}.1")));
+                fsx::copy_logged(env, &f1, raw_dir.join(format!("{bn}.1")));
             }
             if f.is_file() {
-                let _ = fs::copy(&f, raw_dir.join(bn));
+                fsx::copy_logged(env, &f, raw_dir.join(bn));
             }
         }
     }
 
     if is_diag {
-        let _ = fs::write(raw_dir.join("phone.txt"), diag_phone(env));
+        fsx::write_logged(env, raw_dir.join("phone.txt"), diag_phone(env));
         let g = match diag_guest(env, 15) {
             Ok(s) | Err(s) => s,
         };
-        let _ = fs::write(raw_dir.join("openwrt.txt"), g);
-        let _ = fs::write(raw_dir.join("logcat.txt"), diag_logcat());
-        let _ = fs::write(
+        fsx::write_logged(env, raw_dir.join("openwrt.txt"), g);
+        fsx::write_logged(env, raw_dir.join("logcat.txt"), diag_logcat());
+        fsx::write_logged(
+            env,
             raw_dir.join("tethering.txt"),
             sys_cmd_output(Path::new("dumpsys"), &["tethering"]),
         );
         if let Ok(conf) = fs::read_to_string(env.conf_file()) {
             let filtered: Vec<&str> = conf.lines().filter(|l| !l.starts_with('#')).collect();
-            let _ = fs::write(
+            fsx::write_logged(
+                env,
                 raw_dir.join("config.conf"),
                 format!("{}\n", filtered.join("\n")),
             );
@@ -708,14 +717,14 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         let dlog = env.debug_log();
         let dlog1 = PathBuf::from(format!("{}.1", dlog.display()));
         if dlog1.is_file() {
-            let _ = fs::copy(&dlog1, raw_dir.join("debug.log.1"));
+            fsx::copy_logged(env, &dlog1, raw_dir.join("debug.log.1"));
         }
         if dlog.is_file() {
-            let _ = fs::copy(&dlog, raw_dir.join("debug.log"));
+            fsx::copy_logged(env, &dlog, raw_dir.join("debug.log"));
         }
         let nlog = env.run_dir().join("notifier.log");
         if nlog.is_file() {
-            let _ = fs::copy(&nlog, raw_dir.join("notifier.log"));
+            fsx::copy_logged(env, &nlog, raw_dir.join("notifier.log"));
         }
     }
 
@@ -727,20 +736,20 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
                     let bytes = fs::read(&p).unwrap_or_default();
                     let raw_text = String::from_utf8_lossy(&bytes);
                     let red = diag_redact(env, &raw_text);
-                    let _ = fs::write(pack_dir.join(bn), red);
+                    fsx::write_logged(env, pack_dir.join(bn), red);
                 }
             }
         }
     }
 
     let out_zip = dest.join(format!("{name}.zip"));
-    let _ = fs::remove_file(&out_zip);
+    fsx::remove_logged(env, &out_zip);
     if !write_zip_from_dir(&out_zip, &tmpd, &name) {
-        let _ = fs::remove_file(&out_zip);
-        let _ = fs::remove_dir_all(&tmpd);
+        fsx::remove_logged(env, &out_zip);
+        fsx::remove_tree_logged(env, &tmpd);
         return "{\"ok\":false,\"error\":\"zip\"}".to_string();
     }
-    let _ = fs::remove_dir_all(&tmpd);
+    fsx::remove_tree_logged(env, &tmpd);
     let label = if is_diag { "诊断包" } else { "日志" };
     log_info(env, "xr", &format!("已导出{label} {name}.zip"));
     serde_json::json!({
