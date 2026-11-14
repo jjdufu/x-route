@@ -19,9 +19,11 @@ use crate::daemon::watchdog::watchdog_loop;
 use crate::daemon::{daemon_loop, ensure_daemon, ensure_watchdog, vm_start, vm_stop};
 use crate::diag::{diag_snap, diag_snap_bg, export_pack};
 use crate::env::Env;
-use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, unix_now};
+use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
 use crate::net::run_net_cli;
+use crate::sys::exec::note_spawn;
+use crate::sys::fsx;
 use crate::sys::spawn::{exec_crosvm_trampoline, spawn_self_detached};
 use crate::sys::{ce_ready, wait_boot_completed};
 use crate::traffic::{acct_hooks, acct_json, acct_reset, acct_setup, acct_snapshot, acct_teardown};
@@ -36,7 +38,7 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
             if vm_running(env) && cfg.vm_net() {
                 let net_sh = env.moddir.join("scripts/net.sh");
                 if net_sh.is_file() {
-                    let _ = Command::new("sh")
+                    let net_sync = Command::new("sh")
                         .arg(&net_sh)
                         .arg("sync")
                         .env("MODDIR", &env.moddir)
@@ -45,13 +47,18 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .spawn();
+                    note_spawn(env, "net.sh sync", net_sync);
                 } else {
-                    let _ = spawn_self_detached(env, &["internal", "net", "sync"]);
+                    note_spawn(
+                        env,
+                        "xr internal net sync",
+                        spawn_self_detached(env, &["internal", "net", "sync"]),
+                    );
                 }
             }
         }
         "XR_NOTIFY_TRAFFIC" => {
-            let _ = fs::write(env.run_dir().join("notify.force"), "");
+            fsx::write_logged(env, env.run_dir().join("notify.force"), "");
         }
         "XR_DEBUG" | "XR_DEBUG_HOURS" => {
             debug_arm(env);
@@ -72,12 +79,12 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
         }
         "AUTOSTART" if cfg.autostart() => {
             if env.tripped_file().is_file() {
-                let _ = set_kv(env, "AUTOSTART", "0");
+                note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
                 return Err("存在未确认的熔断，不能开启自启".to_string());
             }
             let lg = fs::read_to_string(env.last_good_file()).unwrap_or_default();
             if lg.trim() != config_hash(env) {
-                let _ = set_kv(env, "AUTOSTART", "0");
+                note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
                 return Err("需先用当前配置手动启动成功一次".to_string());
             }
         }
@@ -101,7 +108,8 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     if !vm_running(env) || !v6_file.is_file() {
         return (1, "{\"ok\":false,\"error\":\"服务未就绪\"}".to_string());
     }
-    let _ = fs::write(
+    fsx::write_logged(
+        env,
         env.run_dir().join("guest/host/ipv6.cmd"),
         format!("{arg} {}\n", unix_now()),
     );
@@ -113,7 +121,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     }
     let cfg = Config::load(env);
     if cfg.vm_net() {
-        let _ = run_net_hook(env, "sync");
+        note_rc(env, "run_net_hook", run_net_hook(env, "sync"));
     }
     if fs::read_to_string(&v6_file).is_ok_and(|s| s.trim() == want) {
         let label = if want == "1" { "开启" } else { "关闭" };
@@ -126,14 +134,18 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
 
 fn bg_run(env: &Env, action: &str) -> i32 {
     let run = env.run_dir();
-    let _ = fs::remove_file(run.join("bg.rc"));
-    let _ = fs::remove_file(run.join("bg.rc.tmp"));
+    fsx::remove_logged(env, run.join("bg.rc"));
+    fsx::remove_logged(env, run.join("bg.rc.tmp"));
     if action == "start" && !vm_running(env) {
-        let _ = fs::write(env.console_log(), "");
-        let _ = fs::write(env.boot_log(), "");
+        fsx::write_logged(env, env.console_log(), "");
+        fsx::write_logged(env, env.boot_log(), "");
         blog(env, "xr", "收到启动请求");
     }
-    let _ = spawn_self_detached(env, &["internal", "bg-exec", action]);
+    note_spawn(
+        env,
+        "xr internal bg-exec",
+        spawn_self_detached(env, &["internal", "bg-exec", action]),
+    );
     println!("{{\"ok\":true}}");
     0
 }
@@ -148,14 +160,16 @@ fn bg_exec(env: &Env, action: &str) -> i32 {
     let tmp = run.join("bg.rc.tmp");
     let dst = run.join("bg.rc");
     if fs::write(&tmp, format!("{rc}\n")).is_ok() {
-        let _ = fs::rename(&tmp, &dst);
+        fsx::rename_logged(env, &tmp, &dst);
     }
     rc
 }
 
 fn boot_service(env: &Env) -> i32 {
     boot_clean_run(env);
-    let _ = env.ensure_dirs();
+    if let Err(err) = env.ensure_dirs() {
+        fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
+    }
     wait_boot_completed();
     if env.is_module_disabled() {
         return 0;
@@ -167,9 +181,9 @@ fn boot_service(env: &Env) -> i32 {
             "上次启动 VM 后整机复位，熔断：关闭自启，需在 WebUI 确认",
         );
         let now = Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _ = fs::write(env.tripped_file(), format!("{now}\n"));
-        let _ = fs::remove_file(env.fuse_file());
-        let _ = set_kv(env, "AUTOSTART", "0");
+        fsx::write_logged(env, env.tripped_file(), format!("{now}\n"));
+        fsx::remove_logged(env, env.fuse_file());
+        note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
     }
     let cfg = Config::load(env);
     if !ensure_daemon(env) {
@@ -199,11 +213,13 @@ fn boot_service(env: &Env) -> i32 {
 }
 
 fn action_toggle(env: &Env) -> i32 {
-    let _ = env.ensure_dirs();
+    if let Err(err) = env.ensure_dirs() {
+        fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
+    }
     if vm_running(env) {
-        let _ = vm_stop(env);
+        note_rc(env, "vm_stop", vm_stop(env));
     } else {
-        let _ = vm_start(env);
+        note_rc(env, "vm_start", vm_start(env));
     }
     println!("{}", status_line(env));
     0
@@ -255,7 +271,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         return run_boot_tail(&env, moff, coff);
     }
 
-    let _ = env.ensure_dirs();
+    if let Err(err) = env.ensure_dirs() {
+        fsx::record_failure(&env, "ensure_dirs", &env.xr_data, &err);
+    }
 
     match cmd {
         "start" => vm_start(&env),
@@ -267,9 +285,10 @@ pub fn run_cli(args: &[String]) -> i32 {
             let cfg = Config::load(&env);
             let ctx = NetCtx::new(&env, &cfg);
             acct_reset(&ctx);
-            let _ = fs::write(env.run_dir().join("notify.force"), "");
+            fsx::write_logged(&env, env.run_dir().join("notify.force"), "");
             if vm_running(&env) && env.run_dir().join("guest/host").is_dir() {
-                let _ = fs::write(
+                fsx::write_logged(
+                    &env,
                     env.run_dir().join("guest/host/acct.cmd"),
                     format!("reset {}{}\n", unix_now(), std::process::id()),
                 );
@@ -345,7 +364,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             rc
         }
         "ack-trip" => {
-            let _ = fs::remove_file(env.tripped_file());
+            fsx::remove_logged(&env, env.tripped_file());
             log_info(&env, "xr", "熔断已确认");
             0
         }
