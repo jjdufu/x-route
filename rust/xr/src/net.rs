@@ -697,203 +697,175 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
     v6_nft_sync(ctx, gw, outs6, ex);
 }
 
-/// 一次完整对账（调用方已持有网络锁）：跟随上游、开放接口、网关形态、路由、流量计数、热点与 `IPv6`，变化时记日志。
-fn sync_all_unlocked(env: &Env) {
-    let cfg = Config::load(env);
-    let ctx = NetCtx::new(env, &cfg);
+/// 列表为空时显示"无"，否则以空格连接。
+fn or_none(list: &[String]) -> String {
+    if list.is_empty() {
+        "无".to_owned()
+    } else {
+        list.join(" ")
+    }
+}
+
+/// 本次对账探测到的上游。
+#[derive(Debug)]
+struct SyncPlan {
+    /// 上游接口（无上游时为空）。
+    up: String,
+    /// `IPv4` 出口接口。
+    outs: Vec<String>,
+    /// `IPv6` 出口接口。
+    outs6: Vec<String>,
+}
+
+/// 探测上游接口与出口。
+fn detect_upstream(ctx: &NetCtx<'_>) -> SyncPlan {
+    let up = upstream_iface(ctx);
+    let outs = upstream_out(ctx, &up);
+    let outs6 = upstream_out6(ctx, &up);
+    SyncPlan { up, outs, outs6 }
+}
+
+/// 上游或出口与上次记录不同（或尚无记录）时：更新 `ndc ipfwd` 登记与策略路由规则，写回记录，记日志并在切换时后台抓诊断快照。
+fn follow_upstream(ctx: &NetCtx<'_>, plan: &SyncPlan) {
+    let (env, cfg) = (ctx.env, ctx.cfg);
     let run = env.run_dir();
-
-    let up = upstream_iface(&ctx);
-    let outs = upstream_out(&ctx, &up);
-    let outs6 = upstream_out6(&ctx, &up);
-
+    let up = &plan.up;
     let up_if_file = run.join("net.up_if");
     let up_out_file = run.join("net.up_out");
     let old_up = fs::read_to_string(&up_if_file).unwrap_or_default();
     let old_up_trimmed = old_up.trim();
     let old_outs_raw = fs::read_to_string(&up_out_file).unwrap_or_default();
-    let outs_joined = if outs.is_empty() {
+    let outs_joined = if plan.outs.is_empty() {
         String::new()
     } else {
-        format!("{} ", outs.join(" "))
+        format!("{} ", plan.outs.join(" "))
     };
-
-    if up != old_up_trimmed
-        || outs_joined != old_outs_raw.trim_end_matches('\n')
-        || !up_if_file.is_file()
+    if up == old_up_trimmed
+        && outs_joined == old_outs_raw.trim_end_matches('\n')
+        && up_if_file.is_file()
     {
-        for old_out in old_outs_raw.split_whitespace() {
-            ctx.ndc_run(&["ipfwd", "remove", XR_IF, old_out]);
-        }
-        if !up.is_empty() {
-            for cur_out in &outs {
-                ctx.ndc_run(&["ipfwd", "add", XR_IF, cur_out]);
-            }
-        }
-        rules_set(&ctx, false, &up);
-        rules_set(&ctx, true, &up);
-        fsx::write_logged(env, &up_if_file, format!("{up}\n"));
-        fsx::write_logged(env, &up_out_file, format!("{outs_joined}\n"));
-        let old_disp = if old_up_trimmed.is_empty() {
-            "无"
-        } else {
-            old_up_trimmed
-        };
-        let new_disp = if up.is_empty() { "无" } else { &up };
-        let outs_disp = if outs.is_empty() {
-            "无".to_owned()
-        } else {
-            outs.join(" ")
-        };
-        let v6_outs_disp = if outs6.is_empty() {
-            "无".to_owned()
-        } else {
-            outs6.join(" ")
-        };
-        log::info(
-            env,
-            "net",
-            &format!("上游 {old_disp} -> {new_disp}（出口 {outs_disp}）"),
-        );
-        dlog(
-            env,
-            &cfg,
-            "net",
-            &format!(
-                "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {v6_outs_disp}"
-            ),
-        );
-        if !old_up_trimmed.is_empty() {
-            trigger_diag_snap_bg(
-                env,
-                &cfg,
-                &format!("上游变化 {old_up_trimmed} -> {new_disp}"),
-            );
+        return;
+    }
+    for old_out in old_outs_raw.split_whitespace() {
+        ctx.ndc_run(&["ipfwd", "remove", XR_IF, old_out]);
+    }
+    if !up.is_empty() {
+        for cur_out in &plan.outs {
+            ctx.ndc_run(&["ipfwd", "add", XR_IF, cur_out]);
         }
     }
-
-    let net4 = format!("{}.0/24", cfg.net_prefix());
-    ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
-    for nat_out in &outs {
-        ctx.ipt_run(&[
-            "-t",
-            "nat",
-            "-A",
-            "XR_NAT",
-            "-s",
-            &net4,
-            "-o",
-            nat_out,
-            "-j",
-            "MASQUERADE",
-        ]);
-    }
-    mtu_sync(&ctx, &up, &outs);
-
-    let ex = expose_ifaces(&ctx, &up);
-    let ex_str = if ex.is_empty() {
-        String::new()
+    rules_set(ctx, false, up);
+    rules_set(ctx, true, up);
+    fsx::write_logged(env, &up_if_file, format!("{up}\n"));
+    fsx::write_logged(env, &up_out_file, format!("{outs_joined}\n"));
+    let old_disp = if old_up_trimmed.is_empty() {
+        "无"
     } else {
-        format!("{} ", ex.join(" "))
+        old_up_trimmed
     };
-    fsx::write_logged(env, run.join("net.expose_if"), format!("{ex_str}\n"));
-
-    routes_sync(&ctx);
-    acct_setup(&ctx, run.join("net.fwd6").is_file());
-
-    ctx.ipt_run(&["-F", "XR_FWD"]);
-    if acct_present(&ctx) {
-        ctx.ipt_run(&["-A", "XR_FWD", "-j", "XR_ACCT"]);
+    let new_disp = if up.is_empty() { "无" } else { up.as_str() };
+    let outs_disp = or_none(&plan.outs);
+    let v6_outs_disp = or_none(&plan.outs6);
+    log::info(
+        env,
+        "net",
+        &format!("上游 {old_disp} -> {new_disp}（出口 {outs_disp}）"),
+    );
+    dlog(
+        env,
+        cfg,
+        "net",
+        &format!(
+            "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {v6_outs_disp}"
+        ),
+    );
+    if !old_up_trimmed.is_empty() {
+        trigger_diag_snap_bg(
+            env,
+            cfg,
+            &format!("上游变化 {old_up_trimmed} -> {new_disp}"),
+        );
     }
-    ctx.ipt_run(&[
-        "-A",
-        "XR_FWD",
-        "-o",
-        XR_IF,
-        "-m",
-        "conntrack",
-        "--ctstate",
-        "RELATED,ESTABLISHED",
-        "-j",
-        "ACCEPT",
-    ]);
-    ctx.ipt_run(&[
-        "-A",
-        "XR_FWD",
-        "-i",
-        XR_IF,
-        "-m",
-        "conntrack",
-        "--ctstate",
-        "RELATED,ESTABLISHED",
-        "-j",
-        "ACCEPT",
-    ]);
-    for fwd_out in &outs {
-        ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-o", fwd_out, "-j", "ACCEPT"]);
-    }
-    let active_v4: Vec<String> = fs::read_to_string(run.join("routes.active"))
+}
+
+/// 在 `XR_FWD` 链末尾追加一条 `iptables` 规则（`rule` 为 `-A XR_FWD` 之后的部分）。
+fn ipt_fwd(ctx: &NetCtx<'_>, rule: &[&str]) {
+    let mut args = vec!["-A", "XR_FWD"];
+    args.extend_from_slice(rule);
+    ctx.ipt_run(&args);
+}
+
+/// 例外接口可访问虚拟机网段与已生效的 `IPv4` `VPN` 路由；非例外的上游出口到 `xr0` 一律丢弃。
+fn fwd_rules_ex(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &str) {
+    let active_v4: Vec<String> = fs::read_to_string(ctx.env.run_dir().join("routes.active"))
         .unwrap_or_default()
         .lines()
         .filter(|line| !line.contains(':'))
         .map(str::to_owned)
         .collect();
-    for i in &ex {
-        ctx.ipt_run(&[
-            "-A", "XR_FWD", "-i", i, "-o", XR_IF, "-d", &net4, "-j", "ACCEPT",
-        ]);
+    for i in ex {
+        ipt_fwd(ctx, &["-i", i, "-o", XR_IF, "-d", net4, "-j", "ACCEPT"]);
         for route in &active_v4 {
-            ctx.ipt_run(&[
-                "-A", "XR_FWD", "-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT",
-            ]);
+            ipt_fwd(ctx, &["-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT"]);
         }
     }
     let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
-    for iface in &outs {
+    for iface in outs {
         if !ex_set.contains(iface.as_str()) {
-            ctx.ipt_run(&["-A", "XR_FWD", "-i", iface, "-o", XR_IF, "-j", "DROP"]);
+            ipt_fwd(ctx, &["-i", iface, "-o", XR_IF, "-j", "DROP"]);
         }
     }
-    if want_gateway(&ctx) {
-        for i in tether_ifaces(&ctx) {
-            ctx.ipt_run(&["-A", "XR_FWD", "-i", &i, "-o", XR_IF, "-j", "ACCEPT"]);
-            ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-o", &i, "-j", "ACCEPT"]);
-            for out_if in &outs {
-                ctx.ipt_run(&["-A", "XR_FWD", "-i", &i, "-o", out_if, "-j", "DROP"]);
+}
+
+/// 重建 `XR_FWD` 链：计数跳转、已建立连接、`xr0` 到出口、例外接口、网关模式下共享网络与 `xr0` 互通，末尾丢弃其余进出 `xr0` 的流量。
+fn apply_forward_rules(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &str) {
+    ctx.ipt_run(&["-F", "XR_FWD"]);
+    if acct_present(ctx) {
+        ipt_fwd(ctx, &["-j", "XR_ACCT"]);
+    }
+    let est = [
+        "-m",
+        "conntrack",
+        "--ctstate",
+        "RELATED,ESTABLISHED",
+        "-j",
+        "ACCEPT",
+    ];
+    ipt_fwd(ctx, &[&["-o", XR_IF][..], &est[..]].concat());
+    ipt_fwd(ctx, &[&["-i", XR_IF][..], &est[..]].concat());
+    for fwd_out in outs {
+        ipt_fwd(ctx, &["-i", XR_IF, "-o", fwd_out, "-j", "ACCEPT"]);
+    }
+    fwd_rules_ex(ctx, outs, ex, net4);
+    if want_gateway(ctx) {
+        for i in tether_ifaces(ctx) {
+            ipt_fwd(ctx, &["-i", &i, "-o", XR_IF, "-j", "ACCEPT"]);
+            ipt_fwd(ctx, &["-i", XR_IF, "-o", &i, "-j", "ACCEPT"]);
+            for out_if in outs {
+                ipt_fwd(ctx, &["-i", &i, "-o", out_if, "-j", "DROP"]);
             }
         }
     }
-    ctx.ipt_run(&["-A", "XR_FWD", "-o", XR_IF, "-j", "DROP"]);
-    ctx.ipt_run(&["-A", "XR_FWD", "-i", XR_IF, "-j", "DROP"]);
-    fwd_first(&ctx);
+    ipt_fwd(ctx, &["-o", XR_IF, "-j", "DROP"]);
+    ipt_fwd(ctx, &["-i", XR_IF, "-j", "DROP"]);
+    fwd_first(ctx);
+}
 
-    hs_sync(&ctx);
-    v6_proxy_sync(&ctx, &outs6);
-    let gw = gw_want(&ctx);
+/// 调试日志记一行本次对账结果；`block` 模式时再记 `IPv6` 拦截说明。
+fn log_sync(ctx: &NetCtx<'_>, plan: &SyncPlan, ex: &[String], gw: &str) {
+    let (env, cfg) = (ctx.env, ctx.cfg);
     dlog(
         env,
-        &cfg,
+        cfg,
         "net",
         &format!(
             "同步：上游={} 出口={} IPv6出口={} 暴露={} 热点={} 接管={gw}（{}）",
-            if up.is_empty() { "无" } else { &up },
-            if outs.is_empty() {
-                "无".to_owned()
-            } else {
-                outs.join(" ")
-            },
-            if outs6.is_empty() {
-                "无".to_owned()
-            } else {
-                outs6.join(" ")
-            },
-            if ex.is_empty() {
-                "无".to_owned()
-            } else {
-                ex.join(" ")
-            },
-            tether_ifaces(&ctx).join(" "),
-            gw_reason(&ctx)
+            if plan.up.is_empty() { "无" } else { &plan.up },
+            or_none(&plan.outs),
+            or_none(&plan.outs6),
+            or_none(ex),
+            tether_ifaces(ctx).join(" "),
+            gw_reason(ctx)
         ),
     );
     if gw == "block" {
@@ -904,18 +876,64 @@ fn sync_all_unlocked(env: &Env) {
         };
         dlog(
             env,
-            &cfg,
+            cfg,
             "net",
             &format!(
                 "IPv6 拦截：虚拟机 IPv6 {v6_state}，手机与热点的 IPv6 出网被拒绝，应用回落 IPv4"
             ),
         );
     }
-    sync_v6(&ctx, gw, &outs6, &ex);
+}
+
+/// 一次完整对账（调用方已持有网络锁）：跟随上游、开放接口、网关形态、路由、流量计数、热点与 `IPv6`，变化时记日志。
+fn sync_all_unlocked(env: &Env) {
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    let run = env.run_dir();
+
+    let plan = detect_upstream(&ctx);
+    follow_upstream(&ctx, &plan);
+
+    let net4 = format!("{}.0/24", cfg.net_prefix());
+    ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
+    for nat_out in &plan.outs {
+        let rule = [
+            "-t",
+            "nat",
+            "-A",
+            "XR_NAT",
+            "-s",
+            &net4,
+            "-o",
+            nat_out,
+            "-j",
+            "MASQUERADE",
+        ];
+        ctx.ipt_run(&rule);
+    }
+    mtu_sync(&ctx, &plan.up, &plan.outs);
+
+    let ex = expose_ifaces(&ctx, &plan.up);
+    let ex_str = if ex.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", ex.join(" "))
+    };
+    fsx::write_logged(env, run.join("net.expose_if"), format!("{ex_str}\n"));
+
+    routes_sync(&ctx);
+    acct_setup(&ctx, run.join("net.fwd6").is_file());
+    apply_forward_rules(&ctx, &plan.outs, &ex, &net4);
+
+    hs_sync(&ctx);
+    v6_proxy_sync(&ctx, &plan.outs6);
+    let gw = gw_want(&ctx);
+    log_sync(&ctx, &plan, &ex, gw);
+    sync_v6(&ctx, gw, &plan.outs6, &ex);
     if gw == "off" {
         gw_remove(&ctx);
     } else {
-        gw_install(&ctx, gw, &outs, &outs6);
+        gw_install(&ctx, gw, &plan.outs, &plan.outs6);
     }
 }
 
