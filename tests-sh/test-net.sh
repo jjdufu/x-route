@@ -49,8 +49,16 @@ chk 'grep -q "^ndc network route add local xr0 10.58.88.2/32 172.29.233.254" "$M
 chk 'grep -q "^ndc network route add local xr0 2001:db8:10::/64 fd7a:7872:e9::254" "$MOCK/calls"'
 chk 'grep -q "^ip -6 rule add pref 4801 to 2001:db8:10::/64 lookup local_network" "$MOCK/calls"'
 chk 'grep -q "^ndc network route add local xr0 2001:db8::5/128 fd7a:7872:e9::254" "$MOCK/calls"'
-chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 9'
-chk 'grep -q "192.168.43.0/25 与 192.168.43.1/24 重叠" "$LOG"'
+chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 8'
+# 与共享接口同网段：本地直连优先，记一条 INFO 而不是 ERROR；拒绝原因落盘到 routes.rejected
+chk '! grep -q "192.168.43.0/25 与 192.168.43.1/24 重叠" "$LOG"'
+chk 'grep -c "\[INFO\] \[vpn\] VPN 路由 192.168.43.0/25 与当前网络 192.168.43.1/24 同网段，本地直连优先" "$LOG" | grep -qx 1'
+chk 'grep -q "^192.168.43.0/25	local	192.168.43.1/24$" "$RUN/routes.rejected" && grep -q "^bad	format	$" "$RUN/routes.rejected"'
+# 再同步一次：拒绝结果不变 -> 文件不重写、日志不重复
+mkdir -p "$T/sysnet/xr0"; touch -t 200001010000 "$RUN/routes.rejected"; $NET sync
+chk '[ "$(grep -c "^ip -4 -o addr show dev wlan1" "$MOCK/calls")" -ge 2 ]'   # 确认这次 sync 真的跑了路由检查
+chk '[ -n "$(find "$RUN/routes.rejected" -mtime +1000)" ]'
+chk 'grep -c "格式错误\|主机位\|重叠" "$LOG" | grep -qx 8 && grep -c "本地直连优先" "$LOG" | grep -qx 1'
 # 蜂窝上游 = WAN：出站放行、回包放行、入站丢弃（与 Wi-Fi 上游规则相同）
 chk 'grep -qx -- "-i xr0 -o rmnet_data2 -j ACCEPT" "$FWD" && grep -qx -- "-i rmnet_data2 -o xr0 -j DROP" "$FWD"'
 chk '! grep -q -- "-i rmnet+" "$FWD"'

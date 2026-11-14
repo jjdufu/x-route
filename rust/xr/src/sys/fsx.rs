@@ -32,6 +32,30 @@ pub(crate) fn write_logged<P: AsRef<Path>, C: AsRef<[u8]>>(env: &Env, path: P, b
     }
 }
 
+/// 内容与现有文件相同则不写；返回是否发生写入。
+///
+/// # Errors
+///
+/// 写入失败时返回底层 IO 错误；读取失败（含文件不存在）视为内容不同。
+pub(crate) fn write_if_changed(path: &Path, body: &str) -> io::Result<bool> {
+    if fs::read_to_string(path).is_ok_and(|old| old == body) {
+        return Ok(false);
+    }
+    fs::write(path, body)?;
+    Ok(true)
+}
+
+/// 与 [`write_if_changed`] 相同，失败时计数并记录、返回 `false`；返回是否发生写入。
+pub(crate) fn write_if_changed_logged(env: &Env, path: &Path, body: &str) -> bool {
+    match write_if_changed(path, body) {
+        Ok(written) => written,
+        Err(err) => {
+            record_failure(env, "write", path, &err);
+            false
+        }
+    }
+}
+
 /// 删除文件。文件本来就不存在视为目标已达成，不计数；其余失败计数并记录。
 pub(crate) fn remove_logged<P: AsRef<Path>>(env: &Env, path: P) {
     if let Err(err) = fs::remove_file(path.as_ref())

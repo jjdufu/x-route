@@ -12,6 +12,9 @@ use crate::log::dlog;
 use crate::net::common::NetCtx;
 use crate::sys::fsx;
 
+#[cfg(test)]
+mod tests;
+
 /// 客机上报 `OpenVPN` 路由的文件 `run/guest/guest/openvpn.routes`。
 #[must_use]
 pub fn guest_routes_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
@@ -81,84 +84,301 @@ pub(crate) fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
-/// 单条路由校验：默认路由静默跳过；格式错误、主机位非 0、与 `busy` 中网段重叠时记一行 ERROR 并跳过；通过时返回规范写法。
-fn route_check(ctx: &NetCtx<'_>, raw: &str, busy: &[String]) -> Option<String> {
-    if is_default_route(raw) {
-        return None;
-    }
-    let Some(nc) = norm_route(raw) else {
-        log::err(ctx.env, "vpn", &format!("格式错误 {raw}"));
-        return None;
-    };
-    if is_default_route(&nc) {
-        return None;
-    }
-    if !cidr::is_aligned(&nc) {
-        log::err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
-        return None;
-    }
-    if let Some(conflict) = busy
-        .iter()
-        .find(|used| !used.is_empty() && cidr::overlap(&nc, used))
-    {
-        log::err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
-        return None;
-    }
-    Some(nc)
+/// `VPN` 路由被拒绝的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RejectKind {
+    /// 与当前上游或共享接口网段重叠：本地直连优先（随网络切换自动恢复）。
+    Local,
+    /// 与 `XRouter` 保留网段（`xr0` 的 /24、回环、链路本地、`XR_NET6`、热点网关）重叠。
+    Reserved,
+    /// 无法解析。
+    Format,
+    /// 主机位不为 0。
+    HostBits,
+    /// 超出 64 条上限。
+    Limit,
 }
 
-/// 筛出可以安装的 `VPN` 路由：规范化、跳过默认路由，拒绝格式错误、主机位非 0、与现有网段重叠的项，最多 64 条。
-///
-/// 每条被拒绝的路由记一行 ERROR；返回排序去重后的规范写法。
-#[must_use]
-pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
-    let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
-    let up_trimmed = up.trim();
-    let mut busy = vec![
-        format!("{}.0/24", ctx.cfg.net_prefix()),
-        "127.0.0.0/8".to_owned(),
-        "169.254.0.0/16".to_owned(),
-        format!("{XR_NET6}::/64"),
-    ];
-    if let Ok(hs_gw) = fs::read_to_string(ctx.env.run_dir().join("net.hs_gw")) {
-        for tok in hs_gw.split_whitespace() {
-            busy.push(tok.to_owned());
+impl RejectKind {
+    /// 落盘与状态输出用的短名。
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Reserved => "reserved",
+            Self::Format => "format",
+            Self::HostBits => "hostbits",
+            Self::Limit => "limit",
         }
     }
+
+    /// 由短名解析；未知名字返回 `None`。
+    #[must_use]
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "local" => Some(Self::Local),
+            "reserved" => Some(Self::Reserved),
+            "format" => Some(Self::Format),
+            "hostbits" => Some(Self::HostBits),
+            "limit" => Some(Self::Limit),
+            _ => None,
+        }
+    }
+}
+
+/// 一条被拒绝的路由。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Rejected {
+    /// 规范化后的路由（无法解析时为原文）。
+    pub(crate) route: String,
+    /// 原因。
+    pub(crate) kind: RejectKind,
+    /// 与之重叠的网段（`Local`/`Reserved` 时有值，其余为空串）。
+    pub(crate) with: String,
+}
+
+/// 路由检查结果。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct RouteCheck {
+    /// 可下发的路由（有序去重）。
+    pub(crate) valid: Vec<String>,
+    /// 被拒绝的路由（按客机上报顺序，按 route 去重）。
+    pub(crate) rejected: Vec<Rejected>,
+}
+
+/// 不能下发的网段，分两类。
+#[derive(Debug, Default)]
+struct BusyNets {
+    /// `XRouter` 保留网段：永远不会放行。
+    reserved: Vec<String>,
+    /// 当前上游与共享接口的本地网段：随网络切换变化。
+    local: Vec<String>,
+}
+
+/// 单条路由的判定结果。
+enum Verdict {
+    /// 默认路由：静默跳过。
+    Skip,
+    /// 可以下发（规范写法）。
+    Valid(String),
+    /// 被拒绝。
+    Reject(Rejected),
+}
+
+/// 构造一条拒绝记录。
+fn reject(route: &str, kind: RejectKind, with: &str) -> Verdict {
+    Verdict::Reject(Rejected {
+        route: route.to_owned(),
+        kind,
+        with: with.to_owned(),
+    })
+}
+
+/// 在网段列表中找第一个与 `route` 重叠的项。
+fn first_overlap<'list>(route: &str, nets: &'list [String]) -> Option<&'list String> {
+    nets.iter()
+        .find(|used| !used.is_empty() && cidr::overlap(route, used))
+}
+
+/// 单条路由判定：默认路由跳过；依次检查格式、主机位、保留网段、本地网段。
+fn classify(raw: &str, busy: &BusyNets) -> Verdict {
+    if is_default_route(raw) {
+        return Verdict::Skip;
+    }
+    let Some(nc) = norm_route(raw) else {
+        return reject(raw, RejectKind::Format, "");
+    };
+    if is_default_route(&nc) {
+        return Verdict::Skip;
+    }
+    if !cidr::is_aligned(&nc) {
+        return reject(&nc, RejectKind::HostBits, "");
+    }
+    if let Some(conflict) = first_overlap(&nc, &busy.reserved) {
+        return reject(&nc, RejectKind::Reserved, conflict);
+    }
+    if let Some(conflict) = first_overlap(&nc, &busy.local) {
+        return reject(&nc, RejectKind::Local, conflict);
+    }
+    Verdict::Valid(nc)
+}
+
+/// 接口上的 `IPv4` 与 `IPv6` 地址（`ip -o addr show` 第 4 列）。
+fn iface_addrs(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
+    let mut addrs = Vec::new();
+    for family in ["-4", "-6"] {
+        let out = ctx.ip(&[family, "-o", "addr", "show", "dev", iface]);
+        addrs.extend(
+            out.stdout
+                .lines()
+                .filter_map(|line| line.split_whitespace().nth(3))
+                .map(str::to_owned),
+        );
+    }
+    addrs
+}
+
+/// 收集保留网段与本地网段。
+fn busy_nets(ctx: &NetCtx<'_>) -> BusyNets {
+    let mut busy = BusyNets {
+        reserved: vec![
+            format!("{}.0/24", ctx.cfg.net_prefix()),
+            "127.0.0.0/8".to_owned(),
+            "169.254.0.0/16".to_owned(),
+            format!("{XR_NET6}::/64"),
+        ],
+        local: Vec::new(),
+    };
+    if let Ok(hs_gw) = fs::read_to_string(ctx.env.run_dir().join("net.hs_gw")) {
+        busy.reserved
+            .extend(hs_gw.split_whitespace().map(str::to_owned));
+    }
+    let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
     let mut ifaces = Vec::new();
-    if !up_trimmed.is_empty() {
-        ifaces.push(up_trimmed.to_owned());
+    if !up.trim().is_empty() {
+        ifaces.push(up.trim().to_owned());
     }
     ifaces.extend(tether_ifaces(ctx));
     for iface in ifaces {
-        let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", &iface]);
-        for line in out4.stdout.lines() {
-            if let Some(cidr) = line.split_whitespace().nth(3) {
-                busy.push(cidr.to_owned());
-            }
-        }
-        let out6 = ctx.ip(&["-6", "-o", "addr", "show", "dev", &iface]);
-        for line in out6.stdout.lines() {
-            if let Some(cidr) = line.split_whitespace().nth(3) {
-                busy.push(cidr.to_owned());
-            }
-        }
+        busy.local.extend(iface_addrs(ctx, &iface));
     }
+    busy
+}
 
-    let mut count = 0_usize;
+/// 按规范写法去重（无法解析的按原文），保留首次出现的顺序。
+fn dedup_routes(raw_list: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    raw_list
+        .into_iter()
+        .filter(|raw| seen.insert(norm_route(raw).unwrap_or_else(|| raw.clone())))
+        .collect()
+}
+
+/// 可下发路由的上限。
+const ROUTE_LIMIT: usize = 64;
+
+/// 检查客机推送的路由：先按规范写法去重，再逐条判定；可下发的超过 64 条时，第 65 条起都记为 `Limit`。
+#[must_use]
+pub(crate) fn routes_check(ctx: &NetCtx<'_>) -> RouteCheck {
+    let busy = busy_nets(ctx);
+    let mut check = RouteCheck::default();
     let mut valid_set = BTreeSet::new();
-    for raw in routes_source(ctx) {
-        let Some(nc) = route_check(ctx, &raw, &busy) else {
-            continue;
-        };
-        count = count.saturating_add(1);
-        if count > 64 {
-            log::err(ctx.env, "vpn", "超过 64 条，其余忽略");
-            break;
+    let mut pending = dedup_routes(routes_source(ctx)).into_iter();
+    for raw in pending.by_ref() {
+        match classify(&raw, &busy) {
+            Verdict::Skip => {}
+            Verdict::Reject(rejected) => check.rejected.push(rejected),
+            Verdict::Valid(nc) if valid_set.len() >= ROUTE_LIMIT => {
+                check.rejected.push(Rejected {
+                    route: nc,
+                    kind: RejectKind::Limit,
+                    with: String::new(),
+                });
+                break;
+            }
+            Verdict::Valid(nc) => valid_set.extend(iter::once(nc)),
         }
-        valid_set.extend(iter::once(nc));
     }
-    valid_set.into_iter().collect()
+    check.rejected.extend(
+        pending
+            .filter(|raw| !is_default_route(raw))
+            .map(|raw| Rejected {
+                route: norm_route(&raw).unwrap_or(raw),
+                kind: RejectKind::Limit,
+                with: String::new(),
+            }),
+    );
+    check.valid = valid_set.into_iter().collect();
+    check
+}
+
+/// 筛出可以安装的 `VPN` 路由（即 `routes_check` 的 `valid`）：规范化、去重、跳过默认路由，拒绝格式错误、主机位非 0、与现有网段重叠的项，最多 64 条。
+#[must_use]
+pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
+    routes_check(ctx).valid
+}
+
+/// 拒绝原因文件 `run/routes.rejected`。
+fn rejected_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
+    ctx.env.run_dir().join("routes.rejected")
+}
+
+/// 拒绝记录落盘内容：每行 `route\tkind\twith`，按 route 排序；没有记录时为空串。
+fn rejected_body(rejected: &[Rejected]) -> String {
+    let mut lines: Vec<String> = rejected
+        .iter()
+        .map(|item| format!("{}\t{}\t{}\n", item.route, item.kind.as_str(), item.with))
+        .collect();
+    lines.sort();
+    lines.concat()
+}
+
+/// 解析 `run/routes.rejected` 的内容；无法识别的行跳过。
+#[must_use]
+pub(crate) fn parse_rejected(text: &str) -> Vec<Rejected> {
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let route = fields.next().filter(|route| !route.is_empty())?;
+            let kind = RejectKind::parse(fields.next()?)?;
+            Some(Rejected {
+                route: route.to_owned(),
+                kind,
+                with: fields.next().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// 新出现的一条拒绝记录写一行日志：本地直连写 INFO，其余写 ERROR（超限只由调用方写一次）。
+fn log_new_reject(ctx: &NetCtx<'_>, item: &Rejected) {
+    let route = &item.route;
+    let with = &item.with;
+    match item.kind {
+        RejectKind::Local => log::info(
+            ctx.env,
+            "vpn",
+            &format!(
+                "VPN 路由 {route} 与当前网络 {with} 同网段，本地直连优先，暂不经 VPN（切换网络后自动恢复）"
+            ),
+        ),
+        RejectKind::Reserved => log::err(ctx.env, "vpn", &format!("{route} 与 {with} 重叠")),
+        RejectKind::Format => log::err(ctx.env, "vpn", &format!("格式错误 {route}")),
+        RejectKind::HostBits => log::err(ctx.env, "vpn", &format!("主机位不为 0：{route}")),
+        RejectKind::Limit => {}
+    }
+}
+
+/// 写 `run/routes.rejected`（内容不变不写）；内容变化时只为新出现的条目写日志，本地直连条目消失时写"已恢复经 VPN"。
+fn sync_rejected(ctx: &NetCtx<'_>, rejected: &[Rejected]) {
+    let path = rejected_file(ctx);
+    let old = parse_rejected(&fs::read_to_string(&path).unwrap_or_default());
+    if !fsx::write_if_changed_logged(ctx.env, &path, &rejected_body(rejected)) {
+        return;
+    }
+    let is_new = |item: &&Rejected| {
+        !old.iter()
+            .any(|prev| prev.route == item.route && prev.kind == item.kind)
+    };
+    let fresh: Vec<&Rejected> = rejected.iter().filter(is_new).collect();
+    for item in &fresh {
+        log_new_reject(ctx, item);
+    }
+    if fresh.iter().any(|item| item.kind == RejectKind::Limit) {
+        log::err(ctx.env, "vpn", "超过 64 条，其余忽略");
+    }
+    for prev in old.iter().filter(|prev| prev.kind == RejectKind::Local) {
+        if !rejected
+            .iter()
+            .any(|item| item.route == prev.route && item.kind == RejectKind::Local)
+        {
+            log::info(
+                ctx.env,
+                "vpn",
+                &format!("VPN 路由 {} 已恢复经 VPN", prev.route),
+            );
+        }
+    }
 }
 
 /// 路由下一跳：`IPv6` 为客机的 `<ULA 前缀>::254`，`IPv4` 为 `<内网前缀>.254`。
@@ -234,9 +454,11 @@ pub(crate) fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
         .map_or_else(|_| "none".to_owned(), |bytes| cksum_crc_like(&bytes))
 }
 
-/// 让已安装路由与 [`routes_valid`] 一致：删多余、补缺失，写 `run/routes.active` 与 `run/vpn.cksum`；变化时写调试日志。
+/// 让已安装路由与 [`routes_check`] 的结果一致：删多余、补缺失，写 `run/routes.active`、`run/routes.rejected` 与 `run/vpn.cksum`；变化时写日志。
 pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
-    let want = routes_valid(ctx);
+    let check = routes_check(ctx);
+    sync_rejected(ctx, &check.rejected);
+    let want = check.valid;
     let active_path = ctx.env.run_dir().join("routes.active");
     let have: Vec<String> = fs::read_to_string(&active_path)
         .unwrap_or_default()
@@ -312,4 +534,5 @@ pub(crate) fn routes_clear(ctx: &NetCtx<'_>) {
         }
     }
     fsx::remove_logged(ctx.env, &active_path);
+    fsx::remove_logged(ctx.env, rejected_file(ctx));
 }

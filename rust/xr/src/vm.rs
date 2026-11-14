@@ -464,6 +464,7 @@ fn prepare_ctl_dirs(env: &Env, run: &Path) -> PathBuf {
     ] {
         fsx::remove_logged(env, run.join("guest").join(file_name));
     }
+    fsx::remove_logged(env, run.join("routes.rejected"));
     host_dir
 }
 

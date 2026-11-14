@@ -1352,6 +1352,7 @@ fn clear_net_state(env: &Env) {
         }
     }
     fsx::remove_logged(env, run.join("routes.active"));
+    fsx::remove_logged(env, run.join("routes.rejected"));
     fsx::remove_logged(env, run.join("ip_forward.orig"));
     fsx::remove_logged(env, run.join("net_watch.pid"));
 }

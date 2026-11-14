@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 use super::{
     chmod_logged, copy_logged, mkdirs_logged, remove_logged, remove_tree_logged, rename_logged,
-    touch_logged, write_logged,
+    touch_logged, write_if_changed, write_logged,
 };
 use xr_test_support::{Failure, ensure};
 
@@ -86,4 +86,43 @@ fn failures_are_counted_once_each() -> Result<(), Failure> {
         "6 次失败应各计数一次（mkdirs 成功不计）",
     )?;
     ensure(exec_after == exec_before, "exec 计数不变")
+}
+
+/// `write_if_changed`：首次写入为 `Ok(true)`；内容相同为 `Ok(false)` 且文件未被改写；内容不同为 `Ok(true)`；父目录不存在为 `Err`。
+///
+/// # Errors
+///
+/// 断言不成立或临时目录准备失败时返回错误。
+#[test]
+fn write_if_changed_only_on_change() -> Result<(), Failure> {
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
+    let file = tmp.path().join("r.txt");
+    ensure(
+        matches!(write_if_changed(&file, "a\n"), Ok(true)),
+        "首次写入",
+    )?;
+    let first = fs::metadata(&file)
+        .and_then(|meta| meta.modified())
+        .map_err(|_io_err| Failure::new("读 mtime"))?;
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    ensure(
+        matches!(write_if_changed(&file, "a\n"), Ok(false)),
+        "内容相同不写",
+    )?;
+    let second = fs::metadata(&file)
+        .and_then(|meta| meta.modified())
+        .map_err(|_io_err| Failure::new("读 mtime"))?;
+    ensure(first == second, "内容相同时 mtime 不变")?;
+    ensure(
+        matches!(write_if_changed(&file, "b\n"), Ok(true)),
+        "内容不同写入",
+    )?;
+    ensure(
+        fs::read_to_string(&file).is_ok_and(|text| text == "b\n"),
+        "新内容已写入",
+    )?;
+    ensure(
+        write_if_changed(&tmp.path().join("no/such/r.txt"), "x").is_err(),
+        "父目录不存在返回 Err",
+    )
 }
