@@ -246,7 +246,7 @@ chk 'sed -n "/^fn after_set(/,/^}/p" "$ROOT/rust/xr/src/cli.rs" | grep -q "spawn
 # 记录"子命令 -> 退出码 -> stdout 末行 JSON 的 ok -> stderr 是否为空"；XR_GOLDEN_RECORD=1 时改为录制
 D() {
   name="$1"; shift
-  timeout 15 $XR "$@" </dev/null >"$T/d.out" 2>"$T/d.err"; rc=$?
+  timeout 15 sh "$T/mod/scripts/xr" "$@" </dev/null >"$T/d.out" 2>"$T/d.err"; rc=$?
   ok="$(tail -n 1 "$T/d.out" | python3 -c 'import json,sys
 try:
     d = json.loads(sys.stdin.read())
