@@ -1,0 +1,105 @@
+## <临时目录>/bin/ip -4 rule
+ip -4 rule
+
+## <临时目录>/bin/ip -6 rule
+ip -6 rule
+
+## <临时目录>/bin/ip -4 route show table main
+ip -4 route show table main
+
+## <临时目录>/bin/ip -6 route show table main
+ip -6 route show table main
+
+## <临时目录>/bin/ip -4 route show table local_network
+ip -4 route show table local_network
+
+## <临时目录>/bin/ip -6 route show table local_network
+ip -6 route show table local_network
+
+## <临时目录>/bin/ip -4 route show table 97
+ip -4 route show table 97
+
+## <临时目录>/bin/ip -6 route show table 97
+ip -6 route show table 97
+
+## <临时目录>/bin/ip -4 route show table 233
+ip -4 route show table 233
+
+## <临时目录>/bin/ip -6 route show table 233
+ip -6 route show table 233
+
+## <临时目录>/bin/ip -4 route show table 234
+ip -4 route show table 234
+
+## <临时目录>/bin/ip -6 route show table 234
+ip -6 route show table 234
+
+## <临时目录>/bin/ip -4 route show table wlan0
+ip -4 route show table wlan0
+
+## <临时目录>/bin/ip -6 route show table wlan0
+ip -6 route show table wlan0
+
+## <临时目录>/bin/ip -br addr
+ip -br addr
+
+## <临时目录>/bin/ip -br link
+ip -br link
+
+## <临时目录>/bin/ip -6 neigh show proxy
+ip -6 neigh show proxy
+
+## <临时目录>/bin/ip neigh
+ip neigh
+
+## <临时目录>/bin/iptables -w -S FORWARD
+iptables -w -S FORWARD
+
+## <临时目录>/bin/iptables -w -S XR_FWD
+iptables -w -S XR_FWD
+
+## <临时目录>/bin/iptables -w -nvxL XR_FWD
+iptables -w -nvxL XR_FWD
+
+## <临时目录>/bin/iptables -w -t nat -S POSTROUTING
+iptables -w -t nat -S POSTROUTING
+
+## <临时目录>/bin/iptables -w -t nat -S XR_NAT
+iptables -w -t nat -S XR_NAT
+
+## <临时目录>/bin/iptables -w -S OUTPUT
+iptables -w -S OUTPUT
+
+## <临时目录>/bin/iptables -w -S XR_HS
+iptables -w -S XR_HS
+
+## <临时目录>/bin/ip6tables -w -S FORWARD
+ip6tables -w -S FORWARD
+
+## <临时目录>/bin/ip6tables -w -S XR_FWD6
+ip6tables -w -S XR_FWD6
+
+## <临时目录>/bin/ip6tables -w -nvxL XR_FWD6
+ip6tables -w -nvxL XR_FWD6
+
+## <临时目录>/bin/ip6tables -w -S OUTPUT
+ip6tables -w -S OUTPUT
+
+## <临时目录>/bin/ip6tables -w -S XR_HS6
+ip6tables -w -S XR_HS6
+
+## 网桥
+
+## sysctl
+net/ipv4/ip_forward=<值>
+net/ipv6/conf/all/forwarding=<值>
+
+## 热点
+tether_offload_disabled=
+
+## DNS
+private_dns_mode=
+
+## 运行状态
+net.up_if=wlan0 
+
