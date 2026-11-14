@@ -13,7 +13,7 @@ use crate::sys::fsx;
 
 #[must_use]
 pub fn vm_v6(env: &Env) -> bool {
-    fs::read_to_string(env.run_dir().join("guest/guest/ipv6")).is_ok_and(|s| s.trim() == "1")
+    fs::read_to_string(env.run_dir().join("guest/guest/ipv6")).is_ok_and(|text| text.trim() == "1")
 }
 
 #[must_use]
@@ -151,8 +151,8 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
         .trim()
         .to_owned();
     if run.join("net.v6proxy").is_file() {
-        let r = reason.unwrap_or("虚拟机 IPv6 已关闭");
-        log_info(ctx.env, "net", &format!("IPv6 邻居代理已撤销（{r}）"));
+        let why = reason.unwrap_or("虚拟机 IPv6 已关闭");
+        log_info(ctx.env, "net", &format!("IPv6 邻居代理已撤销（{why}）"));
     }
     let up_if = fs::read_to_string(run.join("net.v6upif"))
         .unwrap_or_default()
@@ -163,8 +163,8 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
         if !up_if.is_empty() {
             ctx.ip6_run(&["neigh", "del", "proxy", bare, "dev", &up_if]);
         }
-        for t in tether_ifaces(ctx) {
-            ctx.ip6_run(&["neigh", "del", "proxy", bare, "dev", &t]);
+        for tether in tether_ifaces(ctx) {
+            ctx.ip6_run(&["neigh", "del", "proxy", bare, "dev", &tether]);
         }
         ctx.ip6_run(&["route", "del", &addr, "dev", XR_IF]);
         let bare128 = format!("{bare}/128");
@@ -227,7 +227,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let bare = wan.split('/').next().unwrap_or(&wan);
 
     if run.join("net.v6proxy").is_file()
-        && fs::read_to_string(run.join("net.v6vm")).is_ok_and(|s| s.trim() == wan)
+        && fs::read_to_string(run.join("net.v6vm")).is_ok_and(|raw| raw.trim() == wan)
     {
         ctx.ip6_run(&["neigh", "replace", "proxy", bare, "dev", &up_if]);
         v6_write_wan(ctx.env, &wan);
@@ -237,17 +237,17 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     if run.join("net.v6proxy").is_file() {
         v6_proxy_remove(ctx, Some("上游前缀或地址变化，重新安装"));
     }
-    let Some((pfx, up_if, busy)) = v6_discover(ctx, outs6) else {
+    let Some((new_pfx, new_up_if, new_busy)) = v6_discover(ctx, outs6) else {
         return false;
     };
-    let Some(wan) = v6_pick_addr(&pfx, &busy, ctx.cfg.vm_mac()) else {
+    let Some(new_wan) = v6_pick_addr(&new_pfx, &new_busy, ctx.cfg.vm_mac()) else {
         return false;
     };
-    let bare = wan.split('/').next().unwrap_or(&wan);
+    let new_bare = new_wan.split('/').next().unwrap_or(&new_wan);
 
     let proc_v6 = ctx.env.proc_dir.join("sys/net/ipv6/conf");
     fsx::mkdirs_logged(ctx.env, proc_v6.join("all"));
-    fsx::mkdirs_logged(ctx.env, proc_v6.join(&up_if));
+    fsx::mkdirs_logged(ctx.env, proc_v6.join(&new_up_if));
     fsx::mkdirs_logged(ctx.env, proc_v6.join(XR_IF));
 
     v6_sysw_save(
@@ -256,37 +256,37 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
         "1",
         &run.join("v6fwd.orig"),
     );
-    ctx.sysw_run(&proc_v6.join(format!("{up_if}/forwarding")), "1");
+    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/forwarding")), "1");
     ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/forwarding")), "1");
-    ctx.sysw_run(&proc_v6.join(format!("{up_if}/accept_ra")), "2");
-    ctx.sysw_run(&proc_v6.join(format!("{up_if}/proxy_ndp")), "1");
+    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/accept_ra")), "2");
+    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/proxy_ndp")), "1");
     ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/proxy_ndp")), "1");
-    ctx.ip6_run(&["neigh", "replace", "proxy", bare, "dev", &up_if]);
-    let bare128 = format!("{bare}/128");
+    ctx.ip6_run(&["neigh", "replace", "proxy", new_bare, "dev", &new_up_if]);
+    let bare128 = format!("{new_bare}/128");
     ctx.ip6_run(&["route", "replace", &bare128, "dev", XR_IF]);
     v6_tether_offload_off(ctx);
 
-    let ok = fs::read_to_string(proc_v6.join(format!("{up_if}/proxy_ndp")))
-        .is_ok_and(|s| s.trim() == "1");
+    let ok = fs::read_to_string(proc_v6.join(format!("{new_up_if}/proxy_ndp")))
+        .is_ok_and(|text| text.trim() == "1");
     if !ok {
         log_err(
             ctx.env,
             "net",
-            &format!("IPv6 邻居代理未生效（{up_if} proxy_ndp 写入失败）"),
+            &format!("IPv6 邻居代理未生效（{new_up_if} proxy_ndp 写入失败）"),
         );
-        fsx::write_logged(ctx.env, run.join("net.v6vm"), format!("{wan}\n"));
+        fsx::write_logged(ctx.env, run.join("net.v6vm"), format!("{new_wan}\n"));
         v6_proxy_remove(ctx, Some("proxy_ndp 未生效"));
         return false;
     }
 
-    fsx::write_logged(ctx.env, run.join("net.v6vm"), format!("{wan}\n"));
-    v6_write_wan(ctx.env, &wan);
+    fsx::write_logged(ctx.env, run.join("net.v6vm"), format!("{new_wan}\n"));
+    v6_write_wan(ctx.env, &new_wan);
     fsx::touch_logged(ctx.env, run.join("net.v6proxy"));
     log_info(
         ctx.env,
         "net",
         &format!(
-            "IPv6 邻居代理已开启：{wan} dev {up_if}（运营商若只放行本机地址，则可能无法出网）"
+            "IPv6 邻居代理已开启：{new_wan} dev {new_up_if}（运营商若只放行本机地址，则可能无法出网）"
         ),
     );
     true
@@ -351,7 +351,7 @@ fn nft_cmd(args: &[&str]) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|s| s.success())
+        .is_ok_and(|exit_status| exit_status.success())
 }
 
 #[must_use]
@@ -419,16 +419,16 @@ pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[Stri
         "accept",
     ]);
     if vm_v6(ctx.env) {
-        for o in outs6 {
+        for out6 in outs6 {
             nft_run(&[
-                "add", "rule", "inet", "xr_v6", "fwd", "iifname", XR_IF, "oifname", o, "accept",
+                "add", "rule", "inet", "xr_v6", "fwd", "iifname", XR_IF, "oifname", out6, "accept",
             ]);
         }
     }
     let active_routes: Vec<String> = fs::read_to_string(run.join("routes.active"))
         .unwrap_or_default()
         .lines()
-        .filter(|l| l.contains(':'))
+        .filter(|line| line.contains(':'))
         .map(str::to_owned)
         .collect();
     for i in ex {
@@ -436,18 +436,18 @@ pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[Stri
             "add", "rule", "inet", "xr_v6", "fwd", "iifname", i, "oifname", XR_IF, "ip6", "daddr",
             &net6, "accept",
         ]);
-        for c in &active_routes {
+        for route in &active_routes {
             nft_run(&[
                 "add", "rule", "inet", "xr_v6", "fwd", "iifname", i, "oifname", XR_IF, "ip6",
-                "daddr", c, "accept",
+                "daddr", route, "accept",
             ]);
         }
     }
     let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
-    for o in outs6 {
-        if !ex_set.contains(o.as_str()) {
+    for iface in outs6 {
+        if !ex_set.contains(iface.as_str()) {
             nft_run(&[
-                "add", "rule", "inet", "xr_v6", "fwd", "iifname", o, "oifname", XR_IF, "drop",
+                "add", "rule", "inet", "xr_v6", "fwd", "iifname", iface, "oifname", XR_IF, "drop",
             ]);
         }
     }
@@ -483,10 +483,10 @@ pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[Stri
                     "admin-prohibited",
                 ]);
             }
-            for o in outs6 {
+            for out_if in outs6 {
                 nft_run(&[
-                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", &i, "oifname", o, "meta",
-                    "l4proto", "tcp", "reject", "with", "tcp", "reset",
+                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", &i, "oifname", out_if,
+                    "meta", "l4proto", "tcp", "reject", "with", "tcp", "reset",
                 ]);
                 nft_run(&[
                     "add",
@@ -497,7 +497,7 @@ pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[Stri
                     "iifname",
                     &i,
                     "oifname",
-                    o,
+                    out_if,
                     "reject",
                     "with",
                     "icmpv6",
