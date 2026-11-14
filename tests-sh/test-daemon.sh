@@ -106,6 +106,24 @@ chk '[ "$(grep -c "系统关机，服务随之停止" "$LOG")" = 1 ]'
 chk '! grep -v "^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9:]* \[" "$LOG" | grep -q .'
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"
 
+# 4c. 守护进程状态机与 quit 命令：就绪后过 STABLE_SEC 变 stable 并写 last_good；
+#     quit（daemon.cmd + USR1）先停虚拟机、做一次流量快照，再回 daemon.res=0 并删除 daemon.pid
+MOCK="$T/mock"; mkdir -p "$MOCK"; : > "$MOCK/chain.XR_ACCT_UP"; : > "$MOCK/chain.XR_ACCT_DN"
+export MOCK XR_SYSBIN="$ROOT/tests-sh/mock/net"
+rm -f "$XR_DATA/config/last_good" "$RUN/shutdown" "$RUN/shutdown.noted"   # 4b 的关机标记
+chk '$XR start'
+dpid="$(cat "$RUN/daemon.pid")"
+w=0; while [ "$(cat "$RUN/state" 2>/dev/null)" != stable ] && [ "$w" -lt 20 ]; do sleep 1; w=$((w+1)); done
+chk '[ "$(cat "$RUN/state")" = stable ] && [ -s "$XR_DATA/config/last_good" ]'
+: > "$MOCK/calls"; rm -f "$RUN/daemon.res"
+echo quit > "$RUN/daemon.cmd"; kill -USR1 "$dpid"
+w=0; while [ ! -f "$RUN/daemon.res" ] && [ "$w" -lt 30 ]; do sleep 1; w=$((w+1)); done
+chk '[ "$(cat "$RUN/daemon.res")" = 0 ]'
+w=0; while is_pid_running "$dpid" && [ "$w" -lt 10 ]; do sleep 1; w=$((w+1)); done
+chk '[ ! -f "$RUN/daemon.pid" ] && ! is_pid_running "$dpid" && ! $XR running'
+chk 'grep -q -- "-nvxL XR_ACCT_UP" "$MOCK/calls"'
+unset XR_SYSBIN
+
 # 5. 卸载结束守护进程并取消通知（mock 中 cmd 可能不存在）
 echo still > "$T/data/log/module.log"
 MODDIR="$T/mod" sh "$T/mod/uninstall.sh"

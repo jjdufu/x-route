@@ -97,6 +97,10 @@ exit 0
 D
 chmod +x "$T/bin/dumpsys"
 XR_SYSBIN="$ROOT/tests-sh/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
+# 卸载调用序列金样（tests-sh/golden/uninstall.calls）：临时目录换成 @T@；XR_GOLDEN_RECORD=1 时改为录制
+sed -e "s#$T#@T@#g" "$MOCK/calls" > "$T/uninstall.cur"
+if [ -n "${XR_GOLDEN_RECORD:-}" ]; then mkdir -p "$ROOT/tests-sh/golden"; cp "$T/uninstall.cur" "$ROOT/tests-sh/golden/uninstall.calls"
+elif ! diff -u "$ROOT/tests-sh/golden/uninstall.calls" "$T/uninstall.cur"; then echo "FAIL: 卸载调用序列金样"; fail=1; fi
 for c in "ip6tables -X XR_FWD6" "ip6tables -t nat -X XR_NAT6" "iptables -X XR_FWD" "ip -6 route flush table 233" "ip route flush table 233" "ip route flush table 97 dev xr0"; do
   chk 'grep -qx "$c" "$MOCK/calls"'
 done

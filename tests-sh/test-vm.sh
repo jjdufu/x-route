@@ -20,12 +20,25 @@ cp "$T/mod/config/config.conf" "$CONF"
 sed -i 's/^READY_TIMEOUT_SEC=.*/READY_TIMEOUT_SEC="6"/; s/^STABLE_SEC=.*/STABLE_SEC="5"/' "$CONF"
 echo k > "$IMG/Image"; truncate -s 300M "$ROOTFS"; truncate -s 1M "$T/r"; gzip -c "$T/r" > "$IMG/openwrt-rootfs.img.gz"
 VM="sh $T/mod/scripts/vm.sh"
+# crosvm 参数金样（tests-sh/golden/crosvm-<名>.args）：临时目录、仓库路径、xr.time 换成占位符；
+# XR_GOLDEN_RECORD=1 时改为录制
+GOLD="$ROOT/tests-sh/golden"
+golden_args() { sed -e "s#$T#@T@#g" -e "s#$ROOT#@ROOT@#g" -e 's/xr\.time=[0-9]*/xr.time=@TIME@/' "$T/args" > "$T/args.cur"
+  if [ -n "${XR_GOLDEN_RECORD:-}" ]; then mkdir -p "$GOLD"; cp "$T/args.cur" "$GOLD/crosvm-$1.args"
+  elif ! diff -u "$GOLD/crosvm-$1.args" "$T/args.cur"; then echo "FAIL: crosvm 参数金样 $1"; fail=1; fi; }
+# 启动前清理的客侧控制文件（vm.rs 启动流程中的清理列表）
+GUEST_STALE="host/ipv6.cmd guest/ipv6 host/diag.cmd guest/diag.txt host/hotspot.cmd guest/hotspot host/acct.cmd guest/acct guest/openclash.status guest/openvpn.tunnels guest/openvpn.status guest/openvpn.addr guest/openvpn.routes"
 
 # 1. 正常启动 -> 就绪 -> 稳定 -> last_good（且刷新 host/time、清理上一次客侧 openvpn 残留）
 mkdir -p "$RUN/guest/host" "$RUN/guest/guest"
 echo 1000000000 > "$RUN/guest/host/time"
 echo up > "$RUN/guest/guest/openvpn.status"
+for f in $GUEST_STALE; do echo stale > "$RUN/guest/$f"; done
 $VM start; chk '[ $? -eq 0 ]'
+golden_args default
+stale_left=""; for f in $GUEST_STALE; do [ -e "$RUN/guest/$f" ] && stale_left="$stale_left $f"; done
+chk '[ -z "$stale_left" ]'
+chk '[ -f "$RUN/crosvm.pid" ] && [ "$(cat "$RUN/share.mode" 2>/dev/null || echo off)" = off ]'
 chk '[ "$(cat "$RUN/guest/host/time")" -gt 1700000000 ] && [ ! -f "$RUN/guest/guest/openvpn.status" ]'
 chk 'grep -qx -- "--no-balloon" "$T/args" && grep -qx -- "--protected-vm-without-firmware" "$T/args"'
 chk 'grep -qx -- "--swiotlb" "$T/args" && grep -qx "64" "$T/args" && grep -qx "768" "$T/args"'
@@ -76,6 +89,22 @@ $VM expand 100; chk '[ $? -ne 0 ]'
 $VM expand 2048; chk '[ "$(stat -c %s "$ROOTFS")" -eq $((2048*1048576)) ] && grep -q "VM_DISK_SIZE_MB=\"2048\"" "$CONF"'
 echo x > "$LAST_GOOD"; $VM reset-disk
 chk '[ "$(stat -c %s "$ROOTFS")" -eq $((2048*1048576)) ] && [ ! -f "$LAST_GOOD" ]'
+
+# 熔断未确认：返回码与文案
+date > "$TRIPPED"; $VM start; rc=$?; rm -f "$TRIPPED"
+chk '[ "$rc" -ne 0 ] && [ ! -f "$RUN/crosvm.pid" ]'
+# 8. crosvm 参数金样：每次只改一项，其余为默认配置
+cp "$T/mod/config/config.conf" "$CONF"
+sed -i 's/^READY_TIMEOUT_SEC=.*/READY_TIMEOUT_SEC="6"/; s/^STABLE_SEC=.*/STABLE_SEC="5"/' "$CONF"
+for v in "VM_NET=0" "VM_DISK_RW=0" "VM_WAKELOCK=0"; do
+  cp "$CONF" "$T/conf.base"; sed -i "s/^${v%%=*}=.*/${v%%=*}=\"${v#*=}\"/" "$CONF"
+  $VM start; golden_args "$(echo "${v%%=*}-${v#*=}" | tr 'A-Z_' 'a-z-')"; $VM stop; cp "$T/conf.base" "$CONF"
+done
+# 只读共享（VM_SHARE=1 ro）要在 unshare 的挂载命名空间里执行 mount，本机模拟环境做不到，见真机待测清单
+# 缺内核镜像：启动失败
+mv "$IMG/Image" "$IMG/Image.bak"; $VM start; rc=$?; mv "$IMG/Image.bak" "$IMG/Image"
+chk '[ "$rc" -ne 0 ] && [ ! -f "$RUN/crosvm.pid" ]'
+chk '[ "$(cat "$RUN/last_error")" = 缺少虚拟化组件或系统镜像 ]'
 
 [ "$fail" = 0 ] && echo "test-vm OK"
 exit "$fail"
