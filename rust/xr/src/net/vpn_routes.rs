@@ -60,12 +60,11 @@ pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     for line in out.stdout.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         for (idx, tok) in tokens.iter().enumerate() {
-            if *tok == "dev" {
-                if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                    if *dev != XR_IF {
-                        set.extend(iter::once((*dev).to_owned()));
-                    }
-                }
+            if *tok == "dev"
+                && let Some(dev) = tokens.get(idx.saturating_add(1))
+                && *dev != XR_IF
+            {
+                set.extend(iter::once((*dev).to_owned()));
             }
         }
     }

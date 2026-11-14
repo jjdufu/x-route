@@ -115,12 +115,11 @@ pub fn status_json(env: &Env) -> String {
                     && fs::metadata(&p).is_ok_and(|m| m.len() > 0)
                 {
                     vcfg = true;
-                    if let Some(id) = p.file_stem().and_then(|s| s.to_str()) {
-                        if fs::read_to_string(vpn_dir.join(format!("{id}.enabled")))
+                    if let Some(id) = p.file_stem().and_then(|s| s.to_str())
+                        && fs::read_to_string(vpn_dir.join(format!("{id}.enabled")))
                             .is_ok_and(|s| s.trim() == "1")
-                        {
-                            ven = true;
-                        }
+                    {
+                        ven = true;
                     }
                 }
             }

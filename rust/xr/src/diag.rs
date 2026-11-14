@@ -76,12 +76,11 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
         };
         for line in content.lines() {
             let mut parts = line.split_whitespace();
-            if parts.next() == Some("remote") {
-                if let Some(host) = parts.next() {
-                    if !host.is_empty() {
-                        hosts.extend(std::iter::once(host.to_owned()));
-                    }
-                }
+            if parts.next() == Some("remote")
+                && let Some(host) = parts.next()
+                && !host.is_empty()
+            {
+                hosts.extend(std::iter::once(host.to_owned()));
             }
         }
     }
@@ -452,19 +451,19 @@ pub fn diag_phone(env: &Env) -> String {
         }
     }
     for f in status_files {
-        if f.is_file() {
-            if let Ok(raw) = fs::read(&f) {
-                let slice = raw.get(..raw.len().min(300)).unwrap_or(&[]);
-                let val = String::from_utf8_lossy(slice).replace('\n', " ");
-                let rel = f.strip_prefix(&run).map_or_else(
-                    |_| f.to_string_lossy().into_owned(),
-                    |p| p.to_string_lossy().into_owned(),
-                );
-                out.push_str(&rel);
-                out.push('=');
-                out.push_str(&val);
-                out.push('\n');
-            }
+        if f.is_file()
+            && let Ok(raw) = fs::read(&f)
+        {
+            let slice = raw.get(..raw.len().min(300)).unwrap_or(&[]);
+            let val = String::from_utf8_lossy(slice).replace('\n', " ");
+            let rel = f.strip_prefix(&run).map_or_else(
+                |_| f.to_string_lossy().into_owned(),
+                |p| p.to_string_lossy().into_owned(),
+            );
+            out.push_str(&rel);
+            out.push('=');
+            out.push_str(&val);
+            out.push('\n');
         }
     }
     out.push('\n');
@@ -484,12 +483,12 @@ pub fn diag_guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     let expected = format!("ts={ts}");
     let iters = wait_secs.saturating_mul(2);
     for _ in 0..iters {
-        if let Ok(content) = fs::read_to_string(&diag_txt) {
-            if content.lines().next().unwrap_or("") == expected {
-                let now = Local::now().format("%Y-%m-%d %H:%M:%S");
-                let rest: Vec<&str> = content.lines().skip(1).collect();
-                return Ok(format!("### OpenWrt 快照 {now}\n{}\n", rest.join("\n")));
-            }
+        if let Ok(content) = fs::read_to_string(&diag_txt)
+            && content.lines().next().unwrap_or("") == expected
+        {
+            let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+            let rest: Vec<&str> = content.lines().skip(1).collect();
+            return Ok(format!("### OpenWrt 快照 {now}\n{}\n", rest.join("\n")));
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -744,13 +743,13 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     if let Ok(rd) = fs::read_dir(&raw_dir) {
         for ent in rd.flatten() {
             let p = ent.path();
-            if p.is_file() {
-                if let Some(bn) = p.file_name().and_then(|s| s.to_str()) {
-                    let bytes = fs::read(&p).unwrap_or_default();
-                    let raw_text = String::from_utf8_lossy(&bytes);
-                    let red = diag_redact(env, &raw_text);
-                    fsx::write_logged(env, pack_dir.join(bn), red);
-                }
+            if p.is_file()
+                && let Some(bn) = p.file_name().and_then(|s| s.to_str())
+            {
+                let bytes = fs::read(&p).unwrap_or_default();
+                let raw_text = String::from_utf8_lossy(&bytes);
+                let red = diag_redact(env, &raw_text);
+                fsx::write_logged(env, pack_dir.join(bn), red);
             }
         }
     }

@@ -72,10 +72,10 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
     };
     let mut bytes_vec = Vec::new();
     for line in out.stdout.lines().skip(2) {
-        if let Some(tok) = line.split_whitespace().nth(1) {
-            if tok.bytes().all(|b| b.is_ascii_digit()) {
-                bytes_vec.push(tok.parse::<u64>().unwrap_or(0));
-            }
+        if let Some(tok) = line.split_whitespace().nth(1)
+            && tok.bytes().all(|b| b.is_ascii_digit())
+        {
+            bytes_vec.push(tok.parse::<u64>().unwrap_or(0));
         }
     }
     let Some((&wan, lan_slice)) = bytes_vec.split_last() else {

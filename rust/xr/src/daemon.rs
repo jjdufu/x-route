@@ -108,13 +108,12 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         .unwrap_or_default()
         .trim()
         .to_owned();
-    if is_pid_running(env, &wp) {
-        if let Some(cmd) = proc_cmdline(env, &wp) {
-            if cmd.contains("watchdog") || cmd.contains("xr") {
-                note_ok(env, "cgroup_escape", cgroup_escape(env, &wp));
-                return true;
-            }
-        }
+    if is_pid_running(env, &wp)
+        && let Some(cmd) = proc_cmdline(env, &wp)
+        && (cmd.contains("watchdog") || cmd.contains("xr"))
+    {
+        note_ok(env, "cgroup_escape", cgroup_escape(env, &wp));
+        return true;
     }
     if spawn_self_detached(env, &["internal", "watchdog"]).is_err() {
         log_err(env, "daemon", "看门狗未能启动");
@@ -362,18 +361,18 @@ pub fn daemon_loop(env: &Env) -> i32 {
                                         .map(|ticks| ticks / 100)
                                 })
                         });
-                    if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env)) {
-                        if now.saturating_sub(r0) >= cfg.stable_sec() {
-                            fsx::remove_logged(env, env.fuse_file());
-                            fsx::remove_logged(env, env.boot_log());
-                            fsx::write_logged(
-                                env,
-                                env.last_good_file(),
-                                format!("{}\n", crate::config::config_hash(env)),
-                            );
-                            fsx::write_logged(env, run.join("state"), "stable\n");
-                            log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
-                        }
+                    if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env))
+                        && now.saturating_sub(r0) >= cfg.stable_sec()
+                    {
+                        fsx::remove_logged(env, env.fuse_file());
+                        fsx::remove_logged(env, env.boot_log());
+                        fsx::write_logged(
+                            env,
+                            env.last_good_file(),
+                            format!("{}\n", crate::config::config_hash(env)),
+                        );
+                        fsx::write_logged(env, run.join("state"), "stable\n");
+                        log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
                     }
                 }
             }

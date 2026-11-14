@@ -103,10 +103,8 @@ impl<'a> NetCtx<'a> {
     #[must_use]
     pub fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
-        if is_mock {
-            if let Some(p) = path.parent() {
-                fsx::mkdirs_logged(self.env, p);
-            }
+        if is_mock && let Some(p) = path.parent() {
+            fsx::mkdirs_logged(self.env, p);
         }
         let ok = OpenOptions::new()
             .write(true)
@@ -197,10 +195,10 @@ pub fn read_quad(path: &Path) -> [u64; 4] {
     let mut vals = [0_u64; 4];
     let mut parts = first_line.split_whitespace();
     for slot in &mut vals {
-        if let Some(tok) = parts.next() {
-            if tok.bytes().all(|b| b.is_ascii_digit()) {
-                *slot = tok.parse::<u64>().unwrap_or(0);
-            }
+        if let Some(tok) = parts.next()
+            && tok.bytes().all(|b| b.is_ascii_digit())
+        {
+            *slot = tok.parse::<u64>().unwrap_or(0);
         }
     }
     vals

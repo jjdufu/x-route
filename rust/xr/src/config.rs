@@ -398,10 +398,10 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
         return false;
     }
     let conf = env.conf_file();
-    if let Some(parent) = conf.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return false;
-        }
+    if let Some(parent) = conf.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return false;
     }
     let existing = fs::read_to_string(&conf).unwrap_or_default();
     let prefix = format!("{key}=");

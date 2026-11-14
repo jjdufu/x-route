@@ -80,10 +80,10 @@ pub fn fuse_arm(env: &Env) {
 
 #[must_use]
 pub fn ready_seen(env: &Env) -> bool {
-    if let Ok(ctl) = fs::read_to_string(env.ctl_log()) {
-        if ctl.lines().any(|l| l.starts_with("XR_READY")) {
-            return true;
-        }
+    if let Ok(ctl) = fs::read_to_string(env.ctl_log())
+        && ctl.lines().any(|l| l.starts_with("XR_READY"))
+    {
+        return true;
     }
     if let Ok(con) = fs::read(env.console_log()) {
         let s = String::from_utf8_lossy(&con);
@@ -96,10 +96,10 @@ pub fn ready_seen(env: &Env) -> bool {
 
 #[must_use]
 pub fn ready_channel(env: &Env) -> &'static str {
-    if let Ok(ctl) = fs::read_to_string(env.ctl_log()) {
-        if ctl.lines().any(|l| l.starts_with("XR_READY")) {
-            return "hvc";
-        }
+    if let Ok(ctl) = fs::read_to_string(env.ctl_log())
+        && ctl.lines().any(|l| l.starts_with("XR_READY"))
+    {
+        return "hvc";
     }
     if let Ok(con) = fs::read(env.console_log()) {
         let s = String::from_utf8_lossy(&con);
@@ -263,10 +263,8 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
             }
         }
     }
-    if !any {
-        if let Some(f) = first {
-            fsx::copy_logged(env, f, host_dir.join("openvpn.ovpn"));
-        }
+    if !any && let Some(f) = first {
+        fsx::copy_logged(env, f, host_dir.join("openvpn.ovpn"));
     }
     Some(any)
 }
@@ -637,12 +635,10 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         format!("{}\n", std::process::id()),
     );
     fsx::remove_logged(env, env.fuse_file());
-    if !in_watch {
-        if let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
-            let wp = wp.trim();
-            if !wp.is_empty() {
-                send_signal_logged(env, wp, Signal::TERM);
-            }
+    if !in_watch && let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
+        let wp = wp.trim();
+        if !wp.is_empty() {
+            send_signal_logged(env, wp, Signal::TERM);
         }
     }
     let pid = fs::read_to_string(run.join("crosvm.pid"))
@@ -737,15 +733,15 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
                 .and_then(|s| s.trim().parse::<u64>().ok());
             if let (Some(r0), Some(now)) = (ready_at, mono_now(env)) {
                 uptime_s = now.saturating_sub(r0);
-            } else if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat")) {
-                if let (Some(st), Some(now)) = (
+            } else if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat"))
+                && let (Some(st), Some(now)) = (
                     stat.split_whitespace()
                         .nth(21)
                         .and_then(|s| s.parse::<u64>().ok()),
                     mono_now(env),
-                ) {
-                    uptime_s = now.saturating_sub(st / 100);
-                }
+                )
+            {
+                uptime_s = now.saturating_sub(st / 100);
             }
         }
     }

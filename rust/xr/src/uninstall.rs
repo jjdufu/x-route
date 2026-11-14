@@ -144,10 +144,10 @@ pub fn uninstall_standard(env: &Env) -> i32 {
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
             let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("pid") {
-                if let Ok(pid) = fs::read_to_string(&p) {
-                    send_signal_logged(env, pid.trim(), Signal::TERM);
-                }
+            if p.extension().and_then(|s| s.to_str()) == Some("pid")
+                && let Ok(pid) = fs::read_to_string(&p)
+            {
+                send_signal_logged(env, pid.trim(), Signal::TERM);
             }
         }
     }
@@ -160,10 +160,10 @@ pub fn uninstall_standard(env: &Env) -> i32 {
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
             let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("pid") {
-                if let Ok(pid) = fs::read_to_string(&p) {
-                    send_signal_logged(env, pid.trim(), Signal::KILL);
-                }
+            if p.extension().and_then(|s| s.to_str()) == Some("pid")
+                && let Ok(pid) = fs::read_to_string(&p)
+            {
+                send_signal_logged(env, pid.trim(), Signal::KILL);
             }
         }
     }

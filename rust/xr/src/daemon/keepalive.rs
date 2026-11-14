@@ -499,10 +499,10 @@ pub fn stale_gateway(env: &Env) -> bool {
     }
     if xr_vm_alive(env) {
         let car = env.sysnet.join("xr0/carrier");
-        if let Ok(c) = fs::read_to_string(car) {
-            if c.trim() == "0" {
-                return true;
-            }
+        if let Ok(c) = fs::read_to_string(car)
+            && c.trim() == "0"
+        {
+            return true;
         }
         return false;
     }

@@ -60,10 +60,10 @@ fn net_lock(env: &Env) -> PathLock {
 pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     let out = ctx.ip(&["rule"]);
     for line in out.stdout.lines() {
-        if let Some((_, rhs)) = line.split_once("fwmark 0x0/0xffff iif lo lookup ") {
-            if let Some(iface) = rhs.split_whitespace().next() {
-                return iface.to_owned();
-            }
+        if let Some((_, rhs)) = line.split_once("fwmark 0x0/0xffff iif lo lookup ")
+            && let Some(iface) = rhs.split_whitespace().next()
+        {
+            return iface.to_owned();
         }
     }
     String::new()
@@ -81,10 +81,10 @@ pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         if tokens.first().copied() == Some("default") {
             for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev" {
-                    if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                        set.extend(iter::once((*dev).to_owned()));
-                    }
+                if *tok == "dev"
+                    && let Some(dev) = tokens.get(idx.saturating_add(1))
+                {
+                    set.extend(iter::once((*dev).to_owned()));
                 }
             }
         }
@@ -106,12 +106,11 @@ pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         if tokens.first().copied() == Some("default") {
             for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev" {
-                    if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                        if !dev.starts_with("v4-") {
-                            set.extend(iter::once((*dev).to_owned()));
-                        }
-                    }
+                if *tok == "dev"
+                    && let Some(dev) = tokens.get(idx.saturating_add(1))
+                    && !dev.starts_with("v4-")
+                {
+                    set.extend(iter::once((*dev).to_owned()));
                 }
             }
         }
@@ -145,12 +144,11 @@ pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
 pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     let mut m: u32 = 1500;
     for o in outs {
-        if let Ok(raw) = fs::read_to_string(ctx.env.sysnet.join(o).join("mtu")) {
-            if let Ok(v) = raw.trim().parse::<u32>() {
-                if v < m {
-                    m = v;
-                }
-            }
+        if let Ok(raw) = fs::read_to_string(ctx.env.sysnet.join(o).join("mtu"))
+            && let Ok(v) = raw.trim().parse::<u32>()
+            && v < m
+        {
+            m = v;
         }
     }
     if !up.is_empty() {
@@ -162,15 +160,13 @@ pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
                 let tokens: Vec<&str> = line.split_whitespace().collect();
                 if tokens.first().copied() == Some("default") {
                     for (idx, tok) in tokens.iter().enumerate() {
-                        if *tok == "mtu" {
-                            if let Some(v) = tokens
+                        if *tok == "mtu"
+                            && let Some(v) = tokens
                                 .get(idx.saturating_add(1))
                                 .and_then(|s| s.parse::<u32>().ok())
-                            {
-                                if v < m {
-                                    m = v;
-                                }
-                            }
+                            && v < m
+                        {
+                            m = v;
                         }
                     }
                 }
@@ -1176,15 +1172,15 @@ pub fn net_down(env: &Env) -> i32 {
     let ctx = NetCtx::new(env, &cfg);
     let run = env.run_dir();
 
-    if let Ok(w) = fs::read_to_string(run.join("net_watch.pid")) {
-        if !send_signal(&w, rustix::process::Signal::TERM) {
-            dlog(
-                env,
-                &cfg,
-                "net",
-                &format!("net_watch（pid {}）已不在，无需停止", w.trim()),
-            );
-        }
+    if let Ok(w) = fs::read_to_string(run.join("net_watch.pid"))
+        && !send_signal(&w, rustix::process::Signal::TERM)
+    {
+        dlog(
+            env,
+            &cfg,
+            "net",
+            &format!("net_watch（pid {}）已不在，无需停止", w.trim()),
+        );
     }
     {
         let _lock = net_lock(env);

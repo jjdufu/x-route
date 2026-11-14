@@ -495,10 +495,10 @@ pub fn hs_subnet_clash(
         for line in text.lines() {
             let tokens: Vec<&str> = line.split_whitespace().collect();
             for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev" {
-                    if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                        skip.push((*dev).to_owned());
-                    }
+                if *tok == "dev"
+                    && let Some(dev) = tokens.get(idx.saturating_add(1))
+                {
+                    skip.push((*dev).to_owned());
                 }
             }
         }

@@ -458,15 +458,13 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
         ctx.ip_run(&["link", "set", HS_TAP, "nomaster"]);
     }
     ctx.ip_run(&["link", "del", HS_BR]);
-    if vm_alive(ctx.env) && hs_guest_ok(ctx.env) {
-        if !hs_guest_cmd(ctx.env, "off", 5) {
-            dlog(
-                ctx.env,
-                ctx.cfg,
-                "hotspot",
-                "客机 5 秒内未确认关闭热点，继续拆桥",
-            );
-        }
+    if vm_alive(ctx.env) && hs_guest_ok(ctx.env) && !hs_guest_cmd(ctx.env, "off", 5) {
+        dlog(
+            ctx.env,
+            ctx.cfg,
+            "hotspot",
+            "客机 5 秒内未确认关闭热点，继续拆桥",
+        );
     }
     if !iface.is_empty()
         && !cidr.is_empty()

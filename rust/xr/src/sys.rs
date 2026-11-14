@@ -173,10 +173,10 @@ pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     if env.proc_base != Path::new("/proc") {
         let fake_dir = env.proc_base.join(trimmed);
         if fake_dir.is_dir() {
-            if let Ok(st) = fs::read_to_string(fake_dir.join("stat")) {
-                if is_zombie_stat(&st) {
-                    return false;
-                }
+            if let Ok(st) = fs::read_to_string(fake_dir.join("stat"))
+                && is_zombie_stat(&st)
+            {
+                return false;
             }
             return true;
         }
@@ -188,10 +188,10 @@ pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
         return false;
     }
     let stat_path = PathBuf::from(format!("/proc/{raw_pid}/stat"));
-    if let Ok(st) = fs::read_to_string(stat_path) {
-        if is_zombie_stat(&st) {
-            return false;
-        }
+    if let Ok(st) = fs::read_to_string(stat_path)
+        && is_zombie_stat(&st)
+    {
+        return false;
     }
     true
 }
@@ -396,12 +396,11 @@ pub fn cgroup_in_apps(env: &Env, pid_str: &str) -> bool {
 fn is_uid_pid_cgroup(path: &str) -> bool {
     let segs: Vec<&str> = path.split('/').collect();
     for (idx, seg) in segs.iter().enumerate() {
-        if seg.starts_with("uid_") {
-            if let Some(next) = segs.get(idx.saturating_add(1)) {
-                if next.starts_with("pid_") {
-                    return true;
-                }
-            }
+        if seg.starts_with("uid_")
+            && let Some(next) = segs.get(idx.saturating_add(1))
+            && next.starts_with("pid_")
+        {
+            return true;
         }
     }
     false

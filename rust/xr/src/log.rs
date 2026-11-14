@@ -111,14 +111,13 @@ pub fn xr_now(env: &Env) -> String {
             return s;
         }
     }
-    if is_executable(&env.bb) {
-        if let Ok(out) = Command::new(&env.bb).args(["date", "+%F %T"]).output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                if !s.is_empty() {
-                    return s;
-                }
-            }
+    if is_executable(&env.bb)
+        && let Ok(out) = Command::new(&env.bb).args(["date", "+%F %T"]).output()
+        && out.status.success()
+    {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !s.is_empty() {
+            return s;
         }
     }
     let up = fs::read_to_string(&env.proc_uptime)
@@ -281,14 +280,13 @@ pub fn boot_clean_run(env: &Env) -> bool {
     let run_s = run.to_string_lossy();
     let pat_slash = format!(" {run_s}/");
     let pat_space = format!(" {run_s} ");
-    if let Ok(mounts) = fs::read_to_string(&env.proc_mounts) {
-        if mounts
+    if let Ok(mounts) = fs::read_to_string(&env.proc_mounts)
+        && mounts
             .lines()
             .any(|l| l.contains(&pat_slash) || l.contains(&pat_space))
-        {
-            log_err(env, "service", "run/ 下存在挂载点，跳过开机清理");
-            return false;
-        }
+    {
+        log_err(env, "service", "run/ 下存在挂载点，跳过开机清理");
+        return false;
     }
     fsx::mkdirs_logged(env, &env.log_dir());
     let con = env.console_log();

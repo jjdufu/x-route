@@ -171,49 +171,50 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let mut out = Vec::new();
     let tun_file = env.run_dir().join("guest/guest/openvpn.tunnels");
     let alive = vm_running(env);
-    if alive && fs::metadata(&tun_file).is_ok_and(|m| m.len() > 0) {
-        if let Ok(content) = fs::read_to_string(&tun_file) {
-            for line in content.lines() {
-                let mut parts = line.splitn(5, '|');
-                let dev = parts.next().unwrap_or("");
-                if dev.is_empty() {
-                    continue;
-                }
-                let raw_nm = parts.next().unwrap_or("");
-                let ad = parts.next().unwrap_or("");
-                let mt = parts
-                    .next()
-                    .unwrap_or("0")
-                    .trim()
-                    .parse::<u64>()
-                    .unwrap_or(0);
-                let rt = parts.next().unwrap_or("");
-                let nm = if raw_nm == "xrouter" && !vn.is_empty() {
-                    vn.clone()
-                } else {
-                    let nf = env.vpn_dir().join(format!("{raw_nm}.name"));
-                    if nf.is_file() {
-                        fs::read_to_string(nf)
-                            .unwrap_or_else(|_| raw_nm.to_owned())
-                            .trim()
-                            .to_owned()
-                    } else {
-                        raw_nm.to_owned()
-                    }
-                };
-                let routes: Vec<&str> = rt
-                    .split(|c: char| c == ',' || c.is_whitespace())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                out.push(json!({
-                    "dev": dev,
-                    "name": nm,
-                    "status": "up",
-                    "addr": ad,
-                    "mtu": mt,
-                    "routes": routes,
-                }));
+    if alive
+        && fs::metadata(&tun_file).is_ok_and(|m| m.len() > 0)
+        && let Ok(content) = fs::read_to_string(&tun_file)
+    {
+        for line in content.lines() {
+            let mut parts = line.splitn(5, '|');
+            let dev = parts.next().unwrap_or("");
+            if dev.is_empty() {
+                continue;
             }
+            let raw_nm = parts.next().unwrap_or("");
+            let ad = parts.next().unwrap_or("");
+            let mt = parts
+                .next()
+                .unwrap_or("0")
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(0);
+            let rt = parts.next().unwrap_or("");
+            let nm = if raw_nm == "xrouter" && !vn.is_empty() {
+                vn.clone()
+            } else {
+                let nf = env.vpn_dir().join(format!("{raw_nm}.name"));
+                if nf.is_file() {
+                    fs::read_to_string(nf)
+                        .unwrap_or_else(|_| raw_nm.to_owned())
+                        .trim()
+                        .to_owned()
+                } else {
+                    raw_nm.to_owned()
+                }
+            };
+            let routes: Vec<&str> = rt
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|s| !s.is_empty())
+                .collect();
+            out.push(json!({
+                "dev": dev,
+                "name": nm,
+                "status": "up",
+                "addr": ad,
+                "mtu": mt,
+                "routes": routes,
+            }));
         }
     }
     if out.is_empty() && env.xr_data.join("config/openvpn.ovpn").is_file() {
@@ -394,16 +395,16 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
         for ent in rd.flatten() {
             let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
-                if let Some(eid) = p.file_stem().and_then(|s| s.to_str()) {
-                    let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned();
-                    if enm == bn {
-                        eid.clone_into(&mut id);
-                        break;
-                    }
+            if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
+                && let Some(eid) = p.file_stem().and_then(|s| s.to_str())
+            {
+                let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                if enm == bn {
+                    eid.clone_into(&mut id);
+                    break;
                 }
             }
         }
@@ -492,15 +493,16 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             return (0, "{\"ok\":true}".to_owned());
         }
         let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
-        if want && !multi {
-            if let Ok(rd) = fs::read_dir(&vpn_dir) {
-                for ent in rd.flatten() {
-                    let p = ent.path();
-                    if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
-                        if let Some(oid) = p.file_stem().and_then(|s| s.to_str()) {
-                            fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
-                        }
-                    }
+        if want
+            && !multi
+            && let Ok(rd) = fs::read_dir(&vpn_dir)
+        {
+            for ent in rd.flatten() {
+                let p = ent.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
+                    && let Some(oid) = p.file_stem().and_then(|s| s.to_str())
+                {
+                    fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
                 }
             }
         }
@@ -557,35 +559,35 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         env.xr_data.join("config/openvpn.enabled"),
         if want { "1\n" } else { "0\n" },
     );
-    if vpn_dir.is_dir() {
-        if let Ok(rd) = fs::read_dir(&vpn_dir) {
-            let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
-            paths.sort();
-            let mut has_en = false;
-            let mut first_id: Option<String> = None;
-            for p in &paths {
-                if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                    && fs::metadata(p).is_ok_and(|m| m.len() > 0)
+    if vpn_dir.is_dir()
+        && let Ok(rd) = fs::read_dir(&vpn_dir)
+    {
+        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        let mut has_en = false;
+        let mut first_id: Option<String> = None;
+        for p in &paths {
+            if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
+                && fs::metadata(p).is_ok_and(|m| m.len() > 0)
+                && let Some(vid) = p.file_stem().and_then(|s| s.to_str())
+            {
+                if first_id.is_none() {
+                    first_id = Some(vid.to_owned());
+                }
+                if !want {
+                    fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
+                } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
+                    .is_ok_and(|s| s.trim() == "1")
                 {
-                    if let Some(vid) = p.file_stem().and_then(|s| s.to_str()) {
-                        if first_id.is_none() {
-                            first_id = Some(vid.to_owned());
-                        }
-                        if !want {
-                            fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
-                        } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
-                            .is_ok_and(|s| s.trim() == "1")
-                        {
-                            has_en = true;
-                        }
-                    }
+                    has_en = true;
                 }
             }
-            if want && !has_en {
-                if let Some(fid) = first_id {
-                    fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
-                }
-            }
+        }
+        if want
+            && !has_en
+            && let Some(fid) = first_id
+        {
+            fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
         }
     }
     if !vm_running(env) {

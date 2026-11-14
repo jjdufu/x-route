@@ -58,10 +58,10 @@ pub fn clash_status(env: &Env, alive: bool) -> ClashStatus {
             "installed" => st.installed = val == "1",
             "running" => st.running = val == "1",
             "port" => {
-                if let Ok(p) = val.parse::<u16>() {
-                    if p > 0 {
-                        st.port = p;
-                    }
+                if let Ok(p) = val.parse::<u16>()
+                    && p > 0
+                {
+                    st.port = p;
                 }
             }
             _ => {}
@@ -165,13 +165,12 @@ impl MuxState {
     }
 
     fn send_to_client(&self, client_id: u64, line: String) {
-        if let Ok(clients) = self.clients.lock() {
-            if let Some(ch) = clients.get(&client_id)
-                && ch.tx.send(line).is_err()
-            {
-                // 该客户端的写线程已经结束（连接已断）：这一行无人接收，只计数
-                note_failure(&FAILURES.log);
-            }
+        if let Ok(clients) = self.clients.lock()
+            && let Some(ch) = clients.get(&client_id)
+            && ch.tx.send(line).is_err()
+        {
+            // 该客户端的写线程已经结束（连接已断）：这一行无人接收，只计数
+            note_failure(&FAILURES.log);
         }
     }
 
@@ -231,13 +230,12 @@ impl MuxState {
         };
         let mut target_client: Option<u64> = None;
 
-        if let Some(mux_id) = obj.get("id").and_then(Value::as_str).map(str::to_owned) {
-            if let Ok(mut pending) = self.pending_reqs.lock() {
-                if let Some((cid, orig_id)) = pending.remove(&mux_id) {
-                    target_client = Some(cid);
-                    let _mux_id: Option<Value> = obj.insert("id".to_owned(), orig_id);
-                }
-            }
+        if let Some(mux_id) = obj.get("id").and_then(Value::as_str).map(str::to_owned)
+            && let Ok(mut pending) = self.pending_reqs.lock()
+            && let Some((cid, orig_id)) = pending.remove(&mux_id)
+        {
+            target_client = Some(cid);
+            let _mux_id: Option<Value> = obj.insert("id".to_owned(), orig_id);
         }
 
         if let Some(mux_ws) = obj.get("ws_id").and_then(Value::as_str).map(str::to_owned) {
@@ -253,10 +251,10 @@ impl MuxState {
                         if let Ok(mut by_key) = self.ws_by_key.lock() {
                             let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
                         }
-                        if let Ok(mut clients) = self.clients.lock() {
-                            if let Some(ch) = clients.get_mut(&cid) {
-                                ch.ws_ids.retain(|owned| owned != &mux_ws);
-                            }
+                        if let Ok(mut clients) = self.clients.lock()
+                            && let Some(ch) = clients.get_mut(&cid)
+                        {
+                            ch.ws_ids.retain(|owned| owned != &mux_ws);
                         }
                     }
                     if target_client.is_none() {
@@ -268,10 +266,10 @@ impl MuxState {
             }
         }
 
-        if let Some(cid) = target_client {
-            if let Ok(out) = serde_json::to_string(&val) {
-                self.send_to_client(cid, out);
-            }
+        if let Some(cid) = target_client
+            && let Ok(out) = serde_json::to_string(&val)
+        {
+            self.send_to_client(cid, out);
         }
     }
 
@@ -317,10 +315,10 @@ impl MuxState {
                     let _reopened_key: Option<(u64, String)> =
                         by_key.insert(orig_ws, (client_id, mux_ws.clone()));
                 }
-                if let Ok(mut clients) = self.clients.lock() {
-                    if let Some(ch) = clients.get_mut(&client_id) {
-                        ch.ws_ids.extend(std::iter::once(mux_ws.clone()));
-                    }
+                if let Ok(mut clients) = self.clients.lock()
+                    && let Some(ch) = clients.get_mut(&client_id)
+                {
+                    ch.ws_ids.extend(std::iter::once(mux_ws.clone()));
                 }
                 let _orig_ws_id: Option<Value> =
                     obj.insert("ws_id".to_owned(), Value::String(mux_ws));
@@ -370,10 +368,10 @@ impl MuxState {
                     if let Ok(mut active) = self.active_ws.lock() {
                         let _closed_active: Option<(u64, String)> = active.remove(&mux_ws);
                     }
-                    if let Ok(mut clients) = self.clients.lock() {
-                        if let Some(ch) = clients.get_mut(&owner_cid) {
-                            ch.ws_ids.retain(|owned| owned != &mux_ws);
-                        }
+                    if let Ok(mut clients) = self.clients.lock()
+                        && let Some(ch) = clients.get_mut(&owner_cid)
+                    {
+                        ch.ws_ids.retain(|owned| owned != &mux_ws);
                     }
                     if external_ws_owner.is_some() {
                         self.send_to_client(
@@ -420,10 +418,10 @@ impl MuxState {
             return;
         }
         if !written {
-            if let Some(mid) = mux_req_id {
-                if let Ok(mut pending) = self.pending_reqs.lock() {
-                    let _unsent: Option<(u64, Value)> = pending.remove(&mid);
-                }
+            if let Some(mid) = mux_req_id
+                && let Ok(mut pending) = self.pending_reqs.lock()
+            {
+                let _unsent: Option<(u64, Value)> = pending.remove(&mid);
             }
             if let Some(oid) = orig_id {
                 let mut err = Map::new();
