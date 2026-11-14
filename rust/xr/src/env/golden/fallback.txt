@@ -24,6 +24,8 @@ Env {
     notify_wait: 25,
     notify_interval: 10,
     watchdog_interval: 10,
+    snap_min_bytes: 67108864,
+    snap_max_age: 1800,
     role: Daemon,
     daemon_mode: Detached,
     fake_date_fail: false,

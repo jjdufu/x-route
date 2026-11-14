@@ -143,6 +143,7 @@ s2="$($XR status-json)"
 chk 'echo "$s2" | J "1800<=d[\"traffic\"][\"rate\"][\"total\"][\"up\"]<=2200 and d[\"traffic\"][\"rate\"][\"lan\"][\"up\"]==0 and d[\"traffic\"][\"rate\"][\"total\"][\"down\"]==0" | grep -qx True'
 ls -l --time-style=+%s "$XR_DATA/config" > "$T/cfg.after" 2>/dev/null
 chk 'cmp -s "$T/cfg.before" "$T/cfg.after"'   # 速率查询不写 config 目录下任何文件
+chk '[ ! -e "$RUN/notify.ts" ] && [ ! -e "$RUN/notify.last" ]'   # 通知节流状态只在守护进程内存（需求 3）
 $XR stop >/dev/null 2>&1
 kill "$dpid"; w=0; while is_pid_running "$dpid" && [ "$w" -lt 10 ]; do sleep 1; w=$((w+1)); done
 chk '! is_pid_running "$dpid" && [ ! -e "$RUN/stats.sock" ]'

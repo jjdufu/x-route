@@ -25,6 +25,9 @@ use crate::traffic::acct_total;
 use crate::vm;
 use crate::vm::run_net_hook;
 
+#[cfg(test)]
+mod tests;
+
 /// 把进程移到系统 cgroup（v2 根或 `system`，失败时 v1 `uid_0`），写入各后台 cpuset/stune 组，并把 OOM 分数设为 -1000。
 ///
 /// 进程不在运行时返回 false。
@@ -327,12 +330,46 @@ fn notify_fail_reason(env: &Env) -> String {
     }
 }
 
+/// 通知节流状态（仅守护进程内存；守护进程重启即重置，首轮会立即刷新一次通知，与旧版启动时删除 `notify.ts` 的效果一致）。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct NotifyMem {
+    /// 上次检查时刻（unix 秒）；0 表示尚未检查。
+    pub(crate) ts: u64,
+    /// 上次成功投递的负载（已去掉首尾空白）。
+    pub(crate) last: String,
+}
+
+/// `steady`（通知已在显示且未强制刷新）时，距上次检查不足 `interval` 秒则本轮跳过。
+#[must_use]
+pub(crate) const fn notify_throttled(
+    steady: bool,
+    now: u64,
+    mem: &NotifyMem,
+    interval: u64,
+) -> bool {
+    steady && now.saturating_sub(mem.ts) < interval
+}
+
+/// `steady`（通知已在显示且未强制刷新）时，负载与上次相同或熄屏则不重发（只更新检查时刻）；`screen_on` 只在需要时才调用。
+#[must_use]
+pub(crate) fn notify_unchanged<F: FnOnce() -> bool>(
+    steady: bool,
+    mem: &NotifyMem,
+    payload: &str,
+    screen_on: F,
+) -> bool {
+    steady && (mem.last == payload || !screen_on())
+}
+
 /// 更新常驻通知：虚拟机不在时撤销；在运行时按间隔、内容是否变化和亮屏状态决定是否重发，首次发送失败记一次 ERROR。
-pub(crate) fn notify_update(env: &Env) {
+///
+/// 检查时刻与上次负载放在 `mem` 里，不写盘；`notify.on`、`notify.idle`、`notify.force`、`notify.warned` 等跨进程标志文件不变。
+pub(crate) fn notify_update(env: &Env, mem: &mut NotifyMem) {
     let run = env.run_dir();
     if !xr_vm_alive(env) {
         if run.join("notify.on").is_file() || !run.join("notify.idle").is_file() {
             notify_cancel(env);
+            *mem = NotifyMem::default();
             fsx::write_logged(env, run.join("notify.idle"), "");
         }
         return;
@@ -348,30 +385,28 @@ pub(crate) fn notify_update(env: &Env) {
         fsx::remove_logged(env, run.join("notify.on"));
     }
     let now = unix_now();
-    let ts = fs::read_to_string(run.join("notify.ts"))
-        .ok()
-        .and_then(|text| text.trim().parse::<u64>().ok())
-        .unwrap_or(0);
-    if run.join("notify.on").is_file() && !force && now.saturating_sub(ts) < env.notify_interval {
+    if notify_throttled(
+        run.join("notify.on").is_file() && !force,
+        now,
+        mem,
+        env.notify_interval,
+    ) {
         return;
     }
     let cfg = Config::load(env);
     let pl = notify_payload(env, &cfg);
-    if run.join("notify.on").is_file() && !force {
-        let last = fs::read_to_string(run.join("notify.last")).unwrap_or_default();
-        if last.trim() == pl || !screen_on(env) {
-            fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
-            return;
-        }
+    let shown = run.join("notify.on").is_file();
+    if notify_unchanged(shown && !force, mem, &pl, || screen_on(env)) {
+        mem.ts = now;
+        return;
     }
+    mem.ts = now;
     if notifier_post(env, &pl) {
-        fsx::write_logged(env, run.join("notify.last"), format!("{pl}\n"));
-        fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
+        pl.trim().clone_into(&mut mem.last);
         fsx::write_logged(env, run.join("notify.on"), "");
         fsx::remove_logged(env, run.join("notify.warned"));
         return;
     }
-    fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
     if !run.join("notify.warned").is_file() {
         let short: String = notify_fail_reason(env).chars().take(200).collect();
         log::err(env, "daemon", &format!("常驻通知发送失败：{short}"));

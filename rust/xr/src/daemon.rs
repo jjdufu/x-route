@@ -18,7 +18,7 @@ use signal_hook::flag;
 
 use crate::config::Config;
 use crate::daemon::keepalive::{
-    cgroup_escape, cgroup_escape_tree, cgroup_path, emergency_teardown, notify_cancel,
+    NotifyMem, cgroup_escape, cgroup_escape_tree, cgroup_path, emergency_teardown, notify_cancel,
     notify_update, routes_emergency_down, stale_gateway, vm_exit_reason, vm_guest_reset_pending,
     vm_stopping, xr_vm_alive,
 };
@@ -33,14 +33,14 @@ use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 use crate::sys::spawn;
 use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note};
-use crate::traffic::acct_snapshot;
+use crate::traffic::{SnapMem, SnapPolicy, acct_snapshot, acct_snapshot_if};
 use crate::vm;
 use crate::vm::run_net_hook;
 
 /// 客机自行重启导致 `crosvm` 退出时清理并重新启动虚拟机，已处理返回 true。
 ///
 /// 2 分钟内已连续 3 次时记 ERROR 并不再自动拉起。
-fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
+fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>, notify: &mut NotifyMem) -> bool {
     if !vm_guest_reset_pending(env) {
         return false;
     }
@@ -85,7 +85,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
 
     note_rc(env, "vm_start_exec", vm::start_exec(env));
     fsx::write_logged(env, run.join("notify.force"), "");
-    notify_update(env);
+    notify_update(env, notify);
     true
 }
 
@@ -254,6 +254,10 @@ struct DaemonState {
     term: Arc<AtomicBool>,
     /// 本进程号。
     self_pid: String,
+    /// 常驻通知的节流状态（内存）。
+    notify: NotifyMem,
+    /// 流量快照上次落盘的内容与时间（内存）。
+    snap: SnapMem,
 }
 
 /// 把信号 `sig`（名字 `name`）登记为置位 `flag_val`；失败只记日志。
@@ -301,10 +305,19 @@ fn daemon_init(env: &Env) -> DaemonState {
         usr,
         term,
         self_pid,
+        notify: NotifyMem::default(),
+        snap: SnapMem::default(),
     }
 }
 
-/// 收到 `TERM` 时：记日志，虚拟机已不在时清理运行状态与路由，删除自己的 `daemon.pid`；返回 `Some(0)` 表示退出。
+/// 退出前强制保存流量快照（计数规则在位且总量变化时写 `traffic.snap`）。
+fn save_snapshot(env: &Env) {
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    acct_snapshot(&ctx);
+}
+
+/// 收到 `TERM` 时：记日志、强制保存流量快照，虚拟机已不在时清理运行状态与路由，删除自己的 `daemon.pid`；返回 `Some(0)` 表示退出。
 fn on_term(env: &Env, st: &DaemonState) -> Option<i32> {
     if !st.term.load(Ordering::Relaxed) {
         return None;
@@ -314,6 +327,7 @@ fn on_term(env: &Env, st: &DaemonState) -> Option<i32> {
     } else {
         log::info(env, "daemon", "收到 TERM，守护进程退出");
     }
+    save_snapshot(env);
     if !xr_vm_alive(env) {
         let run = env.run_dir();
         fsx::remove_logged(env, run.join("state"));
@@ -330,9 +344,7 @@ fn on_term(env: &Env, st: &DaemonState) -> Option<i32> {
 fn quit(env: &Env, st: &DaemonState) {
     let run = env.run_dir();
     note_rc(env, "vm_stop_exec", vm::stop_exec(env, false));
-    let cfg = Config::load(env);
-    let ctx = NetCtx::new(env, &cfg);
-    acct_snapshot(&ctx);
+    save_snapshot(env);
     notify_cancel(env);
     clean_daemon_pid(env, &st.self_pid);
     fsx::remove_logged(env, run.join("daemon.cmd"));
@@ -376,7 +388,7 @@ fn on_command(env: &Env, st: &mut DaemonState) -> Option<i32> {
         return Some(0);
     }
     fsx::write_logged(env, run.join("notify.force"), "");
-    notify_update(env);
+    notify_update(env, &mut st.notify);
     None
 }
 
@@ -431,7 +443,7 @@ fn watch_vm(env: &Env, st: &mut DaemonState) {
         return;
     }
     if !vm::running(env) {
-        if !handle_guest_reboot(env, &mut st.reset_times) {
+        if !handle_guest_reboot(env, &mut st.reset_times, &mut st.notify) {
             let reason = vm_exit_reason(env);
             emergency_teardown(env, &reason);
         }
@@ -451,14 +463,16 @@ fn periodic(env: &Env, st: &mut DaemonState) {
             &format!("{reason}（xr0 无载波或虚拟机已死，规则仍在）"),
         );
     }
-    notify_update(env);
+    notify_update(env, &mut st.notify);
     rotate_all_logs(env);
 
     st.tick = st.tick.saturating_add(1);
     if st.tick.is_multiple_of(12) {
         let cfg = Config::load(env);
         let ctx = NetCtx::new(env, &cfg);
-        acct_snapshot(&ctx);
+        if acct_snapshot_if(&ctx, SnapPolicy::from_env(env), &mut st.snap, unix_now()) {
+            log::dlog_env(env, "daemon", "流量快照已落盘");
+        }
         debug_expire(env);
     }
     if st.tick.is_multiple_of(TZ_REFRESH_TICKS) {
@@ -479,7 +493,7 @@ fn refresh_tz(env: &Env) {
 }
 
 /// 拍间休眠：最多 5 秒，每秒醒来一次；收到命令或 `TERM` 立即结束，有 `notify.force` 时刷新通知。
-fn nap(env: &Env, st: &DaemonState) {
+fn nap(env: &Env, st: &mut DaemonState) {
     let run = env.run_dir();
     for _ in 0_i32..5_i32 {
         if st.usr.load(Ordering::Relaxed) || st.term.load(Ordering::Relaxed) {
@@ -487,7 +501,7 @@ fn nap(env: &Env, st: &DaemonState) {
         }
         thread::sleep(Duration::from_secs(1));
         if run.join("notify.force").is_file() {
-            notify_update(env);
+            notify_update(env, &mut st.notify);
         }
     }
 }
@@ -513,6 +527,7 @@ fn run_loop(env: &Env, st: &mut DaemonState) -> i32 {
         }
         if sys::shutting_down(env) {
             shutdown_note(env, "daemon");
+            save_snapshot(env);
             clean_daemon_pid(env, &st.self_pid);
             return 0;
         }

@@ -14,6 +14,9 @@ use crate::net::common::{
 use crate::sys::fsx;
 use crate::sys::{LockWait, PathLock};
 
+#[cfg(test)]
+mod tests;
+
 /// 获取累计流量的进程间锁 `run/acct.lock`（最多等待约 3 秒）。
 fn acct_lock(ctx: &NetCtx<'_>) -> PathLock {
     PathLock::acquire(
@@ -341,6 +344,100 @@ pub(crate) fn acct_snapshot(ctx: &NetCtx<'_>) {
     if total != read_quad(&snap_file) {
         write_quad(ctx.env, &snap_file, total);
     }
+}
+
+/// 流量快照落盘策略：累计变化达到字节阈值或距上次落盘超过最长间隔才写。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SnapPolicy {
+    /// 四项计数之和相对上次落盘的增量阈值（字节）。
+    pub(crate) min_bytes: u64,
+    /// 有变化时的最长落盘间隔（秒）。
+    pub(crate) max_age: u64,
+}
+
+/// 默认：64 MiB 或 30 分钟。掉电或内核崩溃时最多丢失这么多计数。
+pub(crate) const SNAP_DEFAULT: SnapPolicy = SnapPolicy {
+    min_bytes: 64 * 1024 * 1024,
+    max_age: 1_800,
+};
+
+impl SnapPolicy {
+    /// 取 `Env` 中的阈值（默认 [`SNAP_DEFAULT`]，测试可用环境变量覆盖）。
+    #[must_use]
+    pub(crate) const fn from_env(env: &crate::env::Env) -> Self {
+        Self {
+            min_bytes: env.snap_min_bytes,
+            max_age: env.snap_max_age,
+        }
+    }
+}
+
+/// 上次落盘的内容与时间（守护进程内存）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SnapMem {
+    /// 上次写入（或启动时读到）的计数。
+    pub(crate) quad: [u64; 4],
+    /// 上次写入时刻（unix 秒）；0 表示尚未初始化。
+    pub(crate) at: u64,
+}
+
+/// 两组计数逐项差的绝对值之和（饱和相加）。
+#[must_use]
+pub(crate) fn sum_delta(left: [u64; 4], right: [u64; 4]) -> u64 {
+    left.iter()
+        .zip(right.iter())
+        .fold(0_u64, |acc, (lhs, rhs)| {
+            acc.saturating_add(lhs.abs_diff(*rhs))
+        })
+}
+
+/// 是否该落盘：没变化不写；未初始化写；增量达到阈值或距上次写入达到最长间隔写；其余不写。
+#[must_use]
+pub(crate) fn snap_due(total: [u64; 4], mem: &SnapMem, policy: SnapPolicy, now: u64) -> bool {
+    if total == mem.quad {
+        return false;
+    }
+    mem.at == 0
+        || sum_delta(total, mem.quad) >= policy.min_bytes
+        || now.saturating_sub(mem.at) >= policy.max_age
+}
+
+/// 守护进程周期性快照：计数规则在位时按 `policy` 决定是否写 `traffic.snap`；返回是否写入。
+///
+/// 首次调用时用快照文件现有内容初始化 `mem`（时间记为 `now`），不会立刻多写一次；文件内容已等于当前总量
+/// （例如刚被折算或命令行快照写过）时只更新 `mem`。
+pub(crate) fn acct_snapshot_if(
+    ctx: &NetCtx<'_>,
+    policy: SnapPolicy,
+    mem: &mut SnapMem,
+    now: u64,
+) -> bool {
+    if !acct_present(ctx) {
+        return false;
+    }
+    let _lock = acct_lock(ctx);
+    let snap_file = ctx.env.acct_snap_file();
+    let on_disk = read_quad(&snap_file);
+    if mem.at == 0 {
+        *mem = SnapMem {
+            quad: on_disk,
+            at: now,
+        };
+    }
+    let total = acct_total(ctx);
+    if total == on_disk {
+        mem.quad = total;
+        return false;
+    }
+    if !snap_due(total, mem, policy, now) {
+        return false;
+    }
+    write_quad(ctx.env, &snap_file, total);
+    *mem = SnapMem {
+        quad: total,
+        at: now,
+    };
+    true
 }
 
 /// 累计流量清零：计数器归零，基线与快照写 0，起始时间改为现在。

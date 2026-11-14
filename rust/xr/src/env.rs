@@ -5,6 +5,8 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use crate::traffic::SNAP_DEFAULT;
+
 #[cfg(test)]
 mod tests;
 
@@ -72,6 +74,10 @@ pub struct Env {
     pub notify_interval: u64,
     /// 看门狗检查间隔秒数（`XR_WATCHDOG_INTERVAL`，默认 10）。
     pub watchdog_interval: u64,
+    /// 流量快照落盘的增量阈值字节数（`XR_SNAP_MIN_BYTES`，默认 64 MiB；仅供测试覆盖）。
+    pub snap_min_bytes: u64,
+    /// 流量快照有变化时的最长落盘间隔秒数（`XR_SNAP_MAX_AGE`，默认 1800；仅供测试覆盖）。
+    pub snap_max_age: u64,
     /// 本进程角色（由 `XR_IN_DAEMON`、`XR_IN_WATCHDOG` 得出）。
     pub role: ProcRole,
     /// 守护进程运行方式（由 `XR_DAEMON_FOREGROUND` 得出）。
@@ -200,6 +206,8 @@ impl Env {
             notify_wait: var_u64("XR_NOTIFY_WAIT", 25),
             notify_interval: var_u64("XR_NOTIFY_INTERVAL", 10),
             watchdog_interval: var_u64("XR_WATCHDOG_INTERVAL", 10),
+            snap_min_bytes: var_u64("XR_SNAP_MIN_BYTES", SNAP_DEFAULT.min_bytes),
+            snap_max_age: var_u64("XR_SNAP_MAX_AGE", SNAP_DEFAULT.max_age),
             role: ProcRole::from_values(
                 env::var("XR_IN_DAEMON").ok().as_deref(),
                 env::var("XR_IN_WATCHDOG").ok().as_deref(),
