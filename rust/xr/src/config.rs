@@ -70,12 +70,15 @@ pub struct Config {
 fn unquote_shell_val(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.len() >= 2 {
-        if let Some(inner) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        if let Some(inner) = trimmed
+            .strip_prefix('"')
+            .and_then(|content| content.strip_suffix('"'))
+        {
             return inner.to_owned();
         }
         if let Some(inner) = trimmed
             .strip_prefix('\'')
-            .and_then(|s| s.strip_suffix('\''))
+            .and_then(|text| text.strip_suffix('\''))
         {
             return inner.to_owned();
         }
@@ -114,7 +117,7 @@ impl Config {
     pub fn get_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
         self.values
             .get(key)
-            .filter(|v| !v.is_empty())
+            .filter(|value| !value.is_empty())
             .map_or(default, String::as_str)
     }
 
@@ -148,7 +151,7 @@ impl Config {
         self.get_raw("VM_CPUS")
             .parse::<u32>()
             .ok()
-            .filter(|v| (1..=4).contains(v))
+            .filter(|value| (1..=4).contains(value))
             .unwrap_or(2)
     }
 
@@ -181,7 +184,7 @@ impl Config {
         self.get_raw("VM_DISK_SIZE_MB")
             .parse::<u64>()
             .ok()
-            .filter(|&v| v > 0)
+            .filter(|&value| value > 0)
             .unwrap_or(1024)
     }
 
@@ -222,7 +225,7 @@ impl Config {
         self.get_raw("READY_TIMEOUT_SEC")
             .parse::<u64>()
             .ok()
-            .filter(|&v| v > 0)
+            .filter(|&value| value > 0)
             .unwrap_or(180)
     }
 
@@ -231,15 +234,15 @@ impl Config {
         self.get_raw("STABLE_SEC")
             .parse::<u64>()
             .ok()
-            .filter(|&v| v > 0)
+            .filter(|&value| value > 0)
             .unwrap_or(180)
     }
 
     #[must_use]
     pub fn notify_traffic(&self) -> &str {
-        let m = self.get_or("XR_NOTIFY_TRAFFIC", "total");
-        match m {
-            "total" | "wan" | "lan" => m,
+        let mode = self.get_or("XR_NOTIFY_TRAFFIC", "total");
+        match mode {
+            "total" | "wan" | "lan" => mode,
             _ => "total",
         }
     }
@@ -301,10 +304,10 @@ fn valid_net_prefix(val: &str) -> bool {
     else {
         return false;
     };
-    let (Ok(a), Ok(b)) = (a_s.parse::<u16>(), b_s.parse::<u16>()) else {
+    let (Ok(oct1), Ok(oct2)) = (a_s.parse::<u16>(), b_s.parse::<u16>()) else {
         return false;
     };
-    a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
+    oct1 == 10 || (oct1 == 172 && (16..=31).contains(&oct2)) || (oct1 == 192 && oct2 == 168)
 }
 
 fn valid_vm_mac(val: &str) -> bool {
@@ -313,10 +316,11 @@ fn valid_vm_mac(val: &str) -> bool {
     };
     let parts: Vec<&str> = rest.split(':').collect();
     parts.len() == 3
-        && parts.iter().all(|p| {
-            p.len() == 2
-                && p.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && parts.iter().all(|part| {
+            part.len() == 2
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         })
 }
 
@@ -328,7 +332,7 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
         "XR_DNS" => {
             if !val
                 .bytes()
-                .all(|b| b.is_ascii_digit() || b == b'.' || b == b' ')
+                .all(|byte| byte.is_ascii_digit() || byte == b'.' || byte == b' ')
             {
                 return false;
             }
@@ -359,14 +363,16 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
             let sp = env.canon_share_path(val);
             let media_s = env.media.to_string_lossy();
             let media = media_s.trim_end_matches('/');
-            let under_media =
-                sp == media || sp.strip_prefix(media).is_some_and(|r| r.starts_with('/'));
+            let under_media = sp == media
+                || sp
+                    .strip_prefix(media)
+                    .is_some_and(|rest| rest.starts_with('/'));
             if !under_media {
                 return false;
             }
             if sp.contains("..")
-                || sp.chars().any(|c| {
-                    matches!(c, '"' | '\'' | ' ' | ':' | ',' | '$' | '`' | '\\') || c.is_control()
+                || sp.chars().any(|ch| {
+                    matches!(ch, '"' | '\'' | ' ' | ':' | ',' | '$' | '`' | '\\') || ch.is_control()
                 })
             {
                 return false;
@@ -430,9 +436,9 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
     let pid = std::process::id();
     let tmp = conf.with_extension(format!("conf.tmp.{pid}"));
     let write_res = (|| -> std::io::Result<()> {
-        let mut f = File::create(&tmp)?;
-        f.write_all(out.as_bytes())?;
-        f.sync_all()?;
+        let mut file = File::create(&tmp)?;
+        file.write_all(out.as_bytes())?;
+        file.sync_all()?;
         fs::rename(&tmp, &conf)?;
         Ok(())
     })();
