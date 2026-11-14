@@ -16,6 +16,7 @@ use signal_hook::flag;
 
 use crate::env::Env;
 use crate::log::{FAILURES, dlog_env, log_err, log_info, note_failure};
+use crate::out::{self, emit};
 use crate::sys::fsx;
 use crate::sys::spawn::spawn_self_detached;
 use crate::sys::{is_pid_running, send_signal_logged};
@@ -630,8 +631,11 @@ pub fn run_clash_mux(env: &Env) -> i32 {
 pub fn run_clash_bridge(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"ok\":false,\"error\":\"clash channel unavailable\"}}");
-        return 1;
+        return emit(
+            env,
+            "{\"ok\":false,\"error\":\"clash channel unavailable\"}",
+            1,
+        );
     };
     let Ok(sock_in) = stream.try_clone() else {
         return 1;
@@ -679,8 +683,11 @@ pub fn run_clash_bridge(env: &Env) -> i32 {
 pub fn run_clash_ping(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"ok\":false,\"error\":\"clash channel unavailable\"}}");
-        return 1;
+        return emit(
+            env,
+            "{\"ok\":false,\"error\":\"clash channel unavailable\"}",
+            1,
+        );
     };
     note_sock(
         env,
@@ -693,31 +700,35 @@ pub fn run_clash_ping(env: &Env) -> i32 {
         stream.set_write_timeout(Some(Duration::from_secs(2))),
     );
     if stream.write_all(b"{\"id\":1,\"op\":\"ping\"}\n").is_err() || stream.flush().is_err() {
-        println!("{{\"ok\":false,\"error\":\"write failed\"}}");
-        return 1;
+        return emit(env, "{\"ok\":false,\"error\":\"write failed\"}", 1);
     }
     let mut br = BufReader::new(stream);
     let mut line = String::new();
     match br.read_line(&mut line) {
-        Ok(0) | Err(_) => {
-            println!("{{\"ok\":false,\"error\":\"timeout or closed\"}}");
-            1
-        }
+        Ok(0) | Err(_) => emit(env, "{\"ok\":false,\"error\":\"timeout or closed\"}", 1),
         Ok(_) => {
-            let out = line.trim();
-            println!("{out}");
-            i32::from(!out.contains("\"ok\":true"))
+            let reply = line.trim();
+            emit(env, reply, i32::from(!reply.contains("\"ok\":true")))
         }
     }
 }
 
-fn emit_rpc_line(line: &str) {
+/// 把一行 RPC 应答写到 stdout 并立即 flush（WebUI 逐行读取）。
+///
+/// # Errors
+///
+/// stdout 写入或 flush 失败时返回对应的 `io::Error`。
+fn emit_rpc_line(line: &str) -> std::io::Result<()> {
+    out::raw(&render_rpc_line(line))
+}
+
+/// 生成一行 RPC 应答在 stdout 上的文本：不超过 48 KiB 时原样加换行；更长时先输出
+/// `{"_chunks":N}`，再逐块输出 `@<块>`（按字符边界切分），每行一个换行。
+fn render_rpc_line(line: &str) -> String {
     const MAX_CHUNK: usize = 49_152;
     let trimmed = line.trim_end_matches(['\r', '\n']);
     if trimmed.len() <= MAX_CHUNK {
-        println!("{trimmed}");
-        let _ = std::io::stdout().flush();
-        return;
+        return out::join_lines([trimmed]);
     }
     let mut chunks: Vec<&str> = Vec::new();
     let mut start = 0;
@@ -732,21 +743,26 @@ fn emit_rpc_line(line: &str) {
         chunks.push(&trimmed[start..end]);
         start = end;
     }
-    println!("{{\"_chunks\":{}}}", chunks.len());
-    for c in chunks {
-        println!("@{c}");
-    }
-    let _ = std::io::stdout().flush();
+    let header = format!("{{\"_chunks\":{}}}", chunks.len());
+    out::join_lines(
+        std::iter::once(header).chain(chunks.into_iter().map(|part| format!("@{part}"))),
+    )
 }
 
 pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     let Ok(mut val) = serde_json::from_str::<Value>(req_json) else {
-        println!("{{\"ok\":false,\"status\":400,\"error\":\"invalid json\"}}");
-        return 2;
+        return emit(
+            env,
+            "{\"ok\":false,\"status\":400,\"error\":\"invalid json\"}",
+            2,
+        );
     };
     let Some(obj) = val.as_object_mut() else {
-        println!("{{\"ok\":false,\"status\":400,\"error\":\"json object required\"}}");
-        return 2;
+        return emit(
+            env,
+            "{\"ok\":false,\"status\":400,\"error\":\"json object required\"}",
+            2,
+        );
     };
     if !obj.contains_key("id") {
         let _absent_id: Option<Value> =
@@ -754,8 +770,11 @@ pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"ok\":false,\"status\":503,\"error\":\"clash channel unavailable\"}}");
-        return 1;
+        return emit(
+            env,
+            "{\"ok\":false,\"status\":503,\"error\":\"clash channel unavailable\"}",
+            1,
+        );
     };
     note_sock(
         env,
@@ -772,34 +791,38 @@ pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
         || stream.write_all(b"\n").is_err()
         || stream.flush().is_err()
     {
-        println!("{{\"ok\":false,\"status\":502,\"error\":\"write failed\"}}");
-        return 1;
+        return emit(
+            env,
+            "{\"ok\":false,\"status\":502,\"error\":\"write failed\"}",
+            1,
+        );
     }
     let mut br = BufReader::new(stream);
     let mut line = String::new();
     match br.read_line(&mut line) {
-        Ok(0) | Err(_) => {
-            println!("{{\"ok\":false,\"status\":504,\"error\":\"timeout or closed\"}}");
-            1
-        }
-        Ok(_) => {
-            emit_rpc_line(&line);
-            0
-        }
+        Ok(0) | Err(_) => emit(
+            env,
+            "{\"ok\":false,\"status\":504,\"error\":\"timeout or closed\"}",
+            1,
+        ),
+        Ok(_) => out::finish(env, emit_rpc_line(&line), 0),
     }
 }
 
 pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     if ws_id.is_empty() || !path.starts_with('/') {
-        println!("{{\"op\":\"ws_close\",\"ok\":false,\"error\":\"invalid args\"}}");
-        return 2;
+        return emit(
+            env,
+            "{\"op\":\"ws_close\",\"ok\":false,\"error\":\"invalid args\"}",
+            2,
+        );
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!(
+        let closed = format!(
             "{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"channel unavailable\"}}"
         );
-        return 1;
+        return emit(env, &closed, 1);
     };
     note_sock(
         env,
@@ -811,10 +834,10 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
         || stream.write_all(b"\n").is_err()
         || stream.flush().is_err()
     {
-        println!(
+        let closed = format!(
             "{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"write failed\"}}"
         );
-        return 1;
+        return emit(env, &closed, 1);
     }
     let mut br = BufReader::new(stream);
     let mut line = String::new();
@@ -823,7 +846,10 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
         match br.read_line(&mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) => {
-                emit_rpc_line(&line);
+                if let Err(err) = emit_rpc_line(&line) {
+                    // WebUI 已关闭读端：结束流（原来的打印宏在此 panic 中止）
+                    return out::finish(env, Err(err), 0);
+                }
                 if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
                     let is_close = v.get("op").and_then(Value::as_str) == Some("ws_close");
                     let open_fail = v.get("id").and_then(Value::as_str) == Some("open")
@@ -844,8 +870,11 @@ pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"ok\":false,\"error\":\"clash channel unavailable\"}}");
-        return 1;
+        return emit(
+            env,
+            "{\"ok\":false,\"error\":\"clash channel unavailable\"}",
+            1,
+        );
     };
     note_sock(
         env,
@@ -867,17 +896,15 @@ pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i
         || stream.write_all(b"\n").is_err()
         || stream.flush().is_err()
     {
-        println!("{{\"ok\":false,\"error\":\"write failed\"}}");
-        return 1;
+        return emit(env, "{\"ok\":false,\"error\":\"write failed\"}", 1);
     }
     let mut br = BufReader::new(stream);
     let mut line = String::new();
     match br.read_line(&mut line) {
         Ok(0) | Err(_) => 1,
         Ok(_) => {
-            let out = line.trim();
-            println!("{out}");
-            i32::from(!out.contains("\"ok\":true"))
+            let reply = line.trim();
+            emit(env, reply, i32::from(!reply.contains("\"ok\":true")))
         }
     }
 }
@@ -888,8 +915,7 @@ pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"ok\":true}}");
-        return 0;
+        return emit(env, "{\"ok\":true}", 0);
     };
     note_sock(
         env,
@@ -914,12 +940,16 @@ pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
         // 读失败与读到空行同样按"已关闭"回答，与原来相同
         dlog_env(env, "clash", &format!("clash-ws-close 读应答失败：{err}"));
     }
-    if line.trim().is_empty() {
-        println!("{{\"ok\":true}}");
-    } else {
-        println!("{}", line.trim());
-    }
-    0
+    let reply = line.trim();
+    emit(
+        env,
+        if reply.is_empty() {
+            "{\"ok\":true}"
+        } else {
+            reply
+        },
+        0,
+    )
 }
 
 #[cfg(test)]
@@ -1116,3 +1146,6 @@ mod tests {
 
 #[cfg(test)]
 mod edition_tests;
+
+#[cfg(test)]
+mod render_tests;
