@@ -146,6 +146,12 @@ enum WsMiss {
     Unknown,
 }
 
+/// 等待客机应答的请求登记：复用编号 -> (客户端号, 原 `id`)。
+type PendingMap = HashMap<String, (u64, Value)>;
+
+/// ws 归属登记：键 -> (客户端号, 另一侧的 `ws_id`)。
+type WsOwnerMap = HashMap<String, (u64, String)>;
+
 /// 复用进程的共享状态。
 struct MuxState {
     /// 客机控制口连接（未连接时为 `None`）。
@@ -153,11 +159,11 @@ struct MuxState {
     /// 已连接的 RPC 客户端，键为客户端号。
     clients: Mutex<HashMap<u64, ClientHandle>>,
     /// 已转发、等待客机应答的请求：复用编号 -> (客户端号, 原 `id`)。
-    pending_reqs: Mutex<HashMap<String, (u64, Value)>>,
+    pending_reqs: Mutex<PendingMap>,
     /// 已打开的 ws：复用编号 -> (客户端号, 原 `ws_id`)。
-    active_ws: Mutex<HashMap<String, (u64, String)>>,
+    active_ws: Mutex<WsOwnerMap>,
     /// 外部客户端打开的 ws：原 `ws_id` -> (客户端号, 复用编号)，供其它连接按原编号发送或关闭。
-    ws_by_key: Mutex<HashMap<String, (u64, String)>>,
+    ws_by_key: Mutex<WsOwnerMap>,
     /// 生成复用编号的递增序号。
     seq: AtomicU64,
 }
