@@ -1267,32 +1267,22 @@ pub(crate) fn watch(env: &Env) -> i32 {
     0
 }
 
-/// `xr net down`：停止对账循环，拆除网关、`IPv6` 代理、路由、链与 `xr0`，清理 `run/net.*` 状态文件；返回退出码。
-#[must_use]
-pub(crate) fn down(env: &Env) -> i32 {
-    let cfg = Config::load(env);
-    let ctx = NetCtx::new(env, &cfg);
-    let run = env.run_dir();
-
-    if let Ok(w) = fs::read_to_string(run.join("net_watch.pid"))
+/// 通知对账循环退出；`pid` 文件存在但进程已不在时记一条调试日志。
+fn stop_watch(env: &Env, cfg: &Config) {
+    if let Ok(w) = fs::read_to_string(env.run_dir().join("net_watch.pid"))
         && !send_signal(&w, rustix::process::Signal::TERM)
     {
         dlog(
             env,
-            &cfg,
+            cfg,
             "net",
             &format!("net_watch（pid {}）已不在，无需停止", w.trim()),
         );
     }
-    {
-        let _lock = net_lock(env);
-        hs_tap_down(&ctx);
-    }
-    v6_proxy_remove(&ctx, Some("XRouter 网络停止"));
-    v6_nft_teardown(env);
-    gw_remove(&ctx);
-    routes_clear(&ctx);
+}
 
+/// 摘除并删除 `IPv4` 的 `XR_FWD`/`XR_NAT` 链，并按上次记录的出口撤销 `ndc ipfwd` 转发。
+fn drop_v4_chains(ctx: &NetCtx<'_>) {
     while ctx.ipt(&["-D", "FORWARD", "-j", "XR_FWD"]).success() {}
     ctx.ipt_run(&["-F", "XR_FWD"]);
     ctx.ipt_run(&["-X", "XR_FWD"]);
@@ -1303,38 +1293,40 @@ pub(crate) fn down(env: &Env) -> i32 {
     ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
     ctx.ipt_run(&["-t", "nat", "-X", "XR_NAT"]);
 
-    if let Ok(old_outs) = fs::read_to_string(run.join("net.up_out")) {
+    if let Ok(old_outs) = fs::read_to_string(ctx.env.run_dir().join("net.up_out")) {
         for out_if in old_outs.split_whitespace() {
             ctx.ndc_run(&["ipfwd", "remove", XR_IF, out_if]);
         }
     }
+}
 
+/// 摘除并删除 `IPv6` 的 `XR_FWD6` 链，内核支持 `IPv6` `NAT` 时再删 `XR_NAT6`。
+fn drop_v6_chains(ctx: &NetCtx<'_>) {
     while ctx.ip6t(&["-D", "FORWARD", "-j", "XR_FWD6"]).success() {}
     ctx.ip6t_run(&["-F", "XR_FWD6"]);
     ctx.ip6t_run(&["-X", "XR_FWD6"]);
-    if ip6_nat_ok(env) {
-        while ctx
-            .ip6t(&["-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"])
-            .success()
-        {}
-        ctx.ip6t_run(&["-t", "nat", "-F", "XR_NAT6"]);
-        ctx.ip6t_run(&["-t", "nat", "-X", "XR_NAT6"]);
+    if !ip6_nat_ok(ctx.env) {
+        return;
     }
-    mss_clear(&ctx);
-    acct_teardown(&ctx);
+    while ctx
+        .ip6t(&["-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"])
+        .success()
+    {}
+    ctx.ip6t_run(&["-t", "nat", "-F", "XR_NAT6"]);
+    ctx.ip6t_run(&["-t", "nat", "-X", "XR_NAT6"]);
+}
 
-    for pref in ["18800", "18900", "4800"] {
-        while ctx.ip(&["rule", "del", "pref", pref]).success() {}
-        while ctx.ip6(&["rule", "del", "pref", pref]).success() {}
-    }
-
+/// 关闭 `ndc` 转发、恢复 `ip_forward` 原值，撤销本地网络登记、`table 97` 路由并删除 `xr0`。
+fn remove_local(ctx: &NetCtx<'_>) {
+    let env = ctx.env;
+    let run = env.run_dir();
     ctx.ndc_run(&["ipfwd", "disable", "xrouter"]);
     let orig_fwd = run.join("ip_forward.orig");
     if orig_fwd.is_file() {
         let value = fs::read_to_string(&orig_fwd).unwrap_or_default();
         ctx.sysw_run(&env.proc_dir.join("sys/net/ipv4/ip_forward"), value.trim());
     }
-    let net4 = format!("{}.0/24", cfg.net_prefix());
+    let net4 = format!("{}.0/24", ctx.cfg.net_prefix());
     let net6 = format!("{XR_NET6}::/64");
     ctx.ndc_run(&["network", "route", "remove", "local", XR_IF, &net4]);
     ctx.ndc_run(&["network", "route", "remove", "local", XR_IF, &net6]);
@@ -1342,7 +1334,11 @@ pub(crate) fn down(env: &Env) -> i32 {
     ctx.ip_run(&["route", "flush", "table", "97", "dev", XR_IF]);
     ctx.ip6_run(&["route", "flush", "table", "97", "dev", XR_IF]);
     ctx.ip_run(&["link", "del", XR_IF]);
+}
 
+/// 删除 `run/net.*`、`routes.active`、`ip_forward.orig` 与 `net_watch.pid`。
+fn clear_net_state(env: &Env) {
+    let run = env.run_dir();
     if let Ok(entries) = fs::read_dir(&run) {
         for entry in entries.flatten() {
             let name = entry.file_name();
@@ -1355,6 +1351,35 @@ pub(crate) fn down(env: &Env) -> i32 {
     fsx::remove_logged(env, run.join("routes.active"));
     fsx::remove_logged(env, run.join("ip_forward.orig"));
     fsx::remove_logged(env, run.join("net_watch.pid"));
+}
+
+/// `xr net down`：停止对账循环，拆除网关、`IPv6` 代理、路由、链与 `xr0`，清理 `run/net.*` 状态文件；返回退出码。
+#[must_use]
+pub(crate) fn down(env: &Env) -> i32 {
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+
+    stop_watch(env, &cfg);
+    {
+        let _lock = net_lock(env);
+        hs_tap_down(&ctx);
+    }
+    v6_proxy_remove(&ctx, Some("XRouter 网络停止"));
+    v6_nft_teardown(env);
+    gw_remove(&ctx);
+    routes_clear(&ctx);
+    drop_v4_chains(&ctx);
+    drop_v6_chains(&ctx);
+    mss_clear(&ctx);
+    acct_teardown(&ctx);
+
+    for pref in ["18800", "18900", "4800"] {
+        while ctx.ip(&["rule", "del", "pref", pref]).success() {}
+        while ctx.ip6(&["rule", "del", "pref", pref]).success() {}
+    }
+
+    remove_local(&ctx);
+    clear_net_state(env);
     0
 }
 
