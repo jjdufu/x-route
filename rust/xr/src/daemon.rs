@@ -49,13 +49,13 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
         format!("{}\n", std::process::id()),
     );
     if let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
-        let wp = wp.trim();
-        if !wp.is_empty() && is_pid_running(env, wp) {
-            send_signal_logged(env, wp, Signal::TERM);
+        let wp_trimmed = wp.trim();
+        if !wp_trimmed.is_empty() && is_pid_running(env, wp_trimmed) {
+            send_signal_logged(env, wp_trimmed, Signal::TERM);
         }
     }
     crate::clash::stop_clash_mux(env);
-    for p in [
+    for path in [
         run.join("crosvm.pid"),
         run.join("crosvm.sock"),
         run.join("state"),
@@ -67,7 +67,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
         env.fuse_file(),
         env.boot_log(),
     ] {
-        fsx::remove_logged(env, p);
+        fsx::remove_logged(env, path);
     }
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
     fsx::remove_logged(env, run.join("stopping"));
@@ -88,11 +88,11 @@ pub fn daemon_pid(env: &Env) -> String {
 
 #[must_use]
 pub fn daemon_running(env: &Env) -> bool {
-    let p = daemon_pid(env);
-    if !is_pid_running(env, &p) {
+    let pid = daemon_pid(env);
+    if !is_pid_running(env, &pid) {
         return false;
     }
-    if let Some(cmd) = proc_cmdline(env, &p) {
+    if let Some(cmd) = proc_cmdline(env, &pid) {
         return cmd.contains("daemon") || cmd.contains("xr");
     }
     true
@@ -120,12 +120,12 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         return false;
     }
     for _ in 0_i32..8_i32 {
-        let p = fs::read_to_string(run.join("watchdog.pid"))
+        let pid_text = fs::read_to_string(run.join("watchdog.pid"))
             .unwrap_or_default()
             .trim()
             .to_owned();
-        if is_pid_running(env, &p) {
-            note_ok(env, "cgroup_escape", cgroup_escape(env, &p));
+        if is_pid_running(env, &pid_text) {
+            note_ok(env, "cgroup_escape", cgroup_escape(env, &pid_text));
             return true;
         }
         thread::sleep(Duration::from_secs(1));
@@ -177,8 +177,8 @@ pub fn daemon_send(env: &Env, cmd: &str) -> i32 {
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("daemon.res"));
     fsx::write_logged(env, run.join("daemon.cmd"), format!("{cmd}\n"));
-    let p = daemon_pid(env);
-    if !send_signal(&p, Signal::USR1) {
+    let pid = daemon_pid(env);
+    if !send_signal(&pid, Signal::USR1) {
         return 1;
     }
     for _ in 0_i32..30_i32 {
@@ -189,7 +189,7 @@ pub fn daemon_send(env: &Env, cmd: &str) -> i32 {
     }
     fs::read_to_string(run.join("daemon.res"))
         .ok()
-        .and_then(|s| s.trim().parse::<i32>().ok())
+        .and_then(|text| text.trim().parse::<i32>().ok())
         .unwrap_or(1)
 }
 
@@ -250,14 +250,14 @@ pub fn daemon_loop(env: &Env) -> i32 {
     }
 
     fsx::write_logged(env, run.join("daemon.cmd"), "");
-    for f in [
+    for name in [
         "notify.on",
         "notify.idle",
         "notify.last",
         "notify.ts",
         "notify.warned",
     ] {
-        fsx::remove_logged(env, run.join(f));
+        fsx::remove_logged(env, run.join(name));
     }
     fsx::write_logged(env, run.join("daemon.ready"), "ready\n");
     let cg = cgroup_path(env, &self_pid).unwrap_or_default();
@@ -337,7 +337,9 @@ pub fn daemon_loop(env: &Env) -> i32 {
                     let reason = vm_exit_reason(env);
                     emergency_teardown(env, &reason);
                 }
-            } else if fs::read_to_string(run.join("state")).is_ok_and(|s| s.trim() == "ready") {
+            } else if fs::read_to_string(run.join("state"))
+                .is_ok_and(|content| content.trim() == "ready")
+            {
                 let fw_pid = fs::read_to_string(run.join("fuse_watch.pid"))
                     .unwrap_or_default()
                     .trim()
@@ -350,11 +352,11 @@ pub fn daemon_loop(env: &Env) -> i32 {
                         .to_owned();
                     let since = fs::read_to_string(run.join("ready_at"))
                         .ok()
-                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .and_then(|raw| raw.trim().parse::<u64>().ok())
                         .or_else(|| {
-                            let s =
+                            let text =
                                 fs::read_to_string(env.proc_base.join(&cp).join("stat")).ok()?;
-                            s.split_whitespace()
+                            text.split_whitespace()
                                 .nth(21)
                                 .and_then(|x| x.parse::<u64>().ok())
                                 .map(|ticks| ticks / 100)
