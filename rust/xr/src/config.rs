@@ -362,6 +362,46 @@ fn valid_vm_mac(val: &str) -> bool {
         })
 }
 
+/// `XR_DNS`：只含数字、点和空格，以空格分隔 1–3 个合法 `IPv4` 地址。
+fn valid_dns(val: &str) -> bool {
+    if !val
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.' || byte == b' ')
+    {
+        return false;
+    }
+    let mut count = 0_usize;
+    for item in val.split_whitespace() {
+        if !valid_ip4(item) {
+            return false;
+        }
+        count = count.saturating_add(1);
+    }
+    (1..=3).contains(&count)
+}
+
+/// `VM_SHARE_PATH`：规范化后位于内部存储下、不含 `..` 与特殊字符，并且是已存在的目录。
+fn valid_share_path(env: &Env, val: &str) -> bool {
+    let sp = env.canon_share_path(val);
+    let media_s = env.media.to_string_lossy();
+    let media = media_s.trim_end_matches('/');
+    let under_media = sp == media
+        || sp
+            .strip_prefix(media)
+            .is_some_and(|rest| rest.starts_with('/'));
+    if !under_media {
+        return false;
+    }
+    if sp.contains("..")
+        || sp.chars().any(|ch| {
+            matches!(ch, '"' | '\'' | ' ' | ':' | ',' | '$' | '`' | '\\') || ch.is_control()
+        })
+    {
+        return false;
+    }
+    Path::new(&sp).is_dir()
+}
+
 /// 校验键值对：每个键有自己的取值范围；未知键一律返回 false。
 ///
 /// `VM_SHARE_MODE=rw` 要求环境支持读写映射；`VM_SHARE_PATH` 要求是内部存储下已存在且不含特殊字符的目录；热点子网还要求与现有网段不冲突。
@@ -370,22 +410,7 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
     match key {
         "XR_NET_PREFIX" => valid_net_prefix(val),
         "XR_VM_MAC" => valid_vm_mac(val),
-        "XR_DNS" => {
-            if !val
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || byte == b'.' || byte == b' ')
-            {
-                return false;
-            }
-            let mut count = 0_usize;
-            for item in val.split_whitespace() {
-                if !valid_ip4(item) {
-                    return false;
-                }
-                count = count.saturating_add(1);
-            }
-            (1..=3).contains(&count)
-        }
+        "XR_DNS" => valid_dns(val),
         "XR_EXPOSE" => matches!(val, "local" | "lan" | "all"),
         "XR_MODE" => matches!(val, "global" | "bypass"),
         "VM_CPUS" => in_range(val, 1, 4),
@@ -400,26 +425,7 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
             "rw" => !env.rw_map_opt.is_empty(),
             _ => false,
         },
-        "VM_SHARE_PATH" => {
-            let sp = env.canon_share_path(val);
-            let media_s = env.media.to_string_lossy();
-            let media = media_s.trim_end_matches('/');
-            let under_media = sp == media
-                || sp
-                    .strip_prefix(media)
-                    .is_some_and(|rest| rest.starts_with('/'));
-            if !under_media {
-                return false;
-            }
-            if sp.contains("..")
-                || sp.chars().any(|ch| {
-                    matches!(ch, '"' | '\'' | ' ' | ':' | ',' | '$' | '`' | '\\') || ch.is_control()
-                })
-            {
-                return false;
-            }
-            Path::new(&sp).is_dir()
-        }
+        "VM_SHARE_PATH" => valid_share_path(env, val),
         "AUTOSTART_DELAY_SEC" => in_range(val, 0, 600),
         "READY_TIMEOUT_SEC" | "STABLE_SEC" => in_range(val, 60, 900),
         "XR_NOTIFY_TRAFFIC" => matches!(val, "total" | "wan" | "lan"),
