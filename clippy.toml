@@ -1,0 +1,15 @@
+avoid-breaking-exported-api = false
+check-private-items = true
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 5
+type-complexity-threshold = 150
+excessive-nesting-threshold = 4
+max-fn-params-bools = 1
+max-struct-bools = 2
+max-trait-bounds = 3
+large-error-threshold = 64
+enum-variant-size-threshold = 128
+single-char-binding-names-threshold = 2
+max-include-file-size = 65536
+cargo-ignore-publish = true
