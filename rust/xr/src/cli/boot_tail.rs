@@ -3,6 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::env::Env;
+use crate::out::emit_raw;
 
 fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
     let sz = fs::metadata(path).map_or(0, |m| m.len());
@@ -55,6 +56,6 @@ pub fn run_boot_tail(env: &Env, moff: &str, coff: &str) -> i32 {
 
     let (msz, mchunk) = tail_from(&run.join("boot.log"), moff);
     let (csz, cchunk) = tail_from(&run.join("console.log"), coff);
-    print!("R{rc_s}\x1fS{state}\x1f{msz}\x1f{mchunk}\x1f{csz}\x1f{cchunk}");
-    0
+    let frame = format!("R{rc_s}\x1fS{state}\x1f{msz}\x1f{mchunk}\x1f{csz}\x1f{cchunk}");
+    emit_raw(env, &frame, 0)
 }
