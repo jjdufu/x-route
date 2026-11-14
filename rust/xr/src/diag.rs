@@ -93,75 +93,95 @@ pub fn vpn_hosts(env: &Env) -> Vec<String> {
     hosts.into_iter().collect()
 }
 
-/// 脱敏：隐去证书与密钥块、`OpenVPN` 内联密钥段、网址、密码类键值和 `VPN` 服务器地址。
-#[must_use]
-pub fn redact(env: &Env, input: &str) -> String {
-    let mut out = Vec::new();
-    let mut in_pem = false;
-    let mut in_xml_secret = false;
+/// 视为密钥的 `OpenVPN` 内联标签：`<ca>…</ca>` 等整段隐去。
+const SECRET_TAGS: [&str; 9] = [
+    "ca",
+    "cert",
+    "key",
+    "tls-auth",
+    "tls-crypt",
+    "tls-crypt-v2",
+    "secret",
+    "pkcs12",
+    "extra-certs",
+];
 
-    let xml_tags = [
-        "ca",
-        "cert",
-        "key",
-        "tls-auth",
-        "tls-crypt",
-        "tls-crypt-v2",
-        "secret",
-        "pkcs12",
-        "extra-certs",
-    ];
+/// 逐行跟踪是否处在证书/密钥块或内联密钥段中。
+#[derive(Default)]
+struct SecretBlocks {
+    /// 处在 `-----BEGIN` … `-----END` 之间。
+    in_pem: bool,
+    /// 处在 `<标签>` … `</标签>` 之间。
+    in_xml_secret: bool,
+}
 
-    for line in input.lines() {
-        let trimmed = line.trim();
-        if !in_pem && line.contains("-----BEGIN") {
+impl SecretBlocks {
+    /// 证书与密钥块：块开始或在块内时返回 true（该行不保留）；单行块与块结束时在 `out` 放一个占位行。
+    fn pem_line(&mut self, line: &str, out: &mut Vec<String>) -> bool {
+        if !self.in_pem && line.contains("-----BEGIN") {
             if line.contains("-----END") {
                 out.push("<已隐去证书或密钥>".to_owned());
             } else {
-                in_pem = true;
+                self.in_pem = true;
             }
-            continue;
+            return true;
         }
-        if in_pem {
-            if line.contains("-----END") {
-                in_pem = false;
-                out.push("<已隐去证书或密钥>".to_owned());
-            }
-            continue;
+        if !self.in_pem {
+            return false;
         }
+        if line.contains("-----END") {
+            self.in_pem = false;
+            out.push("<已隐去证书或密钥>".to_owned());
+        }
+        true
+    }
 
-        if !in_xml_secret
-            && xml_tags
+    /// 内联密钥段：段开始或在段内时返回 true（该行不保留，也不放占位行）。
+    fn xml_line(&mut self, trimmed: &str) -> bool {
+        let closes = || {
+            SECRET_TAGS
+                .iter()
+                .any(|tag| trimmed.contains(&format!("</{tag}>")))
+        };
+        if !self.in_xml_secret
+            && SECRET_TAGS
                 .iter()
                 .any(|open_tag| trimmed.starts_with(&format!("<{open_tag}>")))
         {
-            if xml_tags
-                .iter()
-                .any(|close_tag| trimmed.contains(&format!("</{close_tag}>")))
-            {
-                continue;
+            if !closes() {
+                self.in_xml_secret = true;
             }
-            in_xml_secret = true;
-            continue;
+            return true;
         }
-        if in_xml_secret {
-            if xml_tags
-                .iter()
-                .any(|tag| trimmed.contains(&format!("</{tag}>")))
-            {
-                in_xml_secret = false;
-            }
-            continue;
+        if !self.in_xml_secret {
+            return false;
         }
+        if closes() {
+            self.in_xml_secret = false;
+        }
+        true
+    }
+}
 
+/// 去掉证书与密钥块（换成占位行）和 `OpenVPN` 内联密钥段，输入以换行结尾时输出也保留末尾换行。
+fn strip_secret_blocks(input: &str) -> String {
+    let mut out = Vec::new();
+    let mut state = SecretBlocks::default();
+    for line in input.lines() {
+        if state.pem_line(line, &mut out) || state.xml_line(line.trim()) {
+            continue;
+        }
         out.push(line.to_owned());
     }
-
     let mut text = out.join("\n");
     if input.ends_with('\n') {
         text.push('\n');
     }
+    text
+}
 
+/// 按正则隐去网址、密码类键值、`UCI` 密码选项，并把 `[AF_INET]`/`[AF_INET6]` 后的地址换成占位符。
+fn mask_patterns(mut text: String) -> String {
     if let Ok(re_url) = Regex::new(r#"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"<>]*"#) {
         text = re_url.replace_all(&text, "<URL>").into_owned();
     }
@@ -178,12 +198,23 @@ pub fn redact(env: &Env, input: &str) -> String {
             .replace_all(&text, "[AF_INET]<VPN服务器>")
             .into_owned();
     }
+    text
+}
+
+/// 把 `VPN` 配置里的服务器地址换成占位符。
+fn mask_vpn_hosts(env: &Env, mut text: String) -> String {
     for host in vpn_hosts(env) {
         if !host.is_empty() {
             text = text.replace(&host, "<VPN服务器>");
         }
     }
     text
+}
+
+/// 脱敏：隐去证书与密钥块、`OpenVPN` 内联密钥段、网址、密码类键值和 `VPN` 服务器地址。
+#[must_use]
+pub fn redact(env: &Env, input: &str) -> String {
+    mask_vpn_hosts(env, mask_patterns(strip_secret_blocks(input)))
 }
 
 /// 手机网络快照：路由规则与路由表、`iptables`/`ip6tables` 规则、接口与无线状态等命令输出。
