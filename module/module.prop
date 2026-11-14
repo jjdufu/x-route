@@ -1,6 +1,6 @@
 id=xrouter
 name=XRouter
-version=v4.1.2
-versionCode=412
+version=v4.2.0
+versionCode=420
 author=jjdufu
 description=在手机上运行 OpenWrt。
