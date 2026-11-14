@@ -1,5 +1,5 @@
 pub mod keepalive;
-pub mod watchdog;
+pub(crate) mod watchdog;
 
 use std::fs;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
 }
 
 #[must_use]
-pub fn pid(env: &Env) -> String {
+pub(crate) fn pid(env: &Env) -> String {
     fs::read_to_string(env.run_dir().join("daemon.pid"))
         .unwrap_or_default()
         .trim()
@@ -90,7 +90,7 @@ pub fn pid(env: &Env) -> String {
 }
 
 #[must_use]
-pub fn running(env: &Env) -> bool {
+pub(crate) fn running(env: &Env) -> bool {
     let pid = pid(env);
     if !is_pid_running(env, &pid) {
         return false;
@@ -102,7 +102,7 @@ pub fn running(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn ensure_watchdog(env: &Env) -> bool {
+pub(crate) fn ensure_watchdog(env: &Env) -> bool {
     if env.role.is_watchdog() || env.daemon_mode.is_foreground() {
         return true;
     }
@@ -138,7 +138,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn ensure(env: &Env) -> bool {
+pub(crate) fn ensure(env: &Env) -> bool {
     if env.daemon_mode.is_foreground() {
         return true;
     }
@@ -170,7 +170,7 @@ pub fn ensure(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn send(env: &Env, cmd: &str) -> i32 {
+pub(crate) fn send(env: &Env, cmd: &str) -> i32 {
     if env.daemon_mode.is_foreground() {
         return 0;
     }
@@ -197,7 +197,7 @@ pub fn send(env: &Env, cmd: &str) -> i32 {
 }
 
 #[must_use]
-pub fn vm_start(env: &Env) -> i32 {
+pub(crate) fn vm_start(env: &Env) -> i32 {
     if env.role.is_daemon() || env.daemon_mode.is_foreground() {
         return vm::start_exec(env);
     }
@@ -205,7 +205,7 @@ pub fn vm_start(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn vm_stop(env: &Env) -> i32 {
+pub(crate) fn vm_stop(env: &Env) -> i32 {
     if env.role.is_daemon() || env.daemon_mode.is_foreground() {
         return vm::stop_exec(env, false);
     }
@@ -224,7 +224,7 @@ fn clean_daemon_pid(env: &Env, self_pid: &str) {
 }
 
 #[must_use]
-pub fn main_loop(env: &Env) -> i32 {
+pub(crate) fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }

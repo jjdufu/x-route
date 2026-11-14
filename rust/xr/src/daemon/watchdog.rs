@@ -22,7 +22,7 @@ use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 
 #[must_use]
-pub fn main_loop(env: &Env) -> i32 {
+pub(crate) fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }

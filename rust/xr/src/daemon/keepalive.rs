@@ -24,7 +24,7 @@ use crate::vm;
 use crate::vm::run_net_hook;
 
 #[must_use]
-pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
+pub(crate) fn cgroup_escape(env: &Env, pid: &str) -> bool {
     let trimmed = pid.trim();
     if trimmed.is_empty() || !is_pid_running(env, trimmed) {
         return false;
@@ -59,7 +59,7 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
     true
 }
 
-pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
+pub(crate) fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     note_ok(
         env,
         "cgroup_escape",
@@ -84,7 +84,7 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
 }
 
 #[must_use]
-pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
+pub(crate) fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     let content = fs::read_to_string(env.proc_base.join(pid.trim()).join("cgroup")).ok()?;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("0::") {
@@ -99,19 +99,7 @@ pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn cgroup_in_apps(env: &Env, pid: &str) -> bool {
-    let Some(cg) = cgroup_path(env, pid) else {
-        return false;
-    };
-    cg.starts_with("/apps/")
-        || cg.starts_with("apps/")
-        || cg.contains("/apps/uid_")
-        || cg.contains("/uid_") && cg.contains("/pid_")
-        || cg.contains("suki")
-}
-
-#[must_use]
-pub fn xr_vm_alive(env: &Env) -> bool {
+pub(crate) fn xr_vm_alive(env: &Env) -> bool {
     if vm::running(env) {
         return true;
     }
@@ -127,7 +115,7 @@ pub fn xr_vm_alive(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn vm_stopping(env: &Env) -> bool {
+pub(crate) fn vm_stopping(env: &Env) -> bool {
     let st = env.run_dir().join("stopping");
     if !st.is_file() {
         return false;
@@ -137,7 +125,7 @@ pub fn vm_stopping(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn notify_state(env: &Env) -> &'static str {
+pub(crate) fn notify_state(env: &Env) -> &'static str {
     let text = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
     match text.trim() {
         "stable" => "运行中",
@@ -147,14 +135,14 @@ pub fn notify_state(env: &Env) -> &'static str {
 }
 
 #[must_use]
-pub fn notify_payload(env: &Env, cfg: &Config) -> String {
+pub(crate) fn notify_payload(env: &Env, cfg: &Config) -> String {
     let mode = cfg.notify_traffic();
     let ctx = NetCtx::new(env, cfg);
     let [wu, wd, lu, ld] = acct_total(&ctx);
     format!("{} {mode} {wu} {wd} {lu} {ld}", notify_state(env))
 }
 
-pub fn screen_on(env: &Env) -> bool {
+pub(crate) fn screen_on(env: &Env) -> bool {
     if let Some(raw) = &env.screen_override {
         return raw == "on";
     }
@@ -176,7 +164,7 @@ pub fn screen_on(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn notifier_running(env: &Env) -> bool {
+pub(crate) fn notifier_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("notifier.pid")).unwrap_or_default();
     let trimmed = pid.trim();
     if trimmed.is_empty() || !is_pid_running(env, trimmed) {
@@ -203,7 +191,7 @@ fn notifier_exec(env: &Env, mode: &str) {
     note_status(env, "xrnotify", status);
 }
 
-pub fn notifier_start(env: &Env) -> bool {
+pub(crate) fn notifier_start(env: &Env) -> bool {
     if notifier_running(env) {
         return true;
     }
@@ -267,14 +255,14 @@ fn notifier_wait(env: &Env, expected: &str) -> bool {
 }
 
 #[must_use]
-pub fn notifier_post(env: &Env, payload: &str) -> bool {
+pub(crate) fn notifier_post(env: &Env, payload: &str) -> bool {
     if !notifier_start(env) || !notifier_req(env, payload) {
         return false;
     }
     notifier_wait(env, &format!("ok {payload}"))
 }
 
-pub fn notify_cancel(env: &Env) {
+pub(crate) fn notify_cancel(env: &Env) {
     let run = env.run_dir();
     let mut done = false;
     if notifier_running(env) {
@@ -300,7 +288,7 @@ pub fn notify_cancel(env: &Env) {
     }
 }
 
-pub fn notify_update(env: &Env) {
+pub(crate) fn notify_update(env: &Env) {
     let run = env.run_dir();
     if !xr_vm_alive(env) {
         if run.join("notify.on").is_file() || !run.join("notify.idle").is_file() {
@@ -424,11 +412,11 @@ pub fn vm_exit_reason(env: &Env) -> String {
     "crosvm 已退出，日志未记录退出原因".to_owned()
 }
 
-pub fn routes_emergency_down(env: &Env) {
+pub(crate) fn routes_emergency_down(env: &Env) {
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
 }
 
-pub fn emergency_teardown(env: &Env, why: &str) {
+pub(crate) fn emergency_teardown(env: &Env, why: &str) {
     let run = env.run_dir();
     if sys::shutting_down(env) {
         shutdown_note(env, "daemon");
@@ -496,7 +484,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
 }
 
 #[must_use]
-pub fn stale_gateway(env: &Env) -> bool {
+pub(crate) fn stale_gateway(env: &Env) -> bool {
     let run = env.run_dir();
     if !run.join("net.gw").is_file() || vm_stopping(env) {
         return false;
