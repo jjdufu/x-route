@@ -17,9 +17,9 @@ use crate::vm::{vm_running, vpn_sync_host};
 pub fn vpn_slug(name: &str) -> String {
     let mut out = String::new();
     let mut last_us = false;
-    for b in name.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'_' {
-            out.push(char::from(b));
+    for octet in name.bytes() {
+        if octet.is_ascii_alphanumeric() || octet == b'_' {
+            out.push(char::from(octet));
             last_us = false;
         } else if !last_us && !out.is_empty() {
             out.push('_');
@@ -31,11 +31,11 @@ pub fn vpn_slug(name: &str) -> String {
     }
     let trimmed = out.trim_matches('_').to_owned();
     if trimmed.is_empty() {
-        let mut h = 0_u32;
-        for b in name.as_bytes() {
-            h = h.wrapping_mul(31).wrapping_add(u32::from(*b));
+        let mut hash = 0_u32;
+        for byte in name.as_bytes() {
+            hash = hash.wrapping_mul(31).wrapping_add(u32::from(*byte));
         }
-        format!("p_{h}")
+        format!("p_{hash}")
     } else {
         trimmed
     }
@@ -44,7 +44,7 @@ pub fn vpn_slug(name: &str) -> String {
 pub fn vpn_migrate_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     let legacy = env.xr_data.join("config/openvpn.ovpn");
-    if !vpn_dir.is_dir() && fs::metadata(&legacy).is_ok_and(|m| m.len() > 0) {
+    if !vpn_dir.is_dir() && fs::metadata(&legacy).is_ok_and(|meta| meta.len() > 0) {
         fsx::mkdirs_logged(env, &vpn_dir);
         let mn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
             .unwrap_or_default()
@@ -68,7 +68,7 @@ pub fn vpn_migrate_legacy(env: &Env) {
             format!("{disp}\n"),
         );
         let men = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
-            .map_or("1\n", |s| if s.trim() == "0" { "0\n" } else { "1\n" });
+            .map_or("1\n", |text| if text.trim() == "0" { "0\n" } else { "1\n" });
         fsx::write_logged(env, vpn_dir.join(format!("{mid}.enabled")), men);
     }
 }
@@ -81,16 +81,16 @@ pub fn vpn_mirror_legacy(env: &Env) {
     let mut first_id: Option<String> = None;
     let mut en_id: Option<String> = None;
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
         paths.sort();
-        for p in paths {
-            if p.extension().and_then(|s| s.to_str()) != Some("ovpn") {
+        for file_path in paths {
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
                 continue;
             }
-            if fs::metadata(&p).map_or(true, |m| m.len() == 0) {
+            if fs::metadata(&file_path).map_or(true, |meta| meta.len() == 0) {
                 continue;
             }
-            let Some(pid) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(pid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
                 continue;
             };
             if first_id.is_none() {
@@ -98,7 +98,7 @@ pub fn vpn_mirror_legacy(env: &Env) {
             }
             if en_id.is_none()
                 && fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
-                    .is_ok_and(|s| s.trim() == "1")
+                    .is_ok_and(|text| text.trim() == "1")
             {
                 en_id = Some(pid.to_owned());
             }
@@ -143,7 +143,7 @@ pub fn vpn_rejected(env: &Env) -> Vec<String> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for tok in raw.split(|c: char| c == ',' || c.is_whitespace()) {
+    for tok in raw.split(|ch: char| ch == ',' || ch.is_whitespace()) {
         if tok.is_empty() || is_default_route(tok) {
             continue;
         }
@@ -172,7 +172,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let tun_file = env.run_dir().join("guest/guest/openvpn.tunnels");
     let alive = vm_running(env);
     if alive
-        && fs::metadata(&tun_file).is_ok_and(|m| m.len() > 0)
+        && fs::metadata(&tun_file).is_ok_and(|meta| meta.len() > 0)
         && let Ok(content) = fs::read_to_string(&tun_file)
     {
         for line in content.lines() {
@@ -204,8 +204,8 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
                 }
             };
             let routes: Vec<&str> = rt
-                .split(|c: char| c == ',' || c.is_whitespace())
-                .filter(|s| !s.is_empty())
+                .split(|ch: char| ch == ',' || ch.is_whitespace())
+                .filter(|text| !text.is_empty())
                 .collect();
             out.push(json!({
                 "dev": dev,
@@ -254,16 +254,16 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
         .unwrap_or_default();
 
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
         paths.sort();
-        for p in paths {
-            if p.extension().and_then(|s| s.to_str()) != Some("ovpn") {
+        for file_path in paths {
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
                 continue;
             }
-            if fs::metadata(&p).map_or(true, |m| m.len() == 0) {
+            if fs::metadata(&file_path).map_or(true, |meta| meta.len() == 0) {
                 continue;
             }
-            let Some(pid) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(pid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
                 continue;
             };
             let pnm_raw = fs::read_to_string(vpn_dir.join(format!("{pid}.name")))
@@ -276,7 +276,7 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
                 pnm_raw
             };
             let pen = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
-                .is_ok_and(|s| s.trim() == "1");
+                .is_ok_and(|raw| raw.trim() == "1");
 
             let mut pst = "down".to_owned();
             let mut pdev = String::new();
@@ -310,15 +310,15 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
                     }
                 }
                 if pst == "down"
-                    && (conn_raw.lines().any(|l| l.trim() == pid)
+                    && (conn_raw.lines().any(|row| row.trim() == pid)
                         || (pen && !multi && matches!(summary_st, "up" | "connecting")))
                 {
                     "connecting".clone_into(&mut pst);
                 }
             }
             let routes: Vec<&str> = prt
-                .split(|c: char| c == ',' || c.is_whitespace())
-                .filter(|s| !s.is_empty())
+                .split(|ch: char| ch == ',' || ch.is_whitespace())
+                .filter(|text| !text.is_empty())
                 .collect();
             out.push(json!({
                 "id": pid,
@@ -346,7 +346,10 @@ fn vpn_next_cmd(env: &Env, act: &str) -> String {
 }
 
 fn valid_profile_id(id: &str) -> bool {
-    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 #[must_use]
@@ -360,7 +363,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     if !src.is_file() {
         return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_owned());
     }
-    let sz = fs::metadata(src).map_or(0, |m| m.len());
+    let sz = fs::metadata(src).map_or(0, |meta| meta.len());
     if !(8..=262_144).contains(&sz) {
         return (1, "{\"ok\":false,\"error\":\"文件大小不符\"}".to_owned());
     }
@@ -369,7 +372,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     };
     if bytes
         .iter()
-        .any(|&b| !b.is_ascii_graphic() && !b.is_ascii_whitespace())
+        .any(|&byte| !byte.is_ascii_graphic() && !byte.is_ascii_whitespace())
     {
         return (1, "{\"ok\":false,\"error\":\"不是文本配置\"}".to_owned());
     }
@@ -381,7 +384,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
 
     let raw_bn = src
         .file_stem()
-        .and_then(|s| s.to_str())
+        .and_then(|ext_os| ext_os.to_str())
         .unwrap_or("OpenVPN")
         .replace(['"', '\\'], "");
     let bn = if raw_bn.is_empty() {
@@ -393,9 +396,9 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     let mut id = String::new();
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
         for ent in rd.flatten() {
-            let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                && let Some(eid) = p.file_stem().and_then(|s| s.to_str())
+            let file_path = ent.path();
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) == Some("ovpn")
+                && let Some(eid) = file_path.file_stem().and_then(|os_str| os_str.to_str())
             {
                 let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
                     .unwrap_or_default()
@@ -427,7 +430,8 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     }
     fsx::write_logged(env, vpn_dir.join(format!("{id}.name")), format!("{bn}\n"));
     let en = if enable_flag == "0" {
-        fs::read_to_string(vpn_dir.join(format!("{id}.enabled"))).is_ok_and(|s| s.trim() == "1")
+        fs::read_to_string(vpn_dir.join(format!("{id}.enabled")))
+            .is_ok_and(|text| text.trim() == "1")
     } else {
         true
     };
@@ -480,7 +484,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
         }
         let ovpn = vpn_dir.join(format!("{tid}.ovpn"));
-        if !fs::metadata(&ovpn).is_ok_and(|m| m.len() > 0) {
+        if !fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0) {
             return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
         }
         if !vm_running(env) {
@@ -497,9 +501,9 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             && let Ok(rd) = fs::read_dir(&vpn_dir)
         {
             for ent in rd.flatten() {
-                let p = ent.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                    && let Some(oid) = p.file_stem().and_then(|s| s.to_str())
+                let target = ent.path();
+                if target.extension().and_then(|ext_os| ext_os.to_str()) == Some("ovpn")
+                    && let Some(oid) = target.file_stem().and_then(|stem_os| stem_os.to_str())
                 {
                     fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
                 }
@@ -533,7 +537,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             let tun = fs::read_to_string(guest.join("openvpn.tunnels")).unwrap_or_default();
             let conn = fs::read_to_string(guest.join("openvpn.connecting")).unwrap_or_default();
             let has_tun = tun.contains(&format!("|{tid}|"));
-            let has_conn = conn.lines().any(|l| l.trim() == tid);
+            let has_conn = conn.lines().any(|line| line.trim() == tid);
             let is_multi = guest.join("openvpn.multi").is_file();
             if want {
                 if has_tun || has_conn || (!is_multi && matches!(vst.as_str(), "up" | "connecting"))
@@ -561,14 +565,14 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     if vpn_dir.is_dir()
         && let Ok(rd) = fs::read_dir(&vpn_dir)
     {
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
         paths.sort();
         let mut has_en = false;
         let mut first_id: Option<String> = None;
-        for p in &paths {
-            if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                && fs::metadata(p).is_ok_and(|m| m.len() > 0)
-                && let Some(vid) = p.file_stem().and_then(|s| s.to_str())
+        for file_path in &paths {
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) == Some("ovpn")
+                && fs::metadata(file_path).is_ok_and(|meta| meta.len() > 0)
+                && let Some(vid) = file_path.file_stem().and_then(|os_str| os_str.to_str())
             {
                 if first_id.is_none() {
                     first_id = Some(vid.to_owned());
@@ -576,7 +580,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                 if !want {
                     fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
                 } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
-                    .is_ok_and(|s| s.trim() == "1")
+                    .is_ok_and(|text| text.trim() == "1")
                 {
                     has_en = true;
                 }
@@ -634,8 +638,8 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     if !ovpn.is_file() {
         return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
     }
-    let was_en =
-        fs::read_to_string(vpn_dir.join(format!("{did}.enabled"))).is_ok_and(|s| s.trim() == "1");
+    let was_en = fs::read_to_string(vpn_dir.join(format!("{did}.enabled")))
+        .is_ok_and(|text| text.trim() == "1");
     fsx::remove_logged(env, &ovpn);
     fsx::remove_logged(env, vpn_dir.join(format!("{did}.name")));
     fsx::remove_logged(env, vpn_dir.join(format!("{did}.enabled")));
@@ -675,11 +679,11 @@ pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
                     .unwrap_or("")
                     .split_whitespace()
                     .take(8)
-                    .map(|s| s.parse::<u64>().unwrap_or(0))
+                    .map(|text| text.parse::<u64>().unwrap_or(0))
                     .collect();
-                let g = |idx: usize| vals.get(idx).copied().unwrap_or(0);
-                let (pwu, pwd, plu, pld) = (g(0), g(1), g(2), g(3));
-                let (hwu, hwd, hlu, hld) = (g(4), g(5), g(6), g(7));
+                let at = |idx: usize| vals.get(idx).copied().unwrap_or(0);
+                let (pwu, pwd, plu, pld) = (at(0), at(1), at(2), at(3));
+                let (hwu, hwd, hlu, hld) = (at(4), at(5), at(6), at(7));
                 return (
                     0,
                     json!({
@@ -718,15 +722,15 @@ pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
     {
         return (1, Vec::new());
     }
-    let p = Path::new(&p_str);
-    if !p.is_dir() {
+    let file_path = Path::new(&p_str);
+    if !file_path.is_dir() {
         return (1, Vec::new());
     }
     let mut items = Vec::new();
-    if let Ok(rd) = fs::read_dir(p) {
+    if let Ok(rd) = fs::read_dir(file_path) {
         for ent in rd.flatten() {
             let ep = ent.path();
-            let Some(name) = ep.file_name().and_then(|s| s.to_str()) else {
+            let Some(name) = ep.file_name().and_then(|raw_name| raw_name.to_str()) else {
                 continue;
             };
             if name.starts_with('.') {
@@ -735,9 +739,12 @@ pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
             if ep.is_dir() {
                 items.push(format!("d/{name}"));
             } else if mode == "ovpn"
-                && ep.extension().and_then(|s| s.to_str()).is_some_and(|e| {
-                    e.eq_ignore_ascii_case("ovpn") || e.eq_ignore_ascii_case("conf")
-                })
+                && ep
+                    .extension()
+                    .and_then(|os_str| os_str.to_str())
+                    .is_some_and(|ext| {
+                        ext.eq_ignore_ascii_case("ovpn") || ext.eq_ignore_ascii_case("conf")
+                    })
             {
                 items.push(format!("f/{name}"));
             }
