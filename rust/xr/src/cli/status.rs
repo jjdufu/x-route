@@ -30,7 +30,7 @@ pub fn needs_restart(env: &Env, key: &str) -> bool {
 }
 
 #[must_use]
-pub fn status_json(env: &Env) -> String {
+pub fn json(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let vm_st = vm_status(env);
@@ -157,7 +157,7 @@ pub fn status_json(env: &Env) -> String {
 }
 
 #[must_use]
-pub fn status_line(env: &Env) -> String {
+pub fn line(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let (vm_label, vm_detail) = if vm_running(env) {

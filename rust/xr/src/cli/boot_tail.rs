@@ -40,7 +40,7 @@ fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
 }
 
 #[must_use]
-pub fn run_boot_tail(env: &Env, moff: &str, coff: &str) -> i32 {
+pub fn run(env: &Env, moff: &str, coff: &str) -> i32 {
     let run = env.run_dir();
     let st_raw = fs::read_to_string(run.join("state")).unwrap_or_default();
     let st_trim = st_raw.trim();

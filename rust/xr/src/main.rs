@@ -7,5 +7,5 @@ fn exit_from_i32(code: i32) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    exit_from_i32(xr::cli::run_cli(&args))
+    exit_from_i32(xr::cli::run(&args))
 }

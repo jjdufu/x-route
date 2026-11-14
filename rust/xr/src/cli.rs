@@ -11,8 +11,7 @@ use chrono::Local;
 use serde_json::json;
 
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid};
-use crate::cli::boot_tail::run_boot_tail;
-use crate::cli::status::{needs_restart, status_json, status_line};
+use crate::cli::status::needs_restart;
 use crate::cli::vpn_cfg::{list_dir, traffic_split, vpn_delete, vpn_import, vpn_set};
 use crate::config::{Config, KEYS, config_hash, set_kv, valid_kv};
 use crate::daemon::watchdog::watchdog_loop;
@@ -221,7 +220,7 @@ fn action_toggle(env: &Env) -> i32 {
     } else {
         note_rc(env, "vm_start", vm_start(env));
     }
-    emit(env, &status_line(env), 0)
+    emit(env, &status::line(env), 0)
 }
 
 fn run_traffic_cmd(env: &Env, sub: &str) -> i32 {
@@ -258,7 +257,7 @@ const OK_JSON: &str = "{\"ok\":true}";
 /// `xr set` 参数个数不对时的应答。
 const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
 
-pub fn run_cli(args: &[String]) -> i32 {
+pub fn run(args: &[String]) -> i32 {
     let env = Env::from_process();
     let Some(cmd) = args.first().map(String::as_str) else {
         return emit(&env, "usage: xr <subcommand>", 2);
@@ -268,7 +267,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     if cmd == "boot-tail" {
         let moff = rest.first().map_or("-1", String::as_str);
         let coff = rest.get(1).map_or("-1", String::as_str);
-        return run_boot_tail(&env, moff, coff);
+        return boot_tail::run(&env, moff, coff);
     }
 
     if let Err(err) = env.ensure_dirs() {
@@ -301,8 +300,8 @@ pub fn run_cli(args: &[String]) -> i32 {
             emit(&env, &out, rc)
         }
         "running" => i32::from(!vm_running(&env)),
-        "status-json" => emit(&env, &status_json(&env), 0),
-        "status-line" => emit(&env, &status_line(&env), 0),
+        "status-json" => emit(&env, &status::json(&env), 0),
+        "status-line" => emit(&env, &status::line(&env), 0),
         "get" => {
             let cfg = Config::load(&env);
             emit_lines(
@@ -420,12 +419,12 @@ pub fn run_cli(args: &[String]) -> i32 {
             emit_lines(&env, items, rc)
         }
         "log-export" => {
-            let st_j = status_json(&env);
+            let st_j = status::json(&env);
             let out = export_pack(&env, "xrouter-logs", false, &st_j);
             emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
         }
         "diag-export" => {
-            let st_j = status_json(&env);
+            let st_j = status::json(&env);
             let out = export_pack(&env, "xrouter-diag", true, &st_j);
             emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
         }
