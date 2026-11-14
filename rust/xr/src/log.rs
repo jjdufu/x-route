@@ -5,9 +5,10 @@ use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Offset as _, Utc};
 
 use crate::config::{Config, set_kv};
 use crate::env::{Env, is_executable};
@@ -93,10 +94,86 @@ pub(crate) fn unix_now() -> u64 {
         .map_or(0, |dur| dur.as_secs())
 }
 
+/// 进程内缓存的时区偏移；`None` 表示尚未探测。
+static TZ: Mutex<Option<FixedOffset>> = Mutex::new(None);
+
+/// 解析 `+HHMM` / `-HHMM` 为相对 UTC 的秒偏移（东为正）；格式非法、小时大于 14 或分钟大于 59 时返回 `None`。
+#[must_use]
+pub(crate) fn parse_tz_offset(text: &str) -> Option<i32> {
+    let trimmed = text.trim();
+    let (sign, digits) = match trimmed.as_bytes().first()? {
+        b'+' => (1_i32, trimmed.get(1..)?),
+        b'-' => (-1_i32, trimmed.get(1..)?),
+        _ => return None,
+    };
+    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let hours: i32 = match digits.get(0..2)?.parse() {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    let minutes: i32 = match digits.get(2..4)?.parse() {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    if hours > 14_i32 || minutes > 59_i32 {
+        return None;
+    }
+    hours
+        .checked_mul(3_600)?
+        .checked_add(minutes.checked_mul(60)?)?
+        .checked_mul(sign)
+}
+
+/// 安卓自带的 toybox `date`；存在时优先用它，避免 PATH 中的 busybox `date`（读不到安卓时区）。
+const SYSTEM_DATE: &str = "/system/bin/date";
+
+/// 探测手机时区偏移（秒）：先看环境变量 `XR_TZ_OFFSET`，再执行 `date +%z`（安卓上用 `/system/bin/date`，走系统时区；宿主机上走 PATH）；都取不到时为 0（UTC）。
+fn probe_tz_offset() -> i32 {
+    if let Ok(text) = std::env::var("XR_TZ_OFFSET")
+        && let Some(secs) = parse_tz_offset(&text)
+    {
+        return secs;
+    }
+    let date = if Path::new(SYSTEM_DATE).exists() {
+        SYSTEM_DATE
+    } else {
+        "date"
+    };
+    match Command::new(date).arg("+%z").output() {
+        Ok(out) if out.status.success() => {
+            parse_tz_offset(&String::from_utf8_lossy(&out.stdout)).unwrap_or(0_i32)
+        }
+        // date 无法执行或非零退出：取不到时区，退回 UTC
+        Ok(_) | Err(_) => 0_i32,
+    }
+}
+
+/// 重新探测时区并更新缓存，返回新偏移；偏移超出范围时用 UTC。
+pub(crate) fn tz_refresh() -> FixedOffset {
+    let offset = FixedOffset::east_opt(probe_tz_offset()).unwrap_or_else(|| Utc.fix());
+    let mut guard = TZ.lock().unwrap_or_else(PoisonError::into_inner);
+    *guard = Some(offset);
+    offset
+}
+
+/// 缓存中的时区偏移；尚未探测时为 `None`。
+fn tz_cached() -> Option<FixedOffset> {
+    *TZ.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// 当前本地时间（手机时区；取不到时为 UTC）。
+#[must_use]
+pub(crate) fn local_now() -> DateTime<FixedOffset> {
+    let offset = tz_cached().unwrap_or_else(tz_refresh);
+    Utc::now().with_timezone(&offset)
+}
+
 /// 本地时间的 `时:分:秒`，用于 `boot.log` 行首。
 #[must_use]
 pub(crate) fn time_hms() -> String {
-    Local::now().format("%H:%M:%S").to_string()
+    local_now().format("%H:%M:%S").to_string()
 }
 
 /// 日志时间戳 `YYYY-MM-DD HH:MM:SS`（本地时间）。
@@ -105,7 +182,7 @@ pub(crate) fn time_hms() -> String {
 #[must_use]
 pub fn xr_now(env: &Env) -> String {
     if !env.fake_date_fail {
-        let stamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let stamp = local_now().format("%Y-%m-%d %H:%M:%S").to_string();
         if !stamp.is_empty() {
             return stamp;
         }
@@ -233,7 +310,7 @@ pub(crate) fn dlog(env: &Env, cfg: &Config, module: &str, msg: &str) {
     }
     ensure_log_dir(&env.log_dir());
     let pid = std::process::id();
-    let ts = Local::now().format("%Y-%m-%d %H:%M:%S");
+    let ts = local_now().format("%Y-%m-%d %H:%M:%S");
     append_line_counted(&env.debug_log(), &format!("{ts} [{pid}] [{module}] {msg}"));
 }
 

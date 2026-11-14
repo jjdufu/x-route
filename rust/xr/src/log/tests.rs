@@ -1,14 +1,15 @@
-//! 日志写失败的处理：返回错误、只计数、不递归；诊断包失败计数行的格式。
+//! 日志写失败的处理：返回错误、只计数、不递归；诊断包失败计数行的格式；时区偏移的解析。
 
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 
+use proptest::prelude::*;
 use tempfile::TempDir;
-use xr_test_support::{Failure, ensure};
+use xr_test_support::{Failure, ensure, ensure_eq};
 
-use super::{FAILURES, append_line, format_failures_line, note_failure};
+use super::{FAILURES, append_line, format_failures_line, note_failure, parse_tz_offset};
 use crate::env::Env;
 use crate::log;
 
@@ -122,4 +123,59 @@ fn failures_line_format() -> Result<(), Failure> {
         format_failures_line(1, 0, 2) == "best_effort_failures fs=1 exec=0 log=2\n",
         "非 0 时一行",
     )
+}
+
+/// 合法的 `+HHMM`/`-HHMM` 换算成秒（东为正），前后空白忽略。
+///
+/// # Errors
+///
+/// 任一结果与期望不同时返回错误。
+#[test]
+fn tz_offset_valid_values() -> Result<(), Failure> {
+    ensure_eq(&parse_tz_offset("+0800"), &Some(28_800_i32), "+0800")?;
+    ensure_eq(&parse_tz_offset("-0330"), &Some(-12_600_i32), "-0330")?;
+    ensure_eq(&parse_tz_offset("+0000"), &Some(0_i32), "+0000")?;
+    ensure_eq(&parse_tz_offset("+1400"), &Some(50_400_i32), "+1400 上限")?;
+    ensure_eq(
+        &parse_tz_offset("+0545\n"),
+        &Some(20_700_i32),
+        "带换行（date 输出）",
+    )
+}
+
+/// 非法格式一律返回 `None`。
+///
+/// # Errors
+///
+/// 任一非法输入得到了偏移时返回错误。
+#[test]
+fn tz_offset_invalid_values() -> Result<(), Failure> {
+    for text in [
+        "0800", "+08", "+2500", "+1500", "+0860", "+08a0", "", "+", "-", "+08000", "＋0800",
+    ] {
+        ensure_eq(&parse_tz_offset(text), &None, &format!("{text:?} 应非法"))?;
+    }
+    Ok(())
+}
+
+/// `±1459` 对应的最大偏移秒数。
+const MAX_TZ_SECS: i32 = 53_940_i32;
+
+proptest! {
+    /// 任意 -14..=14 小时、0..=59 分钟，格式化成 `±HHMM` 后解析回同一偏移。
+    #[test]
+    fn prop_tz_offset_roundtrip(hours in -14_i32..=14_i32, minutes in 0_i32..=59_i32) {
+        let sign = if hours < 0_i32 { '-' } else { '+' };
+        let text = format!("{sign}{:02}{minutes:02}", hours.unsigned_abs());
+        let magnitude = hours.abs().saturating_mul(3_600_i32).saturating_add(minutes.saturating_mul(60_i32));
+        let expected = if hours < 0_i32 { 0_i32.saturating_sub(magnitude) } else { magnitude };
+        prop_assert_eq!(parse_tz_offset(&text), Some(expected));
+    }
+
+    /// 任意字符串输入都不会 panic，结果要么是 `None`，要么在 ±14 小时以内。
+    #[test]
+    fn prop_tz_offset_never_panics(text in ".{0,12}") {
+        let got = parse_tz_offset(&text);
+        prop_assert!(got.is_none_or(|secs| secs.abs() <= MAX_TZ_SECS));
+    }
 }
