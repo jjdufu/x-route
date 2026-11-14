@@ -57,7 +57,7 @@ pub fn boot_progress(env: &Env, secs: u64) {
 }
 
 /// 在后台线程里回收子进程（避免僵尸）；退出状态无人需要，等待本身失败时计数。
-fn reap_in_background(mut child: std::process::Child) {
+pub(crate) fn reap_in_background(mut child: std::process::Child) {
     // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
     drop(thread::spawn(move || {
         if child.wait().is_err() {

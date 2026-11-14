@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, Permissions};
+use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::Shutdown;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -16,10 +15,11 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
 
 use crate::env::Env;
-use crate::log::log_info;
+use crate::log::{FAILURES, dlog_env, log_err, log_info, note_failure};
+use crate::sys::fsx;
 use crate::sys::spawn::spawn_self_detached;
-use crate::sys::{is_pid_running, send_signal};
-use crate::vm::vm_running;
+use crate::sys::{is_pid_running, send_signal_logged};
+use crate::vm::{reap_in_background, vm_running};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClashStatus {
@@ -73,7 +73,7 @@ pub fn stop_clash_mux(env: &Env) {
     if let Ok(pid_raw) = fs::read_to_string(run.join("clash_mux.pid")) {
         let pid = pid_raw.trim();
         if !pid.is_empty() && is_pid_running(env, pid) {
-            let _ = send_signal(pid, Signal::TERM);
+            send_signal_logged(env, pid, Signal::TERM);
             for _ in 0..10 {
                 if !is_pid_running(env, pid) {
                     break;
@@ -81,7 +81,7 @@ pub fn stop_clash_mux(env: &Env) {
                 thread::sleep(Duration::from_millis(100));
             }
             if is_pid_running(env, pid) {
-                let _ = send_signal(pid, Signal::KILL);
+                send_signal_logged(env, pid, Signal::KILL);
             }
         }
     }
@@ -91,7 +91,7 @@ pub fn stop_clash_mux(env: &Env) {
         "clash-ctl.sock",
         "clash-rpc.sock",
     ] {
-        let _ = fs::remove_file(run.join(f));
+        fsx::remove_logged(env, run.join(f));
     }
 }
 
@@ -99,14 +99,12 @@ pub fn start_clash_mux(env: &Env) {
     stop_clash_mux(env);
     let run = env.run_dir();
     let ready = run.join("clash_mux.ready");
-    let Ok(mut mux) = spawn_self_detached(env, &["internal", "clash-mux"]) else {
+    let Ok(mux) = spawn_self_detached(env, &["internal", "clash-mux"]) else {
         log_info(env, "clash", "clash-mux 启动失败");
         return;
     };
     if env.in_daemon {
-        thread::spawn(move || {
-            let _ = mux.wait();
-        });
+        reap_in_background(mux);
     }
     for _ in 0..100 {
         if ready.is_file() {
@@ -166,21 +164,28 @@ impl MuxState {
 
     fn send_to_client(&self, client_id: u64, line: String) {
         if let Ok(clients) = self.clients.lock() {
-            if let Some(ch) = clients.get(&client_id) {
-                let _ = ch.tx.send(line);
+            if let Some(ch) = clients.get(&client_id)
+                && ch.tx.send(line).is_err()
+            {
+                // 该客户端的写线程已经结束（连接已断）：这一行无人接收，只计数
+                note_failure(&FAILURES.log);
             }
         }
     }
 
     fn register_client(&self, client_id: u64, tx: mpsc::Sender<String>) {
         if let Ok(mut clients) = self.clients.lock() {
-            clients.insert(
+            let replaced: Option<ClientHandle> = clients.insert(
                 client_id,
                 ClientHandle {
                     tx,
                     ws_ids: HashSet::new(),
                 },
             );
+            if replaced.is_some() {
+                // 客户端编号单调递增，不会重复；万一重复，新连接覆盖旧连接（与原来相同），只计数
+                note_failure(&FAILURES.log);
+            }
         }
     }
 
@@ -197,16 +202,17 @@ impl MuxState {
             pending.retain(|_, (cid, _)| *cid != client_id);
         }
         if let Ok(mut active) = self.active_ws.lock() {
-            for mux_ws in &orphaned_ws {
-                active.remove(mux_ws);
-            }
+            active.retain(|mux_ws, _| !orphaned_ws.contains(mux_ws));
         }
         if let Ok(mut by_key) = self.ws_by_key.lock() {
             by_key.retain(|_, (cid, mux_ws)| *cid != client_id && !orphaned_ws.contains(mux_ws));
         }
         for mux_ws in orphaned_ws {
             let close_cmd = json!({"op": "ws_close", "ws_id": mux_ws}).to_string();
-            let _ = self.write_hvc_line(&close_cmd);
+            if !self.write_hvc_line(&close_cmd) {
+                // 客机通道未连接：客机侧的 ws 随通道一起失效，这条关闭通知无处可发，只计数
+                note_failure(&FAILURES.log);
+            }
         }
     }
 
@@ -227,7 +233,7 @@ impl MuxState {
             if let Ok(mut pending) = self.pending_reqs.lock() {
                 if let Some((cid, orig_id)) = pending.remove(&mux_id) {
                     target_client = Some(cid);
-                    obj.insert("id".to_string(), orig_id);
+                    let _mux_id: Option<Value> = obj.insert("id".to_string(), orig_id);
                 }
             }
         }
@@ -243,18 +249,19 @@ impl MuxState {
                 if let Some((cid, orig_ws)) = found {
                     if is_close {
                         if let Ok(mut by_key) = self.ws_by_key.lock() {
-                            by_key.remove(&orig_ws);
+                            let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
                         }
                         if let Ok(mut clients) = self.clients.lock() {
                             if let Some(ch) = clients.get_mut(&cid) {
-                                ch.ws_ids.remove(&mux_ws);
+                                ch.ws_ids.retain(|owned| owned != &mux_ws);
                             }
                         }
                     }
                     if target_client.is_none() {
                         target_client = Some(cid);
                     }
-                    obj.insert("ws_id".to_string(), Value::String(orig_ws));
+                    let _mux_ws_id: Option<Value> =
+                        obj.insert("ws_id".to_string(), Value::String(orig_ws));
                 }
             }
         }
@@ -298,19 +305,23 @@ impl MuxState {
                     return;
                 }
                 let mux_ws = format!("w{}", self.next_seq());
-                ws_map.insert(orig_ws.clone(), mux_ws.clone());
+                let _reopened_local: Option<String> =
+                    ws_map.insert(orig_ws.clone(), mux_ws.clone());
                 if let Ok(mut active) = self.active_ws.lock() {
-                    active.insert(mux_ws.clone(), (client_id, orig_ws.clone()));
+                    let _stale_active: Option<(u64, String)> =
+                        active.insert(mux_ws.clone(), (client_id, orig_ws.clone()));
                 }
                 if let Ok(mut by_key) = self.ws_by_key.lock() {
-                    by_key.insert(orig_ws, (client_id, mux_ws.clone()));
+                    let _reopened_key: Option<(u64, String)> =
+                        by_key.insert(orig_ws, (client_id, mux_ws.clone()));
                 }
                 if let Ok(mut clients) = self.clients.lock() {
                     if let Some(ch) = clients.get_mut(&client_id) {
-                        ch.ws_ids.insert(mux_ws.clone());
+                        ch.ws_ids.extend(std::iter::once(mux_ws.clone()));
                     }
                 }
-                obj.insert("ws_id".to_string(), Value::String(mux_ws));
+                let _orig_ws_id: Option<Value> =
+                    obj.insert("ws_id".to_string(), Value::String(mux_ws));
             }
             "ws_send" | "ws_close" => {
                 let orig_ws = obj
@@ -352,14 +363,14 @@ impl MuxState {
                 };
                 if op == "ws_close" {
                     if let Ok(mut by_key) = self.ws_by_key.lock() {
-                        by_key.remove(&orig_ws);
+                        let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
                     }
                     if let Ok(mut active) = self.active_ws.lock() {
-                        active.remove(&mux_ws);
+                        let _closed_active: Option<(u64, String)> = active.remove(&mux_ws);
                     }
                     if let Ok(mut clients) = self.clients.lock() {
                         if let Some(ch) = clients.get_mut(&owner_cid) {
-                            ch.ws_ids.remove(&mux_ws);
+                            ch.ws_ids.retain(|owned| owned != &mux_ws);
                         }
                     }
                     if external_ws_owner.is_some() {
@@ -370,21 +381,24 @@ impl MuxState {
                         );
                     }
                 }
-                obj.insert("ws_id".to_string(), Value::String(mux_ws));
+                let _orig_ws_id: Option<Value> =
+                    obj.insert("ws_id".to_string(), Value::String(mux_ws));
             }
             _ => {}
         }
 
         let is_ext_ws_ctl = external_ws_owner.is_some() && (op == "ws_send" || op == "ws_close");
         let mux_req_id = if is_ext_ws_ctl {
-            obj.remove("id");
+            let _orig_req_id: Option<Value> = obj.remove("id");
             None
         } else if let Some(ref oid) = orig_id {
             let mid = format!("r{}", self.next_seq());
             if let Ok(mut pending) = self.pending_reqs.lock() {
-                pending.insert(mid.clone(), (client_id, oid.clone()));
+                let _reused_mid: Option<(u64, Value)> =
+                    pending.insert(mid.clone(), (client_id, oid.clone()));
             }
-            obj.insert("id".to_string(), Value::String(mid.clone()));
+            let _orig_req_id: Option<Value> =
+                obj.insert("id".to_string(), Value::String(mid.clone()));
             Some(mid)
         } else {
             None
@@ -406,25 +420,27 @@ impl MuxState {
         if !written {
             if let Some(mid) = mux_req_id {
                 if let Ok(mut pending) = self.pending_reqs.lock() {
-                    pending.remove(&mid);
+                    let _unsent: Option<(u64, Value)> = pending.remove(&mid);
                 }
             }
             if let Some(oid) = orig_id {
                 let mut err = Map::new();
-                err.insert("id".to_string(), oid);
-                err.insert("ok".to_string(), Value::Bool(false));
-                err.insert("status".to_string(), Value::from(503));
-                err.insert(
-                    "error".to_string(),
-                    Value::String("hvc1 channel not connected".to_string()),
-                );
+                err.extend([
+                    ("id".to_string(), oid),
+                    ("ok".to_string(), Value::Bool(false)),
+                    ("status".to_string(), Value::from(503)),
+                    (
+                        "error".to_string(),
+                        Value::String("hvc1 channel not connected".to_string()),
+                    ),
+                ]);
                 self.send_to_client(client_id, Value::Object(err).to_string());
             }
         }
     }
 }
 
-fn serve_rpc_client(state: &MuxState, stream: UnixStream, client_id: u64) {
+fn serve_rpc_client(env: &Env, state: &MuxState, stream: UnixStream, client_id: u64) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
     };
@@ -455,7 +471,30 @@ fn serve_rpc_client(state: &MuxState, stream: UnixStream, client_id: u64) {
     }
 
     state.unregister_client(client_id);
-    let _ = writer_handle.join();
+    note_join(env, "clash 客户端写线程", &writer_handle.join());
+}
+
+/// 在分离线程里服务一个 RPC 客户端连接：显式丢弃句柄即 detach，与原来不 join 的语义相同。
+fn spawn_rpc_client(env: Env, state: Arc<MuxState>, stream: UnixStream, client_id: u64) {
+    drop(thread::spawn(move || {
+        serve_rpc_client(&env, &state, stream, client_id);
+    }));
+}
+
+/// 等待线程结束后的结果：线程异常结束时（release 构建为 `panic = "abort"`，只在测试构建中可能出现）
+/// 计数并在调试开关打开时写调试日志，调用方继续。
+fn note_join(env: &Env, what: &str, res: &thread::Result<()>) {
+    if res.is_err() {
+        note_failure(&FAILURES.exec);
+        dlog_env(env, "clash", &format!("{what}异常结束"));
+    }
+}
+
+/// 套接字选项设置（超时、阻塞模式）或关闭的结果：失败时在调试开关打开时写调试日志，按原逻辑继续。
+fn note_sock(env: &Env, what: &str, res: std::io::Result<()>) {
+    if let Err(err) = res {
+        dlog_env(env, "clash", &format!("{what} 失败：{err}"));
+    }
 }
 
 pub fn run_clash_mux(env: &Env) -> i32 {
@@ -465,39 +504,52 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     let pid_file = run.join("clash_mux.pid");
     let ready_file = run.join("clash_mux.ready");
 
-    let _ = fs::remove_file(&ctl_sock);
-    let _ = fs::remove_file(&rpc_sock);
-    let _ = fs::remove_file(&ready_file);
+    fsx::remove_logged(env, &ctl_sock);
+    fsx::remove_logged(env, &rpc_sock);
+    fsx::remove_logged(env, &ready_file);
 
     let Ok(ctl_listener) = UnixListener::bind(&ctl_sock) else {
         return 1;
     };
     let Ok(rpc_listener) = UnixListener::bind(&rpc_sock) else {
-        let _ = fs::remove_file(&ctl_sock);
+        fsx::remove_logged(env, &ctl_sock);
         return 1;
     };
-    let _ = fs::set_permissions(&ctl_sock, Permissions::from_mode(0o600));
-    let _ = fs::set_permissions(&rpc_sock, Permissions::from_mode(0o600));
-    let _ = ctl_listener.set_nonblocking(true);
-    let _ = rpc_listener.set_nonblocking(true);
+    fsx::chmod_logged(env, &ctl_sock, 0o600);
+    fsx::chmod_logged(env, &rpc_sock, 0o600);
+    note_sock(
+        env,
+        "clash-ctl.sock 设为非阻塞",
+        ctl_listener.set_nonblocking(true),
+    );
+    note_sock(
+        env,
+        "clash-rpc.sock 设为非阻塞",
+        rpc_listener.set_nonblocking(true),
+    );
 
     let stop = Arc::new(AtomicBool::new(false));
-    let _ = flag::register(SIGTERM, Arc::clone(&stop));
-    let _ = flag::register(SIGINT, Arc::clone(&stop));
+    if let Err(err) = flag::register(SIGTERM, Arc::clone(&stop)) {
+        log_err(env, "clash", &format!("信号注册失败 SIGTERM: {err}"));
+    }
+    if let Err(err) = flag::register(SIGINT, Arc::clone(&stop)) {
+        log_err(env, "clash", &format!("信号注册失败 SIGINT: {err}"));
+    }
 
-    let _ = fs::write(&pid_file, format!("{}\n", std::process::id()));
-    let _ = fs::write(&ready_file, "ready\n");
+    fsx::write_logged(env, &pid_file, format!("{}\n", std::process::id()));
+    fsx::write_logged(env, &ready_file, "ready\n");
 
     let state = Arc::new(MuxState::new());
 
     let s_ctl = Arc::clone(&state);
     let stop_ctl = Arc::clone(&stop);
+    let env_ctl = env.clone();
     let ctl_thread = thread::spawn(move || {
         while !stop_ctl.load(Ordering::Relaxed) {
             let accepted = ctl_listener.accept();
             match accepted {
                 Ok((stream, _)) => {
-                    let _ = stream.set_nonblocking(false);
+                    note_sock(&env_ctl, "客机连接设为阻塞", stream.set_nonblocking(false));
                     let Ok(reader_stream) = stream.try_clone() else {
                         continue;
                     };
@@ -528,17 +580,17 @@ pub fn run_clash_mux(env: &Env) -> i32 {
 
     let s_rpc = Arc::clone(&state);
     let stop_rpc = Arc::clone(&stop);
+    let env_rpc = env.clone();
     let rpc_thread = thread::spawn(move || {
         let mut next_cid = 1_u64;
         while !stop_rpc.load(Ordering::Relaxed) {
             let accepted = rpc_listener.accept();
             match accepted {
                 Ok((stream, _)) => {
-                    let _ = stream.set_nonblocking(false);
+                    note_sock(&env_rpc, "RPC 连接设为阻塞", stream.set_nonblocking(false));
                     let cid = next_cid;
                     next_cid = next_cid.saturating_add(1);
-                    let s_cl = Arc::clone(&s_rpc);
-                    thread::spawn(move || serve_rpc_client(&s_cl, stream, cid));
+                    spawn_rpc_client(env_rpc.clone(), Arc::clone(&s_rpc), stream, cid);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
@@ -562,15 +614,15 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     }
 
     stop.store(true, Ordering::Relaxed);
-    let _ = ctl_thread.join();
-    let _ = rpc_thread.join();
+    note_join(env, "clash 客机通道线程", &ctl_thread.join());
+    note_join(env, "clash RPC 监听线程", &rpc_thread.join());
     for f in [
         "clash_mux.pid",
         "clash_mux.ready",
         "clash-ctl.sock",
         "clash-rpc.sock",
     ] {
-        let _ = fs::remove_file(run.join(f));
+        fsx::remove_logged(env, run.join(f));
     }
     0
 }
@@ -618,9 +670,9 @@ pub fn run_clash_bridge(env: &Env) -> i32 {
             }
         }
     }
-    let _ = sock_out.shutdown(Shutdown::Both);
-    let _ = stream.shutdown(Shutdown::Both);
-    let _ = reader_handle.join();
+    note_sock(env, "clash 桥接写端关闭", sock_out.shutdown(Shutdown::Both));
+    note_sock(env, "clash 桥接连接关闭", stream.shutdown(Shutdown::Both));
+    note_join(env, "clash 桥接读线程", &reader_handle.join());
     0
 }
 
@@ -630,8 +682,16 @@ pub fn run_clash_ping(env: &Env) -> i32 {
         println!("{{\"ok\":false,\"error\":\"clash channel unavailable\"}}");
         return 1;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    note_sock(
+        env,
+        "clash-ping 读超时",
+        stream.set_read_timeout(Some(Duration::from_secs(3))),
+    );
+    note_sock(
+        env,
+        "clash-ping 写超时",
+        stream.set_write_timeout(Some(Duration::from_secs(2))),
+    );
     if stream.write_all(b"{\"id\":1,\"op\":\"ping\"}\n").is_err() || stream.flush().is_err() {
         println!("{{\"ok\":false,\"error\":\"write failed\"}}");
         return 1;
@@ -689,15 +749,24 @@ pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
         return 2;
     };
     if !obj.contains_key("id") {
-        obj.insert("id".to_string(), Value::String("c1".to_string()));
+        let _absent_id: Option<Value> =
+            obj.insert("id".to_string(), Value::String("c1".to_string()));
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
         println!("{{\"ok\":false,\"status\":503,\"error\":\"clash channel unavailable\"}}");
         return 1;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    note_sock(
+        env,
+        "clash-call 读超时",
+        stream.set_read_timeout(Some(Duration::from_secs(20))),
+    );
+    note_sock(
+        env,
+        "clash-call 写超时",
+        stream.set_write_timeout(Some(Duration::from_secs(5))),
+    );
     let wire = val.to_string();
     if stream.write_all(wire.as_bytes()).is_err()
         || stream.write_all(b"\n").is_err()
@@ -732,7 +801,11 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
         );
         return 1;
     };
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    note_sock(
+        env,
+        "clash-stream 写超时",
+        stream.set_write_timeout(Some(Duration::from_secs(5))),
+    );
     let open_cmd = json!({"id": "open", "op": "ws_open", "ws_id": ws_id, "path": path}).to_string();
     if stream.write_all(open_cmd.as_bytes()).is_err()
         || stream.write_all(b"\n").is_err()
@@ -774,8 +847,16 @@ pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i
         println!("{{\"ok\":false,\"error\":\"clash channel unavailable\"}}");
         return 1;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    note_sock(
+        env,
+        "clash-ws-send 读超时",
+        stream.set_read_timeout(Some(Duration::from_secs(5))),
+    );
+    note_sock(
+        env,
+        "clash-ws-send 写超时",
+        stream.set_write_timeout(Some(Duration::from_secs(5))),
+    );
     let cmd = if mode == "bin" {
         json!({"id": "s1", "op": "ws_send", "ws_id": ws_id, "binary": true, "data_b64": payload})
     } else {
@@ -810,8 +891,16 @@ pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
         println!("{{\"ok\":true}}");
         return 0;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+    note_sock(
+        env,
+        "clash-ws-close 读超时",
+        stream.set_read_timeout(Some(Duration::from_secs(3))),
+    );
+    note_sock(
+        env,
+        "clash-ws-close 写超时",
+        stream.set_write_timeout(Some(Duration::from_secs(3))),
+    );
     let cmd = json!({"id": "c1", "op": "ws_close", "ws_id": ws_id}).to_string();
     if stream.write_all(cmd.as_bytes()).is_err()
         || stream.write_all(b"\n").is_err()
@@ -821,7 +910,10 @@ pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     }
     let mut br = BufReader::new(stream);
     let mut line = String::new();
-    let _ = br.read_line(&mut line);
+    if let Err(err) = br.read_line(&mut line) {
+        // 读失败与读到空行同样按"已关闭"回答，与原来相同
+        dlog_env(env, "clash", &format!("clash-ws-close 读应答失败：{err}"));
+    }
     if line.trim().is_empty() {
         println!("{{\"ok\":true}}");
     } else {
