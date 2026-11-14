@@ -189,25 +189,25 @@ fn ensure_log_dir(dir: &Path) {
     }
 }
 
-pub fn log_msg(env: &Env, level: &str, module: &str, msg: &str) {
+pub fn msg(env: &Env, level: &str, module: &str, text: &str) {
     ensure_log_dir(&env.log_dir());
     let log_path = env.module_log();
     rotate_file(env, &log_path, true);
     let ts = xr_now(env);
-    append_line_counted(&log_path, &format!("{ts} [{level}] [{module}] {msg}"));
+    append_line_counted(&log_path, &format!("{ts} [{level}] [{module}] {text}"));
     let boot_log = env.boot_log();
     if boot_log.is_file() {
         let short_ts = ts.split_once(' ').map_or(ts.as_str(), |(_, rhs)| rhs);
-        append_line_counted(&boot_log, &format!("{short_ts} [{module}] {msg}"));
+        append_line_counted(&boot_log, &format!("{short_ts} [{module}] {text}"));
     }
 }
 
-pub fn log_info(env: &Env, module: &str, msg: &str) {
-    log_msg(env, "INFO", module, msg);
+pub fn info(env: &Env, module: &str, text: &str) {
+    msg(env, "INFO", module, text);
 }
 
-pub fn log_err(env: &Env, module: &str, msg: &str) {
-    log_msg(env, "ERROR", module, msg);
+pub fn err(env: &Env, module: &str, text: &str) {
+    msg(env, "ERROR", module, text);
 }
 
 pub fn blog(env: &Env, module: &str, msg: &str) {
@@ -267,7 +267,7 @@ pub fn debug_expire(env: &Env) {
     }
     if set_kv(env, "XR_DEBUG", "0") {
         fsx::remove_logged(env, &until_file);
-        log_info(env, "debug", "调试模式已到期，自动关闭");
+        info(env, "debug", "调试模式已到期，自动关闭");
     }
 }
 
@@ -285,7 +285,7 @@ pub fn boot_clean_run(env: &Env) -> bool {
             .lines()
             .any(|line| line.contains(&pat_slash) || line.contains(&pat_space))
     {
-        log_err(env, "service", "run/ 下存在挂载点，跳过开机清理");
+        err(env, "service", "run/ 下存在挂载点，跳过开机清理");
         return false;
     }
     fsx::mkdirs_logged(env, env.log_dir());

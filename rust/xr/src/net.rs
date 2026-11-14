@@ -14,7 +14,8 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF, XR_NET6};
-use crate::log::{dlog, log_err, log_info, unix_now};
+use crate::log;
+use crate::log::{dlog, unix_now};
 use crate::net::common::{NetCtx, trigger_diag_snap_bg};
 use crate::net::hotspot::{hs_fwd6_rules, hs_sync, hs_tap_down, hs_tap_up, vm_alive, vm_is_ready};
 use crate::net::ipv6::{
@@ -248,7 +249,7 @@ pub fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     if cur != mt_s && ctx.ip(&["link", "set", XR_IF, "mtu", &mt_s]).success() {
         let cur_disp = if cur.is_empty() { "?" } else { &cur };
         let up_disp = if up.is_empty() { "无" } else { up };
-        log_info(
+        log::info(
             ctx.env,
             "net",
             &format!("xr0 MTU {cur_disp} -> {mt_s}（跟随上游 {up_disp}）"),
@@ -716,7 +717,7 @@ fn sync_all_unlocked(env: &Env) {
         } else {
             outs6.join(" ")
         };
-        log_info(
+        log::info(
             env,
             "net",
             &format!("上游 {old_disp} -> {new_disp}（出口 {outs_disp}）"),
@@ -906,7 +907,7 @@ pub fn net_up(env: &Env) -> i32 {
     if !ctx.ip(&["link", "show", XR_IF]).success()
         && !ctx.ip(&["tuntap", "add", XR_IF, "mode", "tap"]).success()
     {
-        log_err(env, "net", &format!("创建 {XR_IF} 失败"));
+        log::err(env, "net", &format!("创建 {XR_IF} 失败"));
         return 1;
     }
     ctx.ip_run(&["addr", "flush", "dev", XR_IF]);
@@ -951,7 +952,7 @@ pub fn net_up(env: &Env) -> i32 {
         fsx::write_logged(env, run.join("net.mode"), "fallback\n");
         ctx.ip_run(&["route", "replace", &net4, "dev", XR_IF, "table", "97"]);
         ctx.ip6_run(&["route", "replace", &net6, "dev", XR_IF, "table", "97"]);
-        log_info(env, "net", "ndc 不可用，改用 table 97，并由对账循环补回");
+        log::info(env, "net", "ndc 不可用，改用 table 97，并由对账循环补回");
     }
 
     let tbl = ctx.lnt();
@@ -977,9 +978,9 @@ pub fn net_up(env: &Env) -> i32 {
         fsx::touch_logged(env, run.join("net.fwd6"));
         fwd6_first(&ctx);
     } else if v6_nft_setup(env) {
-        log_info(env, "net", "ip6tables filter 不可用，IPv6 转发改用 nft");
+        log::info(env, "net", "ip6tables filter 不可用，IPv6 转发改用 nft");
     } else {
-        log_err(
+        log::err(
             env,
             "net",
             "ip6tables filter 与 nft 均不可用，IPv6 仅靠路由表拦截旁路",
@@ -997,7 +998,7 @@ pub fn net_up(env: &Env) -> i32 {
         fsx::write_logged(env, run.join("net_watch.pid"), format!("{}\n", child.id()));
     }
     let mode_s = fs::read_to_string(run.join("net.mode")).unwrap_or_default();
-    log_info(
+    log::info(
         env,
         "net",
         &format!("xr0 {ip4_cidr} 已就绪（{}）", mode_s.trim()),

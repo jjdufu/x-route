@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::env::{Env, is_executable};
-use crate::log::log_info;
+use crate::log;
 use crate::sys::fsx;
 
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ impl<'a> NetCtx<'a> {
         let path_s = path.to_string_lossy();
         let short = path_s.strip_prefix(&proc_prefix).unwrap_or(&path_s);
         let rc = i32::from(!ok);
-        crate::log::dlog(
+        log::dlog(
             self.env,
             self.cfg,
             "sysctl",
@@ -132,7 +132,7 @@ impl<'a> NetCtx<'a> {
     /// 与 [`Self::sysw`] 相同，只关心成败：写入失败时计数（调试日志已由 `sysw` 写过），不返回结果。
     pub fn sysw_run(&self, path: &Path, val: &str) {
         if !self.sysw(path, val) {
-            crate::log::note_failure(&crate::log::FAILURES.fs);
+            log::note_failure(&log::FAILURES.fs);
         }
     }
 
@@ -307,5 +307,5 @@ fn round_tenths(value: u128, div: u128) -> u128 {
 }
 
 pub fn log_net_mode_info(env: &Env, msg: &str) {
-    log_info(env, "net", msg);
+    log::info(env, "net", msg);
 }

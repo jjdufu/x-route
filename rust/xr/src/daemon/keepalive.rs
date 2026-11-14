@@ -9,9 +9,10 @@ use rustix::process::Signal;
 use crate::config::Config;
 use crate::diag;
 use crate::env::Env;
+use crate::log;
 use crate::log::note_ok;
 use crate::log::note_rc;
-use crate::log::{log_err, log_info, unix_now};
+use crate::log::unix_now;
 use crate::net::common::NetCtx;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
@@ -357,7 +358,7 @@ pub fn notify_update(env: &Env) {
             ack.trim().to_owned()
         };
         let short: String = why.chars().take(200).collect();
-        log_err(env, "daemon", &format!("常驻通知发送失败：{short}"));
+        log::err(env, "daemon", &format!("常驻通知发送失败：{short}"));
         fsx::write_logged(env, run.join("notify.warned"), "");
     }
 }
@@ -454,7 +455,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             fsx::remove_logged(env, run.join("stopping"));
             return;
         }
-        log_info(env, "daemon", "补全未完成的停止清理");
+        log::info(env, "daemon", "补全未完成的停止清理");
         crate::clash::stop_clash_mux(env);
         for path in [
             run.join("state"),
@@ -475,7 +476,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     let last = fs::read_to_string(run.join("teardown.last")).unwrap_or_default();
     if last.trim() != why {
         fsx::write_logged(env, run.join("teardown.last"), format!("{why}\n"));
-        log_err(env, "daemon", &format!("异常退出：{why}"));
+        log::err(env, "daemon", &format!("异常退出：{why}"));
         diag::snap(env, &format!("异常：{why}"), 3);
     }
     if xr_vm_alive(env) {

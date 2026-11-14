@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use crate::cidr::norm_route;
 use crate::env::Env;
-use crate::log::{dlog_env, log_info, unix_now};
+use crate::log;
+use crate::log::{dlog_env, unix_now};
 use crate::net::vpn_routes::is_default_route;
 use crate::sys::fsx;
 use crate::vm::{vm_running, vpn_sync_host};
@@ -453,7 +454,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
             fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, "enable"));
         }
     }
-    log_info(env, "xr", "已导入 OpenVPN 配置");
+    log::info(env, "xr", "已导入 OpenVPN 配置");
     (
         0,
         json!({
@@ -655,7 +656,7 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
             fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, act));
         }
     }
-    log_info(env, "xr", "已删除 OpenVPN 配置");
+    log::info(env, "xr", "已删除 OpenVPN 配置");
     (0, "{\"ok\":true}".to_owned())
 }
 

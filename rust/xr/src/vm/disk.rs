@@ -5,14 +5,14 @@ use flate2::read::GzDecoder;
 
 use crate::config::{Config, set_kv};
 use crate::env::Env;
-use crate::log::{log_err, log_info};
+use crate::log;
 use crate::sys::fsx;
 use crate::vm::vm_running;
 
 #[must_use]
 pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
     if vm_running(env) {
-        log_err(env, "vm", "请先停止 VM");
+        log::err(env, "vm", "请先停止 VM");
         return 1;
     }
     let Ok(new_mb) = new_mb_str.trim().parse::<u64>() else {
@@ -22,7 +22,7 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
     let cur_bytes = fs::metadata(&rootfs).map_or(0, |meta| meta.len());
     let cur_mb = cur_bytes / 1_048_576;
     if new_mb <= cur_mb {
-        log_err(env, "vm", &format!("新大小必须大于当前 {cur_mb}MB"));
+        log::err(env, "vm", &format!("新大小必须大于当前 {cur_mb}MB"));
         return 1;
     }
     if !set_kv(env, "VM_DISK_SIZE_MB", new_mb_str.trim()) {
@@ -32,17 +32,17 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
         return 1;
     };
     let Ok(file) = OpenOptions::new().write(true).open(&rootfs) else {
-        log_err(env, "vm", "无法打开系统盘");
+        log::err(env, "vm", "无法打开系统盘");
         return 1;
     };
     if file.set_len(new_bytes).is_err() {
-        log_err(env, "vm", "扩容失败");
+        log::err(env, "vm", "扩容失败");
         return 1;
     }
     if let Err(err) = file.sync_all() {
         fsx::record_failure(env, "sync", &rootfs, &err);
     }
-    log_info(
+    log::info(
         env,
         "vm",
         &format!("系统盘 {cur_mb}MB -> {new_mb}MB，下次启动时 VM 内执行 resize2fs"),
@@ -53,12 +53,12 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
 #[must_use]
 pub fn disk_reset(env: &Env) -> i32 {
     if vm_running(env) {
-        log_err(env, "vm", "请先停止 VM");
+        log::err(env, "vm", "请先停止 VM");
         return 1;
     }
     let gz_path = env.img_dir().join("openwrt-rootfs.img.gz");
     if !gz_path.is_file() {
-        log_err(env, "vm", "缺少 openwrt-rootfs.img.gz");
+        log::err(env, "vm", "缺少 openwrt-rootfs.img.gz");
         return 1;
     }
     let cfg = Config::load(env);
@@ -80,10 +80,10 @@ pub fn disk_reset(env: &Env) -> i32 {
     })();
     if ok.is_err() {
         fsx::remove_logged(env, &tmp_path);
-        log_err(env, "vm", "重置失败");
+        log::err(env, "vm", "重置失败");
         return 1;
     }
     fsx::remove_logged(env, env.last_good_file());
-    log_info(env, "vm", "系统盘已重置");
+    log::info(env, "vm", "系统盘已重置");
     0
 }

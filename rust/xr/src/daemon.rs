@@ -18,9 +18,10 @@ use crate::daemon::keepalive::{
     vm_stopping, xr_vm_alive,
 };
 use crate::env::Env;
+use crate::log;
 use crate::log::note_ok;
 use crate::log::note_rc;
-use crate::log::{debug_expire, log_err, log_info, rotate_all_logs, unix_now};
+use crate::log::{debug_expire, rotate_all_logs, unix_now};
 use crate::net::common::NetCtx;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
@@ -36,13 +37,13 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
     let now = unix_now();
     reset_times.retain(|&ts| now.saturating_sub(ts) < 120);
     if reset_times.len() >= 3 {
-        log_err(env, "vm", "短时间内连续多次检测到客机重启，停止自动拉起");
+        log::err(env, "vm", "短时间内连续多次检测到客机重启，停止自动拉起");
         return false;
     }
     reset_times.push(now);
 
     let run = env.run_dir();
-    log_info(env, "vm", "检测到 OpenWrt 重启请求，正在重新拉起服务");
+    log::info(env, "vm", "检测到 OpenWrt 重启请求，正在重新拉起服务");
     fsx::write_logged(
         env,
         run.join("stopping"),
@@ -116,7 +117,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         return true;
     }
     if spawn_self_detached(env, &["internal", "watchdog"]).is_err() {
-        log_err(env, "daemon", "看门狗未能启动");
+        log::err(env, "daemon", "看门狗未能启动");
         return false;
     }
     for _ in 0_i32..8_i32 {
@@ -130,7 +131,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         }
         thread::sleep(Duration::from_secs(1));
     }
-    log_err(env, "daemon", "看门狗未能启动");
+    log::err(env, "daemon", "看门狗未能启动");
     false
 }
 
@@ -151,7 +152,7 @@ pub fn ensure(env: &Env) -> bool {
     fsx::remove_logged(env, run.join("daemon.ready"));
     fsx::remove_logged(env, run.join("daemon.res"));
     if spawn_self_detached(env, &["internal", "daemon"]).is_err() {
-        log_err(env, "daemon", "守护进程未能启动");
+        log::err(env, "daemon", "守护进程未能启动");
         return false;
     }
     for _ in 0_i32..10_i32 {
@@ -162,7 +163,7 @@ pub fn ensure(env: &Env) -> bool {
         }
         thread::sleep(Duration::from_secs(1));
     }
-    log_err(env, "daemon", "守护进程未能启动");
+    log::err(env, "daemon", "守护进程未能启动");
     false
 }
 
@@ -234,19 +235,19 @@ pub fn main_loop(env: &Env) -> i32 {
     let usr = Arc::new(AtomicBool::new(false));
     let term = Arc::new(AtomicBool::new(false));
     if let Err(err) = flag::register(SIGHUP, Arc::clone(&hup)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
     }
     if let Err(err) = flag::register(SIGUSR1, Arc::clone(&usr)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGUSR1: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGUSR1: {err}"));
     }
     if let Err(err) = flag::register(SIGUSR2, Arc::clone(&usr)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGUSR2: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGUSR2: {err}"));
     }
     if let Err(err) = flag::register(SIGTERM, Arc::clone(&term)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
     }
     if let Err(err) = flag::register(SIGINT, Arc::clone(&term)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
     }
 
     fsx::write_logged(env, run.join("daemon.cmd"), "");
@@ -261,7 +262,7 @@ pub fn main_loop(env: &Env) -> i32 {
     }
     fsx::write_logged(env, run.join("daemon.ready"), "ready\n");
     let cg = cgroup_path(env, &self_pid).unwrap_or_default();
-    log_info(env, "daemon", &format!("已启动 pid={self_pid} cgroup={cg}"));
+    log::info(env, "daemon", &format!("已启动 pid={self_pid} cgroup={cg}"));
 
     let mut tick = 0_u64;
     let mut reset_times: Vec<u64> = Vec::new();
@@ -270,7 +271,7 @@ pub fn main_loop(env: &Env) -> i32 {
             if sys_shutting_down(env) {
                 shutdown_note(env, "daemon");
             } else {
-                log_info(env, "daemon", "收到 TERM，守护进程退出");
+                log::info(env, "daemon", "收到 TERM，守护进程退出");
             }
             if !xr_vm_alive(env) {
                 fsx::remove_logged(env, run.join("state"));
@@ -315,7 +316,7 @@ pub fn main_loop(env: &Env) -> i32 {
                 };
                 fsx::write_logged(env, run.join("daemon.res"), format!("{rc}\n"));
                 if term.load(Ordering::Relaxed) && !sys_shutting_down(env) {
-                    log_info(env, "daemon", "停止流程完成，响应 TERM 退出");
+                    log::info(env, "daemon", "停止流程完成，响应 TERM 退出");
                     clean_daemon_pid(env, &self_pid);
                     return 0;
                 }
@@ -372,7 +373,7 @@ pub fn main_loop(env: &Env) -> i32 {
                             format!("{}\n", crate::config::hash(env)),
                         );
                         fsx::write_logged(env, run.join("state"), "stable\n");
-                        log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
+                        log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
                     }
                 }
             }

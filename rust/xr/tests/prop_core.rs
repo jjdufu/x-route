@@ -14,7 +14,8 @@ use xr::daemon::keepalive::{
     VMM_RUN_MARKER, vm_exit_reason, vm_guest_reset_pending, vmm_has_guest_reset, vmm_last_run_slice,
 };
 use xr::env::Env;
-use xr::log::{blog, boot_clean_run, log_info, xr_now};
+use xr::log;
+use xr::log::{blog, boot_clean_run, xr_now};
 use xr::sys::exec::xr_exec;
 use xr::sys::{cgroup_escape, cgroup_in_apps};
 
@@ -217,7 +218,7 @@ fn test_set_kv_log_boot_clean_and_cgroup() {
     env.proc_uptime = tmp.path().join("uptime");
     let _ = fs::write(&env.proc_uptime, "123.45 99.0\n");
     assert_eq!(xr_now(&env), "uptime+123.45s");
-    log_info(&env, "test", "nodate");
+    log::info(&env, "test", "nodate");
     let log_s = fs::read_to_string(env.module_log()).unwrap_or_default();
     assert!(log_s.contains("uptime+123.45s [INFO] [test] nodate"));
     env.fake_date_fail = false;

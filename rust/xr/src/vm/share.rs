@@ -1,6 +1,6 @@
 use crate::config::{Config, valid_kv};
 use crate::env::Env;
-use crate::log::{log_err, log_info};
+use crate::log;
 use crate::sys::{ce_ready, fsx};
 
 #[derive(Debug, Clone)]
@@ -21,12 +21,12 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
         return res;
     }
     if !ce_ready() {
-        log_err(env, "share", "手机未解锁（CE 不可用），本次不共享");
+        log::err(env, "share", "手机未解锁（CE 不可用），本次不共享");
         return res;
     }
     let path = env.canon_share_path(cfg.vm_share_path());
     if !valid_kv(env, cfg, "VM_SHARE_PATH", &path) {
-        log_err(
+        log::err(
             env,
             "share",
             &format!(
@@ -39,7 +39,7 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
     let base = format!("{path}:xrshare:type=fs:cache=auto:timeout=1");
     if cfg.vm_share_mode() == "rw" {
         if env.rw_map_opt.is_empty() {
-            log_err(
+            log::err(
                 env,
                 "share",
                 "当前 crosvm 不支持属主映射，rw 不可用，本次不共享",
@@ -66,6 +66,6 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
             ro_path.to_string_lossy().into_owned(),
         ];
     }
-    log_info(env, "share", &format!("共享 {path} 模式={}", res.mode));
+    log::info(env, "share", &format!("共享 {path} 模式={}", res.mode));
     res
 }

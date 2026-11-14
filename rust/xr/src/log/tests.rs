@@ -7,8 +7,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use tempfile::TempDir;
 
-use super::{FAILURES, append_line, format_failures_line, log_msg, note_failure};
+use super::{FAILURES, append_line, format_failures_line, note_failure};
 use crate::env::Env;
+use crate::log;
 
 /// 失败信息。
 pub(crate) type Failure = &'static str;
@@ -78,7 +79,7 @@ fn log_msg_counts_write_failure() -> Result<(), Failure> {
     fs::write(&blocker, "not a dir").map_err(|_io_err| "准备文件")?;
     let env = env_at(&blocker);
     let [fs_before, exec_before, log_before] = snapshot();
-    log_msg(&env, "INFO", "test", "hello");
+    log::msg(&env, "INFO", "test", "hello");
     let [fs_after, exec_after, log_after] = snapshot();
     ensure(fs_after.checked_sub(fs_before) == Some(1), "fs 计数应增 1")?;
     ensure(
@@ -99,7 +100,7 @@ fn log_msg_success_counts_nothing() -> Result<(), Failure> {
     let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
     let env = env_at(&tmp.path().join("data"));
     let before = snapshot();
-    log_msg(&env, "INFO", "test", "hello");
+    log::msg(&env, "INFO", "test", "hello");
     ensure(snapshot() == before, "成功路径不应计数")?;
     let body = fs::read_to_string(env.module_log()).map_err(|_io_err| "读回")?;
     ensure(body.ends_with(" [INFO] [test] hello\n"), "日志行格式不变")

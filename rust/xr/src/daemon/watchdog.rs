@@ -14,9 +14,9 @@ use crate::daemon::keepalive::{
 };
 use crate::diag;
 use crate::env::Env;
-use crate::log::log_err;
+use crate::log;
 use crate::log::note_ok;
-use crate::log::{log_info, rotate_all_logs};
+use crate::log::rotate_all_logs;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 use crate::sys::sys_shutting_down;
@@ -34,16 +34,16 @@ pub fn main_loop(env: &Env) -> i32 {
     let hup = Arc::new(AtomicBool::new(false));
     let term = Arc::new(AtomicBool::new(false));
     if let Err(err) = flag::register(SIGHUP, Arc::clone(&hup)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
     }
     if let Err(err) = flag::register(SIGTERM, Arc::clone(&term)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
     }
     if let Err(err) = flag::register(SIGINT, Arc::clone(&term)) {
-        log_err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
+        log::err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
     }
 
-    log_info(env, "watchdog", &format!("已启动 pid={pid_s}"));
+    log::info(env, "watchdog", &format!("已启动 pid={pid_s}"));
 
     loop {
         if term.load(Ordering::Relaxed) {
@@ -69,7 +69,7 @@ pub fn main_loop(env: &Env) -> i32 {
         if daemon::running(env) {
             cgroup_escape_tree(env, std::process::id());
         } else {
-            log_info(env, "watchdog", "守护进程不在，重新拉起");
+            log::info(env, "watchdog", "守护进程不在，重新拉起");
             diag::snap_bg(env, "看门狗重新拉起守护进程");
             note_ok(env, "ensure_daemon", daemon::ensure(env));
         }

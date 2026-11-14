@@ -15,7 +15,8 @@ use rustix::fs::{FlockOperation, flock};
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 
 use crate::env::Env;
-use crate::log::{FAILURES, log_info, note_failure};
+use crate::log;
+use crate::log::{FAILURES, note_failure};
 
 pub struct FileLock {
     _file: File,
@@ -210,7 +211,7 @@ pub fn send_signal(pid_str: &str, sig: Signal) -> bool {
 /// 发送信号；失败（进程已退出或无权限）时（调试开关打开）写调试日志，调用方照常继续。
 pub(crate) fn send_signal_logged(env: &Env, pid_str: &str, sig: Signal) {
     if !send_signal(pid_str, sig) {
-        crate::log::dlog_env(
+        log::dlog_env(
             env,
             "proc",
             &format!(
@@ -316,7 +317,7 @@ pub fn shutdown_note(env: &Env, module: &str) {
     fsx::mkdirs_logged(env, env.run_dir());
     fsx::touch_logged(env, &noted);
     let module_name = if module.is_empty() { "daemon" } else { module };
-    log_info(env, module_name, "系统关机，服务随之停止");
+    log::info(env, module_name, "系统关机，服务随之停止");
 }
 
 pub fn wakelock_on(env: &Env) {

@@ -6,7 +6,8 @@ use std::time::Duration;
 use crate::cidr;
 use crate::cidr::hs_subnet_clash;
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF, is_executable};
-use crate::log::{dlog, log_err, log_info, unix_now};
+use crate::log;
+use crate::log::{dlog, unix_now};
 use crate::net::common::{NetCtx, trigger_diag_snap_bg};
 use crate::net::ipv6::v6_tether_offload_off;
 use crate::net::vpn_routes::tether_ifaces;
@@ -41,7 +42,7 @@ pub fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     if !ctx.ip(&["link", "show", HS_TAP]).success()
         && !ctx.ip(&["tuntap", "add", HS_TAP, "mode", "tap"]).success()
     {
-        log_err(ctx.env, "hotspot", &format!("创建 {HS_TAP} 失败"));
+        log::err(ctx.env, "hotspot", &format!("创建 {HS_TAP} 失败"));
         return false;
     }
     ctx.ip_run(&["addr", "flush", "dev", HS_TAP]);
@@ -195,7 +196,7 @@ pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
         if let Some(hc) = hs_subnet_clash(ctx.env, ctx.cfg.net_prefix(), hf, Some(iface)) {
             let expected = format!("{hf} {hc}");
             if fs::read_to_string(&clash_file).map_or(true, |text| text.trim() != expected) {
-                log_err(
+                log::err(
                     ctx.env,
                     "hotspot",
                     &format!("固定热点网段 {hf} 与 {hc} 冲突，本次热点网段跟随安卓"),
@@ -292,7 +293,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     if !hs_guest_cmd(ctx.env, &cmd, 15) {
         let resp = fs::read_to_string(run.join("guest/guest/hotspot"))
             .unwrap_or_else(|_| "无响应".to_owned());
-        log_err(
+        log::err(
             ctx.env,
             "hotspot",
             &format!(
@@ -311,7 +312,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     if !ctx.ip(&["link", "show", HS_BR]).success()
         && !ctx.ip(&["link", "add", HS_BR, "type", "bridge"]).success()
     {
-        log_err(ctx.env, "hotspot", "创建网桥失败");
+        log::err(ctx.env, "hotspot", "创建网桥失败");
         if !hs_guest_cmd(ctx.env, "off", 5) {
             dlog(ctx.env, ctx.cfg, "hotspot", "客机 5 秒内未确认关闭热点");
         }
@@ -348,7 +349,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     ctx.ip_run(&["link", "set", HS_BR, "up"]);
     ctx.ip_run(&["link", "set", HS_TAP, "master", HS_BR]);
     if !ctx.ip(&["link", "set", iface, "master", HS_BR]).success() {
-        log_err(ctx.env, "hotspot", &format!("{iface} 无法加入网桥"));
+        log::err(ctx.env, "hotspot", &format!("{iface} 无法加入网桥"));
         hs_unbridge(ctx);
         return false;
     }
@@ -391,13 +392,13 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     fsx::write_logged(ctx.env, run.join("net.hs_gw"), format!("{gw}\n"));
     fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
     if gw == cidr {
-        log_info(
+        log::info(
             ctx.env,
             "hotspot",
             &format!("热点 {iface} 已桥接到 OpenWrt（网关 {cidr} 由 OpenWrt 接管）"),
         );
     } else {
-        log_info(
+        log::info(
             ctx.env,
             "hotspot",
             &format!(
@@ -488,7 +489,7 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
     fsx::remove_logged(ctx.env, run.join("net.hs_gw"));
     fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
     if !iface.is_empty() {
-        log_info(ctx.env, "hotspot", &format!("热点 {iface} 已交还安卓"));
+        log::info(ctx.env, "hotspot", &format!("热点 {iface} 已交还安卓"));
     }
     trigger_diag_snap_bg(ctx.env, ctx.cfg, &format!("热点拆桥 {iface}"));
 }
@@ -500,7 +501,7 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
         if hs_guest_ok(ctx.env) {
             want = hs_pick(ctx);
         } else if !run.join("net.hs_old").is_file() {
-            log_info(
+            log::info(
                 ctx.env,
                 "hotspot",
                 "当前系统盘不支持热点接管（请重置系统盘或使用新版完整包），热点保持由安卓分配",

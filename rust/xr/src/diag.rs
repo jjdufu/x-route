@@ -13,9 +13,10 @@ use zip::write::SimpleFileOptions;
 
 use crate::config::Config;
 use crate::env::Env;
+use crate::log;
 use crate::log::FAILURES;
 use crate::log::note_failure;
-use crate::log::{log_info, rotate_debug, unix_now};
+use crate::log::{rotate_debug, unix_now};
 use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
 use crate::sys::{LockWait, PathLock};
@@ -684,7 +685,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         model.trim(),
         rel.trim()
     );
-    summary.push_str(&crate::log::failures_summary_line());
+    summary.push_str(&log::failures_summary_line());
     fsx::write_logged(env, raw_dir.join("summary.txt"), summary);
 
     let log_files = [
@@ -763,7 +764,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     }
     fsx::remove_tree_logged(env, &tmpd);
     let label = if is_diag { "诊断包" } else { "日志" };
-    log_info(env, "xr", &format!("已导出{label} {name}.zip"));
+    log::info(env, "xr", &format!("已导出{label} {name}.zip"));
     serde_json::json!({
         "ok": true,
         "path": out_zip.to_string_lossy(),

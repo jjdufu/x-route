@@ -21,7 +21,8 @@ use crate::daemon::{ensure_watchdog, vm_start, vm_stop};
 use crate::diag;
 use crate::diag::export_pack;
 use crate::env::Env;
-use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, note_ok, note_rc, unix_now};
+use crate::log;
+use crate::log::{blog, boot_clean_run, debug_arm, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
 use crate::net::run_net_cli;
 use crate::out::{emit, emit_lines};
@@ -73,10 +74,10 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                     } else {
                         format!("{hours} 小时后自动关闭")
                     };
-                    log_info(env, "debug", &format!("调试模式已开启（{dur}）"));
+                    log::info(env, "debug", &format!("调试模式已开启（{dur}）"));
                     diag::snap_bg(env, "调试模式开启");
                 } else {
-                    log_info(env, "debug", "调试模式已关闭");
+                    log::info(env, "debug", "调试模式已关闭");
                 }
             }
         }
@@ -128,7 +129,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     }
     if fs::read_to_string(&v6_file).is_ok_and(|text| text.trim() == want) {
         let label = if want == "1" { "开启" } else { "关闭" };
-        log_info(env, "xr", &format!("服务 IPv6 已{label}"));
+        log::info(env, "xr", &format!("服务 IPv6 已{label}"));
         (0, "{\"ok\":true}".to_owned())
     } else {
         (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
@@ -177,7 +178,7 @@ fn boot_service(env: &Env) -> i32 {
         return 0;
     }
     if env.fuse_file().is_file() {
-        log_err(
+        log::err(
             env,
             "service",
             "上次启动 VM 后整机复位，熔断：关闭自启，需在 WebUI 确认",
@@ -189,22 +190,22 @@ fn boot_service(env: &Env) -> i32 {
     }
     let cfg = Config::load(env);
     if !daemon::ensure(env) {
-        log_err(env, "service", "守护进程未能启动");
+        log::err(env, "service", "守护进程未能启动");
     }
     if !ensure_watchdog(env) {
-        log_err(env, "service", "看门狗未能启动");
+        log::err(env, "service", "看门狗未能启动");
     }
     if !cfg.autostart() {
-        log_info(env, "service", "AUTOSTART=0，不自启");
+        log::info(env, "service", "AUTOSTART=0，不自启");
         return 0;
     }
     if env.tripped_file().is_file() {
-        log_info(env, "service", "存在未确认的熔断，不自启");
+        log::info(env, "service", "存在未确认的熔断，不自启");
         return 0;
     }
     let lg = fs::read_to_string(env.last_good_file()).unwrap_or_default();
     if lg.trim() != config::hash(env) {
-        log_info(env, "service", "last_good 与当前配置不一致，跳过自启");
+        log::info(env, "service", "last_good 与当前配置不一致，跳过自启");
         return 0;
     }
     thread::sleep(Duration::from_secs(cfg.autostart_delay_sec()));
@@ -295,7 +296,7 @@ pub fn run(args: &[String]) -> i32 {
                     format!("reset {}{}\n", unix_now(), std::process::id()),
                 );
             }
-            log_info(&env, "xr", "流量统计已清零");
+            log::info(&env, "xr", "流量统计已清零");
             emit(&env, OK_JSON, 0)
         }
         "traffic-split" => {
@@ -347,7 +348,7 @@ pub fn run(args: &[String]) -> i32 {
         }
         "ack-trip" => {
             fsx::remove_logged(&env, env.tripped_file());
-            log_info(&env, "xr", "熔断已确认");
+            log::info(&env, "xr", "熔断已确认");
             0
         }
         "expand" => {

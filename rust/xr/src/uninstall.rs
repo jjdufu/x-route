@@ -10,9 +10,10 @@ use rustix::process::Signal;
 use crate::daemon::keepalive::cgroup_escape;
 use crate::daemon::vm_stop;
 use crate::env::Env;
+use crate::log;
 use crate::log::note_ok;
 use crate::log::note_rc;
-use crate::log::{log_info, unix_now};
+use crate::log::unix_now;
 use crate::net::run_net_cli;
 use crate::sys::exec::note_spawn;
 use crate::sys::exec::note_status;
@@ -320,7 +321,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
         );
     }
 
-    log_info(env, "xr", "WebUI 请求立即卸载");
+    log::info(env, "xr", "WebUI 请求立即卸载");
 
     let stage = pick_stage_base(env);
     let stage_bin = stage.join("bin");

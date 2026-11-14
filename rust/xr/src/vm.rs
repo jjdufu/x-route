@@ -14,10 +14,11 @@ use crate::config;
 use crate::config::Config;
 use crate::diag;
 use crate::env::Env;
+use crate::log;
 use crate::log::FAILURES;
 use crate::log::note_failure;
 use crate::log::note_rc;
-use crate::log::{blog, dlog, log_err, log_info, unix_now};
+use crate::log::{blog, dlog, unix_now};
 use crate::net::run_net_cli;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
@@ -37,7 +38,7 @@ pub fn vm_running(env: &Env) -> bool {
 }
 
 pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
-    log_err(env, "vm", log_msg);
+    log::err(env, "vm", log_msg);
     fsx::write_logged(env, env.run_dir().join("last_error"), format!("{ui_msg}\n"));
     let boot_log = env.boot_log();
     let env_t = env.clone();
@@ -170,7 +171,7 @@ pub fn fuse_watch(env: &Env) {
     }
     fsx::write_logged(env, run.join("state"), "ready\n");
     fsx::remove_logged(env, run.join("last_error"));
-    log_info(env, "vm", &format!("XR_READY（{}）", ready_channel(env)));
+    log::info(env, "vm", &format!("XR_READY（{}）", ready_channel(env)));
     blog(env, "net", "重建转发 / NAT / 接管规则");
     note_rc(env, "run_net_hook", run_net_hook(env, "sync"));
     if let Some(now_m) = mono_now(env) {
@@ -210,7 +211,7 @@ pub fn fuse_watch(env: &Env) {
         format!("{}\n", config::hash(env)),
     );
     fsx::write_logged(env, run.join("state"), "stable\n");
-    log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
+    log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
     fsx::remove_logged(env, env.boot_log());
 }
 
@@ -323,7 +324,7 @@ pub fn vpn_boot_prepare(env: &Env) {
 pub fn vm_start_exec(env: &Env) -> i32 {
     let cfg = Config::load(env);
     if vm_running(env) {
-        log_info(env, "vm", "已在运行");
+        log::info(env, "vm", "已在运行");
         return 0;
     }
     let run = env.run_dir();
@@ -344,7 +345,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     );
     fsx::remove_logged(env, run.join("last_error"));
     if env.tripped_file().is_file() {
-        log_err(env, "vm", "熔断未确认（xr ack-trip）");
+        log::err(env, "vm", "熔断未确认（xr ack-trip）");
         return 1;
     }
     let image_path = env.img_dir().join("Image");
@@ -354,7 +355,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         return 1;
     }
     if !ce_ready() {
-        log_info(env, "vm", "警告：手机未解锁（CE 不可用）");
+        log::info(env, "vm", "警告：手机未解锁（CE 不可用）");
     }
     let img_mb = fs::metadata(&image_path).map_or(0, |img_meta| img_meta.len() / 1_048_576);
     let rfs_mb = fs::metadata(&rootfs).map_or(0, |meta| meta.len() / 1_048_576);
@@ -623,7 +624,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     }
     fsx::write_logged(env, run.join("share.mode"), format!("{}\n", share.mode));
     crate::daemon::keepalive::cgroup_escape_tree(env, std::process::id());
-    log_info(
+    log::info(
         env,
         "vm",
         &format!(
@@ -694,7 +695,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
     wakelock_off(env);
     fsx::remove_logged(env, run.join("stopping"));
-    log_info(env, "vm", "已停止");
+    log::info(env, "vm", "已停止");
     0
 }
 

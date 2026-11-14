@@ -5,7 +5,8 @@ use std::process::{Command, Stdio};
 
 use crate::cidr::{ip6_expand, ip6_format, ip6_mask, v6_is_ll, v6_is_ula, v6_pick_addr};
 use crate::env::{Env, XR_IF, XR_NET6};
-use crate::log::{FAILURES, dlog, log_err, log_info, note_failure};
+use crate::log;
+use crate::log::{FAILURES, dlog, note_failure};
 use crate::net::common::NetCtx;
 use crate::net::vpn_routes::tether_ifaces;
 use crate::sys::exec::note_status;
@@ -152,7 +153,7 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
         .to_owned();
     if run.join("net.v6proxy").is_file() {
         let why = reason.unwrap_or("虚拟机 IPv6 已关闭");
-        log_info(ctx.env, "net", &format!("IPv6 邻居代理已撤销（{why}）"));
+        log::info(ctx.env, "net", &format!("IPv6 邻居代理已撤销（{why}）"));
     }
     let up_if = fs::read_to_string(run.join("net.v6upif"))
         .unwrap_or_default()
@@ -204,7 +205,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let run = ctx.env.run_dir();
     let Some((pfx, up_if, busy)) = v6_discover(ctx, outs6) else {
         if !run.join("net.v6nopfx").is_file() {
-            log_info(
+            log::info(
                 ctx.env,
                 "net",
                 "上游没有可共享的 IPv6 前缀（可能仅有本机 /128），无法做邻居代理",
@@ -216,7 +217,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     };
     fsx::remove_logged(ctx.env, run.join("net.v6nopfx"));
     let Some(wan) = v6_pick_addr(&pfx, &busy, ctx.cfg.vm_mac()) else {
-        log_err(
+        log::err(
             ctx.env,
             "net",
             &format!("无法在 {pfx} 中分到未占用的 IPv6 地址"),
@@ -269,7 +270,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let ok = fs::read_to_string(proc_v6.join(format!("{new_up_if}/proxy_ndp")))
         .is_ok_and(|text| text.trim() == "1");
     if !ok {
-        log_err(
+        log::err(
             ctx.env,
             "net",
             &format!("IPv6 邻居代理未生效（{new_up_if} proxy_ndp 写入失败）"),
@@ -282,7 +283,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     fsx::write_logged(ctx.env, run.join("net.v6vm"), format!("{new_wan}\n"));
     v6_write_wan(ctx.env, &new_wan);
     fsx::touch_logged(ctx.env, run.join("net.v6proxy"));
-    log_info(
+    log::info(
         ctx.env,
         "net",
         &format!(

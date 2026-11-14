@@ -15,7 +15,8 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
 
 use crate::env::Env;
-use crate::log::{FAILURES, dlog_env, log_err, log_info, note_failure};
+use crate::log;
+use crate::log::{FAILURES, dlog_env, note_failure};
 use crate::out::{self, emit};
 use crate::sys::fsx;
 use crate::sys::spawn::spawn_self_detached;
@@ -102,7 +103,7 @@ pub fn start_clash_mux(env: &Env) {
     let run = env.run_dir();
     let ready = run.join("clash_mux.ready");
     let Ok(mux) = spawn_self_detached(env, &["internal", "clash-mux"]) else {
-        log_info(env, "clash", "clash-mux 启动失败");
+        log::info(env, "clash", "clash-mux 启动失败");
         return;
     };
     if env.in_daemon {
@@ -114,7 +115,7 @@ pub fn start_clash_mux(env: &Env) {
         }
         thread::sleep(Duration::from_millis(20));
     }
-    log_info(env, "clash", "clash-mux 未在预期时间内就绪");
+    log::info(env, "clash", "clash-mux 未在预期时间内就绪");
 }
 
 struct ClientHandle {
@@ -564,10 +565,10 @@ pub fn run_clash_mux(env: &Env) -> i32 {
 
     let stop = Arc::new(AtomicBool::new(false));
     if let Err(err) = flag::register(SIGTERM, Arc::clone(&stop)) {
-        log_err(env, "clash", &format!("信号注册失败 SIGTERM: {err}"));
+        log::err(env, "clash", &format!("信号注册失败 SIGTERM: {err}"));
     }
     if let Err(err) = flag::register(SIGINT, Arc::clone(&stop)) {
-        log_err(env, "clash", &format!("信号注册失败 SIGINT: {err}"));
+        log::err(env, "clash", &format!("信号注册失败 SIGINT: {err}"));
     }
 
     fsx::write_logged(env, &pid_file, format!("{}\n", std::process::id()));

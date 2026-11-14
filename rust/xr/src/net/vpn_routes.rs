@@ -5,7 +5,8 @@ use std::iter;
 use crate::cidr;
 use crate::cidr::norm_route;
 use crate::env::{XR_IF, XR_NET6};
-use crate::log::{dlog, log_err};
+use crate::log;
+use crate::log::dlog;
 use crate::net::common::NetCtx;
 use crate::sys::fsx;
 
@@ -114,26 +115,26 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
             continue;
         }
         let Some(nc) = norm_route(&raw) else {
-            log_err(ctx.env, "vpn", &format!("格式错误 {raw}"));
+            log::err(ctx.env, "vpn", &format!("格式错误 {raw}"));
             continue;
         };
         if is_default_route(&nc) {
             continue;
         }
         if !cidr::is_aligned(&nc) {
-            log_err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
+            log::err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
             continue;
         }
         if let Some(conflict) = busy
             .iter()
             .find(|used| !used.is_empty() && cidr::overlap(&nc, used))
         {
-            log_err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
+            log::err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
             continue;
         }
         count = count.saturating_add(1);
         if count > 64 {
-            log_err(ctx.env, "vpn", "超过 64 条，其余忽略");
+            log::err(ctx.env, "vpn", "超过 64 条，其余忽略");
             break;
         }
         valid_set.extend(iter::once(nc));
