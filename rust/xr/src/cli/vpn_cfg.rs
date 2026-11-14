@@ -188,34 +188,64 @@ fn tunnel_name(env: &Env, raw_nm: &str, vn: &str) -> String {
     }
 }
 
-/// `openvpn.tunnels` 的一行（`设备|名字|地址|MTU|路由`）转成隧道 JSON；设备为空时返回 `None`。
-fn tunnel_entry(env: &Env, line: &str, vn: &str) -> Option<Value> {
+/// `openvpn.tunnels` 的一行（`设备|名字|地址|MTU|路由`）。
+#[derive(Debug, Clone, Copy)]
+struct TunLine<'line> {
+    /// 隧道设备名。
+    dev: &'line str,
+    /// 隧道所属配置名（旧版单份配置为 `xrouter`）。
+    name: &'line str,
+    /// 隧道地址。
+    addr: &'line str,
+    /// `MTU`，解析失败为 0。
+    mtu: u64,
+    /// 路由原文（逗号或空白分隔）。
+    routes: &'line str,
+}
+
+/// 解析 `openvpn.tunnels` 的一行；设备为空时返回 `None`。
+fn parse_tun_line(line: &str) -> Option<TunLine<'_>> {
     let mut parts = line.splitn(5, '|');
     let dev = parts.next().unwrap_or("");
     if dev.is_empty() {
         return None;
     }
-    let raw_nm = parts.next().unwrap_or("");
-    let ad = parts.next().unwrap_or("");
-    let mt = parts
+    let name = parts.next().unwrap_or("");
+    let addr = parts.next().unwrap_or("");
+    let mtu = parts
         .next()
         .unwrap_or("0")
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    let rt = parts.next().unwrap_or("");
-    let nm = tunnel_name(env, raw_nm, vn);
-    let routes: Vec<&str> = rt
-        .split(|ch: char| ch == ',' || ch.is_whitespace())
+    let routes = parts.next().unwrap_or("");
+    Some(TunLine {
+        dev,
+        name,
+        addr,
+        mtu,
+        routes,
+    })
+}
+
+/// 把路由原文按逗号或空白拆成网段列表，丢弃空项。
+fn split_routes(raw: &str) -> Vec<&str> {
+    raw.split(|ch: char| ch == ',' || ch.is_whitespace())
         .filter(|text| !text.is_empty())
-        .collect();
+        .collect()
+}
+
+/// `openvpn.tunnels` 的一行转成隧道 JSON；设备为空时返回 `None`。
+fn tunnel_entry(env: &Env, line: &str, vn: &str) -> Option<Value> {
+    let tun = parse_tun_line(line)?;
+    let nm = tunnel_name(env, tun.name, vn);
     Some(json!({
-        "dev": dev,
+        "dev": tun.dev,
         "name": nm,
         "status": "up",
-        "addr": ad,
-        "mtu": mt,
-        "routes": routes,
+        "addr": tun.addr,
+        "mtu": tun.mtu,
+        "routes": split_routes(tun.routes),
     }))
 }
 
@@ -265,102 +295,106 @@ pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     out
 }
 
+/// 推断各份配置连接状态所需的客机上报信息。
+#[derive(Debug)]
+struct ProfileCtx<'sum> {
+    /// 虚拟机是否在运行。
+    alive: bool,
+    /// `openvpn.tunnels` 原文。
+    tun_raw: String,
+    /// 客机处于多隧道模式（存在 `openvpn.multi`）。
+    multi: bool,
+    /// `openvpn.connecting` 原文（每行一个配置编号）。
+    conn_raw: String,
+    /// 汇总连接状态。
+    summary_st: &'sum str,
+}
+
+/// 配置 `pid` 的连接状态与所用隧道：匹配到隧道（同名，或启用且非多隧道时的旧版 `xrouter`）为 `up`；
+/// 否则在连接中列表里、或启用且非多隧道且汇总状态为 `up`/`connecting` 时为 `connecting`；其余为 `down`。
+fn profile_link<'ctx>(
+    ctx: &'ctx ProfileCtx<'_>,
+    pid: &str,
+    pen: bool,
+) -> (&'static str, Option<TunLine<'ctx>>) {
+    if !ctx.alive {
+        return ("down", None);
+    }
+    let hit = ctx
+        .tun_raw
+        .lines()
+        .filter_map(parse_tun_line)
+        .find(|tun| tun.name == pid || (tun.name == "xrouter" && pen && !ctx.multi));
+    if hit.is_some() {
+        return ("up", hit);
+    }
+    if ctx.conn_raw.lines().any(|row| row.trim() == pid)
+        || (pen && !ctx.multi && matches!(ctx.summary_st, "up" | "connecting"))
+    {
+        ("connecting", None)
+    } else {
+        ("down", None)
+    }
+}
+
+/// `config/vpn/` 里的一份配置转成 JSON；不是非空 `.ovpn` 或文件名不是 UTF-8 时返回 `None`。
+fn profile_entry(vpn_dir: &Path, ctx: &ProfileCtx<'_>, file_path: &Path) -> Option<Value> {
+    if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
+        return None;
+    }
+    if fs::metadata(file_path).map_or(true, |meta| meta.len() == 0) {
+        return None;
+    }
+    let pid = file_path.file_stem().and_then(|os_str| os_str.to_str())?;
+    let pnm_raw = fs::read_to_string(vpn_dir.join(format!("{pid}.name")))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let pnm = if pnm_raw.is_empty() {
+        pid.to_owned()
+    } else {
+        pnm_raw
+    };
+    let pen = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
+        .is_ok_and(|raw| raw.trim() == "1");
+    let (pst, tun) = profile_link(ctx, pid, pen);
+    Some(json!({
+        "id": pid,
+        "name": pnm,
+        "enabled": pen,
+        "status": pst,
+        "dev": tun.map_or("", |line| line.dev),
+        "addr": tun.map_or("", |line| line.addr),
+        "mtu": tun.map_or(0, |line| line.mtu),
+        "routes": tun.map_or_else(Vec::new, |line| split_routes(line.routes)),
+    }))
+}
+
 /// `VPN` 配置列表（JSON）：每份配置的编号、名字、启用状态、连接状态与对应隧道的地址、`MTU` 和路由。
 #[must_use]
 pub(crate) fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     vpn_migrate_legacy(env);
     let vpn_dir = env.vpn_dir();
-    let mut out = Vec::new();
     if !vpn_dir.is_dir() {
-        return out;
+        return Vec::new();
     }
-    let alive = vm::running(env);
-    let tun_raw =
-        fs::read_to_string(env.run_dir().join("guest/guest/openvpn.tunnels")).unwrap_or_default();
-    let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
-    let conn_raw = fs::read_to_string(env.run_dir().join("guest/guest/openvpn.connecting"))
-        .unwrap_or_default();
-
-    if let Ok(rd) = fs::read_dir(&vpn_dir) {
-        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
-        paths.sort();
-        for file_path in paths {
-            if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
-                continue;
-            }
-            if fs::metadata(&file_path).map_or(true, |meta| meta.len() == 0) {
-                continue;
-            }
-            let Some(pid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
-                continue;
-            };
-            let pnm_raw = fs::read_to_string(vpn_dir.join(format!("{pid}.name")))
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
-            let pnm = if pnm_raw.is_empty() {
-                pid.to_owned()
-            } else {
-                pnm_raw
-            };
-            let pen = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
-                .is_ok_and(|raw| raw.trim() == "1");
-
-            let mut pst = "down".to_owned();
-            let mut pdev = String::new();
-            let mut pad = String::new();
-            let mut pmt = 0_u64;
-            let mut prt = String::new();
-
-            if alive {
-                for line in tun_raw.lines() {
-                    let mut parts = line.splitn(5, '|');
-                    let td = parts.next().unwrap_or("");
-                    if td.is_empty() {
-                        continue;
-                    }
-                    let tn = parts.next().unwrap_or("");
-                    let ta = parts.next().unwrap_or("");
-                    let tm = parts
-                        .next()
-                        .unwrap_or("0")
-                        .trim()
-                        .parse::<u64>()
-                        .unwrap_or(0);
-                    let tr = parts.next().unwrap_or("");
-                    if tn == pid || (tn == "xrouter" && pen && !multi) {
-                        "up".clone_into(&mut pst);
-                        td.clone_into(&mut pdev);
-                        ta.clone_into(&mut pad);
-                        pmt = tm;
-                        tr.clone_into(&mut prt);
-                        break;
-                    }
-                }
-                if pst == "down"
-                    && (conn_raw.lines().any(|row| row.trim() == pid)
-                        || (pen && !multi && matches!(summary_st, "up" | "connecting")))
-                {
-                    "connecting".clone_into(&mut pst);
-                }
-            }
-            let routes: Vec<&str> = prt
-                .split(|ch: char| ch == ',' || ch.is_whitespace())
-                .filter(|text| !text.is_empty())
-                .collect();
-            out.push(json!({
-                "id": pid,
-                "name": pnm,
-                "enabled": pen,
-                "status": pst,
-                "dev": pdev,
-                "addr": pad,
-                "mtu": pmt,
-                "routes": routes,
-            }));
-        }
-    }
-    out
+    let guest = env.run_dir().join("guest/guest");
+    let ctx = ProfileCtx {
+        alive: vm::running(env),
+        tun_raw: fs::read_to_string(guest.join("openvpn.tunnels")).unwrap_or_default(),
+        multi: guest.join("openvpn.multi").is_file(),
+        conn_raw: fs::read_to_string(guest.join("openvpn.connecting")).unwrap_or_default(),
+        summary_st,
+    };
+    let Ok(rd) = fs::read_dir(&vpn_dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    paths
+        .iter()
+        .filter_map(|file_path| profile_entry(&vpn_dir, &ctx, file_path))
+        .collect()
 }
 
 /// 生成下发给客机的 `openvpn.cmd` 一行（`动作 时间戳`），保证与当前内容不同，客机才会再次执行。
