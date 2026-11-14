@@ -23,13 +23,13 @@ use crate::sys::{is_pid_running, send_signal_logged};
 use crate::vm::{reap_in_background, vm_running};
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ClashStatus {
+pub struct Status {
     pub installed: bool,
     pub running: bool,
     pub port: u16,
 }
 
-impl Default for ClashStatus {
+impl Default for Status {
     fn default() -> Self {
         Self {
             installed: false,
@@ -40,15 +40,15 @@ impl Default for ClashStatus {
 }
 
 #[must_use]
-pub fn clash_status(env: &Env, alive: bool) -> ClashStatus {
+pub fn status(env: &Env, alive: bool) -> Status {
     if !alive {
-        return ClashStatus::default();
+        return Status::default();
     }
     let path = env.run_dir().join("guest/guest/openclash.status");
     let Ok(raw) = fs::read_to_string(path) else {
-        return ClashStatus::default();
+        return Status::default();
     };
-    let mut st = ClashStatus::default();
+    let mut st = Status::default();
     for line in raw.lines() {
         let Some((key, value)) = line.split_once('=') else {
             continue;
@@ -1011,12 +1011,12 @@ mod tests {
                 .is_ok()
             );
 
-            let off = clash_status(&env, false);
+            let off = status(&env, false);
             assert!(!off.installed);
             assert!(!off.running);
             assert_eq!(off.port, 9090);
 
-            let on = clash_status(&env, true);
+            let on = status(&env, true);
             assert!(on.installed);
             assert!(on.running);
             assert_eq!(on.port, 9095);
