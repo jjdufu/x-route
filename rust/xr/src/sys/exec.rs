@@ -82,37 +82,50 @@ fn exit_code_from_output(out: &process::Output) -> i32 {
     })
 }
 
+/// 开机日志存在时把修改类命令追加记一行（`  $ <命令>`），写入失败计数到 `FAILURES.log`。
+fn boot_log_cmd(env: &Env, prog: &Path, args: &[&str]) {
+    let boot_log = env.boot_log();
+    if !boot_log.is_file() {
+        return;
+    }
+    let cmd_str = format_cmd_for_log(env, prog, args);
+    if let Ok(mut file) = OpenOptions::new().append(true).open(&boot_log)
+        && writeln!(file, "  $ {cmd_str}").is_err()
+    {
+        note_failure(&FAILURES.log);
+    }
+}
+
+/// 命令无法执行：调试开关打开时记调试日志，返回退出码 127、输出为空的结果。
+fn exec_failed(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> Output {
+    if cfg.debug_on() {
+        let cmd_str = format_cmd_for_log(env, prog, args);
+        dlog(
+            env,
+            cfg,
+            "cmd",
+            &format!("rc=127 {cmd_str} | stderr: exec failed"),
+        );
+    }
+    Output {
+        code: 127,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
 /// 执行外部命令并收集输出，标准输入接空。
 ///
 /// 修改类命令在开机日志存在时先记一行；调试开关打开时，失败、有错误输出或修改类的命令记入调试日志（只读命令的 141 除外）。`pass_stderr` 为 true 时把标准错误转发到本进程的标准错误。无法执行时返回退出码 127。
 #[must_use]
 pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) -> Output {
     let mutating = is_mutating_args(args);
-    let boot_log = env.boot_log();
-    if boot_log.is_file() && mutating {
-        let cmd_str = format_cmd_for_log(env, prog, args);
-        if let Ok(mut file) = OpenOptions::new().append(true).open(&boot_log)
-            && writeln!(file, "  $ {cmd_str}").is_err()
-        {
-            note_failure(&FAILURES.log);
-        }
+    if mutating {
+        boot_log_cmd(env, prog, args);
     }
 
     let Ok(out) = Command::new(prog).args(args).stdin(Stdio::null()).output() else {
-        if cfg.debug_on() {
-            let cmd_str = format_cmd_for_log(env, prog, args);
-            dlog(
-                env,
-                cfg,
-                "cmd",
-                &format!("rc=127 {cmd_str} | stderr: exec failed"),
-            );
-        }
-        return Output {
-            code: 127,
-            stdout: String::new(),
-            stderr: String::new(),
-        };
+        return exec_failed(env, cfg, prog, args);
     };
 
     let code = exit_code_from_output(&out);
