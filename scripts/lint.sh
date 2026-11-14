@@ -42,16 +42,15 @@ if [ -n "${ruby_files}" ] && command -v ruby >/dev/null 2>&1; then
   for f in ${ruby_files}; do ruby -c "$f"; done
 fi
 
-if [ -f rust/xr/Cargo.toml ]; then
-  echo "== rust (fmt + clippy + test)"
+if [ -f Cargo.toml ]; then
+  echo "== rust gate"
   if [ -z "${RUSTUP_HOME:-}" ] && [ -d "${HOME:-}/.rustup" ]; then export RUSTUP_HOME="${HOME}/.rustup"; fi
-  (
-    cd rust/xr
-    cargo fmt --check
-    cargo clippy --all-targets -- -D warnings
-    cargo test
-    cargo build --release
-  )
+  if find . -path ./target -prune -o -path '*/node_modules' -prune -o -type d -name .cargo -print | grep -v '^\./\.cargo$' | grep -q .; then
+    echo "禁止在子目录放 .cargo/（lint-guard 不检查子目录）"; exit 1
+  fi
+  bash scripts/gate.sh
+  cargo clippy --workspace --all-targets --all-features --locked --target aarch64-unknown-linux-musl -- -D warnings
+  cargo build --release --locked
   mkdir -p module/bin
   cp -f rust/xr/target/release/xr module/bin/xr
   chmod 0755 module/bin/xr

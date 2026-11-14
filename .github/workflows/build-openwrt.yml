@@ -51,15 +51,16 @@ jobs:
         run: npm ci --prefix webui --no-fund --no-audit
 
       - name: Setup Rust (aarch64-unknown-linux-musl)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.100.0
           targets: aarch64-unknown-linux-musl
           components: clippy, rustfmt
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust/xr
+          workspaces: ". -> rust/xr/target"
 
       - name: Install Build Dependencies & ARM64 Cross-Compiler
         run: |
@@ -69,6 +70,9 @@ jobs:
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu musl-tools \
             libssl-dev libelf-dev python3 rsync unzip zip file wget curl \
             zstd xz-utils e2fsprogs qemu-utils shellcheck mksh busybox
+
+      - name: Check Rust toolchain
+        run: rustc --version | grep -qF 'rustc 1.100.0 '
 
       - name: Lint
         run: sh scripts/lint.sh

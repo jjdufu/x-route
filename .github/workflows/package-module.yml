@@ -30,20 +30,24 @@ jobs:
         run: npm ci --prefix webui --no-fund --no-audit
 
       - name: Setup Rust (aarch64-unknown-linux-musl)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.100.0
           targets: aarch64-unknown-linux-musl
           components: clippy, rustfmt
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust/xr
+          workspaces: ". -> rust/xr/target"
 
       - name: Install shellcheck & musl-tools
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck zip mksh busybox musl-tools file
+
+      - name: Check Rust toolchain
+        run: rustc --version | grep -qF 'rustc 1.100.0 '
 
       - name: Lint (shellcheck + sh -n + rust + config keys)
         run: sh scripts/lint.sh

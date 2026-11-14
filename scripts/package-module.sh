@@ -29,7 +29,7 @@ done
 # 控制面 Rust 静态二进制（aarch64-unknown-linux-musl，产物不入库）
 command -v cargo >/dev/null 2>&1 || { echo "需要 Rust / cargo 构建 bin/xr"; exit 1; }
 if [ -z "${RUSTUP_HOME:-}" ] && [ -d "${HOME:-}/.rustup" ]; then export RUSTUP_HOME="${HOME}/.rustup"; fi
-( cd "${REPO}/rust/xr" && cargo build --release --target aarch64-unknown-linux-musl )
+( cd "${REPO}/rust/xr" && cargo build --release --locked --target aarch64-unknown-linux-musl )
 XR_BIN="${REPO}/rust/xr/target/aarch64-unknown-linux-musl/release/xr"
 [ -s "${XR_BIN}" ] || { echo "缺少 ${XR_BIN}"; exit 1; }
 
