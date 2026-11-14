@@ -22,7 +22,7 @@ const DEBUG_ROTATE_BYTES: u64 = 2_097_152;
 pub(crate) struct Failures {
     /// 文件操作失败次数。
     pub(crate) fs: AtomicU64,
-    /// 外部命令非 0 退出或无法执行的次数（只计 `xr_run` 发起的），以及进程设置类系统调用的失败次数。
+    /// 外部命令非 0 退出或无法执行的次数（经执行入口发起的），以及进程设置类系统调用的失败次数。
     pub(crate) exec: AtomicU64,
     /// 日志行（以及转发给终端的命令输出）写入失败次数。
     pub(crate) log: AtomicU64,
@@ -82,25 +82,15 @@ fn format_failures_line(fs_n: u64, exec_n: u64, log_n: u64) -> String {
 }
 
 #[must_use]
-pub fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |dur| dur.as_secs())
 }
 
 #[must_use]
-pub fn time_hms() -> String {
+pub(crate) fn time_hms() -> String {
     Local::now().format("%H:%M:%S").to_string()
-}
-
-#[must_use]
-pub fn time_ymdhms_compact() -> String {
-    Local::now().format("%Y%m%d-%H%M%S").to_string()
-}
-
-#[must_use]
-pub fn time_full_tz() -> String {
-    Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string()
 }
 
 #[must_use]
@@ -128,7 +118,7 @@ pub fn xr_now(env: &Env) -> String {
     format!("uptime+{up}s")
 }
 
-pub fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
+pub(crate) fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
     let Ok(meta) = fs::metadata(path) else {
         return;
     };
@@ -146,7 +136,7 @@ pub fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
     }
 }
 
-pub fn rotate_debug(env: &Env) {
+pub(crate) fn rotate_debug(env: &Env) {
     let dlog = env.debug_log();
     let Ok(meta) = fs::metadata(&dlog) else {
         return;
@@ -157,7 +147,7 @@ pub fn rotate_debug(env: &Env) {
     }
 }
 
-pub fn rotate_all_logs(env: &Env) {
+pub(crate) fn rotate_all_logs(env: &Env) {
     rotate_file(env, &env.module_log(), true);
     rotate_debug(env);
     rotate_file(env, &env.vmm_log(), false);
@@ -189,7 +179,7 @@ fn ensure_log_dir(dir: &Path) {
     }
 }
 
-pub fn msg(env: &Env, level: &str, module: &str, text: &str) {
+pub(crate) fn msg(env: &Env, level: &str, module: &str, text: &str) {
     ensure_log_dir(&env.log_dir());
     let log_path = env.module_log();
     rotate_file(env, &log_path, true);
@@ -206,7 +196,7 @@ pub fn info(env: &Env, module: &str, text: &str) {
     msg(env, "INFO", module, text);
 }
 
-pub fn err(env: &Env, module: &str, text: &str) {
+pub(crate) fn err(env: &Env, module: &str, text: &str) {
     msg(env, "ERROR", module, text);
 }
 
@@ -218,7 +208,7 @@ pub fn blog(env: &Env, module: &str, msg: &str) {
     append_line_counted(&boot_log, &format!("{} [{module}] {msg}", time_hms()));
 }
 
-pub fn dlog(env: &Env, cfg: &Config, module: &str, msg: &str) {
+pub(crate) fn dlog(env: &Env, cfg: &Config, module: &str, msg: &str) {
     if !cfg.debug_on() {
         return;
     }
@@ -236,7 +226,7 @@ pub(crate) fn dlog_env(env: &Env, module: &str, msg: &str) {
     dlog(env, &cfg, module, msg);
 }
 
-pub fn debug_arm(env: &Env) {
+pub(crate) fn debug_arm(env: &Env) {
     let cfg = Config::load(env);
     let until_file = env.debug_until_file();
     if cfg.debug_on() && cfg.debug_hours() != 0 {
@@ -249,7 +239,7 @@ pub fn debug_arm(env: &Env) {
     }
 }
 
-pub fn debug_expire(env: &Env) {
+pub(crate) fn debug_expire(env: &Env) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
         return;
