@@ -16,7 +16,7 @@ name = "xr"
 path = "src/main.rs"
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["now", "std"] }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 rustix = { version = "1.0", default-features = false, features = ["std", "fs", "process", "system"] }

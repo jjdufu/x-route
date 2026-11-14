@@ -12,7 +12,6 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
 use serde_json::json;
 
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid};
@@ -27,7 +26,7 @@ use crate::diag;
 use crate::diag::export_pack;
 use crate::env::{Env, ProcRole};
 use crate::log;
-use crate::log::{blog, boot_clean_run, debug_arm, note_ok, note_rc, unix_now};
+use crate::log::{blog, boot_clean_run, debug_arm, local_now, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
 use crate::net::run_net_cli;
 use crate::out::{emit, emit_lines};
@@ -207,7 +206,7 @@ fn boot_service(env: &Env) -> i32 {
             "service",
             "上次启动 VM 后整机复位，熔断：关闭自启，需在 WebUI 确认",
         );
-        let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+        let now = local_now().format("%Y-%m-%d %H:%M:%S");
         fsx::write_logged(env, env.tripped_file(), format!("{now}\n"));
         fsx::remove_logged(env, env.fuse_file());
         note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));

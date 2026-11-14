@@ -8,7 +8,6 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
 use regex::Regex;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -18,7 +17,7 @@ use crate::env::Env;
 use crate::log;
 use crate::log::FAILURES;
 use crate::log::note_failure;
-use crate::log::{rotate_debug, unix_now};
+use crate::log::{local_now, rotate_debug, unix_now};
 use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
 use crate::sys::{LockWait, PathLock};
@@ -502,7 +501,7 @@ pub fn phone(env: &Env) -> String {
     let iptables_bin = env.sysbin_cmd("iptables");
     let ip6t_bin = env.sysbin_cmd("ip6tables");
     let wifi_bin = env.sysbin_cmd("iw");
-    let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = local_now().format("%Y-%m-%d %H:%M:%S");
     out.push_str("### 手机网络快照 ");
     out.push_str(&now.to_string());
     out.push('\n');
@@ -542,7 +541,7 @@ pub(crate) fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
         if let Ok(content) = fs::read_to_string(&diag_txt)
             && content.lines().next().unwrap_or("") == expected
         {
-            let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+            let now = local_now().format("%Y-%m-%d %H:%M:%S");
             let rest: Vec<&str> = content.lines().skip(1).collect();
             return Ok(format!("### OpenWrt 快照 {now}\n{}\n", rest.join("\n")));
         }
@@ -572,7 +571,7 @@ pub(crate) fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
         },
     );
     let mut raw = String::new();
-    let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = local_now().format("%Y-%m-%d %H:%M:%S");
     raw.push_str("======== ");
     raw.push_str(&now.to_string());
     raw.push_str(" 快照：");
@@ -728,7 +727,7 @@ fn write_summary(env: &Env, raw_dir: &Path, status_json_str: &str) {
     let rel = sys_cmd_output(Path::new("getprop"), &["ro.build.version.release"]);
     let cfg = Config::load(env);
     let dbg_label = if cfg.debug_on() { "开" } else { "关" };
-    let now = Local::now().format("%Y-%m-%d %H:%M:%S %z");
+    let now = local_now().format("%Y-%m-%d %H:%M:%S %z");
     let mut summary = format!(
         "XRouter {ver} / {} / Android {}\n导出时间 {now}\n调试模式 {dbg_label}\n{status_json_str}\n",
         model.trim(),
@@ -833,7 +832,7 @@ pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_st
     let Some(dest) = download_dir(env) else {
         return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();
     };
-    let stamp = Local::now().format("%Y%m%d-%H%M%S");
+    let stamp = local_now().format("%Y%m%d-%H%M%S");
     let name = format!("{prefix}-{stamp}");
     let tmpd = env.run_dir().join(format!("export.{}", std::process::id()));
     fsx::remove_tree_logged(env, &tmpd);
