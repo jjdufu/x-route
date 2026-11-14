@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use crate::cli::vpn_cfg::{vpn_profiles, vpn_rejected, vpn_tunnels};
 use crate::config::{Config, KEYS};
 use crate::env::Env;
-use crate::net::net_status_json;
+use crate::net;
 use crate::sys::ce_ready;
 use crate::vm::{vm_running, vm_status};
 
@@ -47,7 +47,7 @@ pub fn json(env: &Env) -> String {
             .ok()
             .map_or_default(|result| String::from_utf8_lossy(&result.stdout).into_owned())
     } else {
-        net_status_json(env)
+        net::status_json(env)
     };
     let net_val: Value =
         serde_json::from_str(net_raw.trim()).unwrap_or_else(|_| json!({"mode": "down"}));

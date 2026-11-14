@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use xr::config::Config;
 use xr::env::Env;
+use xr::net;
 use xr::net::common::{NetCtx, combine_quad_max, human_bytes, read_quad, write_quad};
-use xr::net::net_status_json;
 use xr::net::vpn_routes::{is_default_route, routes_valid};
 use xr::traffic::{acct_lan4, acct_lan6};
 
@@ -88,7 +88,7 @@ fn test_acct_lan_and_status_json() {
     assert!(lan6.contains(&"fe80::/10".to_string()));
     assert!(lan6.contains(&"2001:db8:1::/64".to_string()));
 
-    let json = net_status_json(&env);
+    let json = net::status_json(&env);
     assert!(json.contains("\"mode\":\"down\""));
     assert!(json.contains("\"hotspot\":\"wlan1\""));
 }

@@ -886,7 +886,7 @@ fn sync_all_unlocked(env: &Env) {
     }
 }
 
-pub fn net_sync(env: &Env) {
+pub fn sync(env: &Env) {
     if !env.sysnet.join(XR_IF).is_dir() {
         return;
     }
@@ -896,7 +896,7 @@ pub fn net_sync(env: &Env) {
 }
 
 #[must_use]
-pub fn net_up(env: &Env) -> i32 {
+pub fn up(env: &Env) -> i32 {
     if env.ensure_dirs().is_err() {
         return 1;
     }
@@ -1007,7 +1007,7 @@ pub fn net_up(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn net_watch(env: &Env) -> i32 {
+pub fn watch(env: &Env) -> i32 {
     while env.sysnet.join(XR_IF).is_dir() {
         thread::sleep(Duration::from_secs(10));
         if !env.sysnet.join(XR_IF).is_dir() {
@@ -1172,7 +1172,7 @@ pub fn net_watch(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn net_down(env: &Env) -> i32 {
+pub fn down(env: &Env) -> i32 {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
     let run = env.run_dir();
@@ -1262,7 +1262,7 @@ pub fn net_down(env: &Env) -> i32 {
 }
 
 #[derive(Debug, Serialize)]
-pub struct NetStatusJson {
+pub struct StatusJson {
     pub mode: String,
     pub up_if: String,
     pub expose: String,
@@ -1274,7 +1274,7 @@ pub struct NetStatusJson {
     pub hotspot_net: String,
 }
 
-pub fn net_status(env: &Env) -> NetStatusJson {
+pub fn status(env: &Env) -> StatusJson {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let mode = fs::read_to_string(run.join("net.mode"))
@@ -1305,7 +1305,7 @@ pub fn net_status(env: &Env) -> NetStatusJson {
         .trim()
         .to_owned();
 
-    NetStatusJson {
+    StatusJson {
         mode,
         up_if,
         expose: cfg.expose().to_owned(),
@@ -1319,20 +1319,20 @@ pub fn net_status(env: &Env) -> NetStatusJson {
 }
 
 #[must_use]
-pub fn net_status_json(env: &Env) -> String {
-    serde_json::to_string(&net_status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
+pub fn status_json(env: &Env) -> String {
+    serde_json::to_string(&status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
 }
 
 pub fn run_net_cli(env: &Env, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
-        Some("up") => net_up(env),
-        Some("down") => net_down(env),
-        Some("watch") => net_watch(env),
+        Some("up") => up(env),
+        Some("down") => down(env),
+        Some("watch") => watch(env),
         Some("sync") => {
-            net_sync(env);
+            sync(env);
             0
         }
-        Some("status") => emit(env, &net_status_json(env), 0),
+        Some("status") => emit(env, &status_json(env), 0),
         _ => emit(env, "usage: net.sh up|down|watch|sync|status", 2),
     }
 }
