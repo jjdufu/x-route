@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 
-use crate::config::{set_kv, Config};
-use crate::env::{is_executable, Env};
+use crate::config::{Config, set_kv};
+use crate::env::{Env, is_executable};
 
 const LOG_ROTATE_BYTES: u64 = 524_288;
 const DEBUG_ROTATE_BYTES: u64 = 2_097_152;

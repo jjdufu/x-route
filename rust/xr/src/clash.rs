@@ -5,13 +5,13 @@ use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use rustix::process::Signal;
 use serde::Serialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::flag;
 
@@ -727,7 +727,9 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
-        println!("{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"channel unavailable\"}}");
+        println!(
+            "{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"channel unavailable\"}}"
+        );
         return 1;
     };
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
@@ -736,7 +738,9 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
         || stream.write_all(b"\n").is_err()
         || stream.flush().is_err()
     {
-        println!("{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"write failed\"}}");
+        println!(
+            "{{\"op\":\"ws_close\",\"ws_id\":\"{ws_id}\",\"code\":1006,\"reason\":\"write failed\"}}"
+        );
         return 1;
     }
     let mut br = BufReader::new(stream);
@@ -840,11 +844,13 @@ mod tests {
             env.xr_data = d.path().to_path_buf();
             let st_dir = env.run_dir().join("guest/guest");
             assert!(fs::create_dir_all(&st_dir).is_ok());
-            assert!(fs::write(
-                st_dir.join("openclash.status"),
-                "installed=1\nrunning=1\nport=9095\n"
-            )
-            .is_ok());
+            assert!(
+                fs::write(
+                    st_dir.join("openclash.status"),
+                    "installed=1\nrunning=1\nport=9095\n"
+                )
+                .is_ok()
+            );
 
             let off = clash_status(&env, false);
             assert!(!off.installed);

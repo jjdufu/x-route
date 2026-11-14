@@ -3,7 +3,7 @@ use std::io;
 
 use flate2::read::GzDecoder;
 
-use crate::config::{set_kv, Config};
+use crate::config::{Config, set_kv};
 use crate::env::Env;
 use crate::log::{log_err, log_info};
 use crate::vm::vm_running;

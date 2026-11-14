@@ -3,7 +3,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 
-use rustix::process::{setrlimit, setsid, Resource, Rlimit};
+use rustix::process::{Resource, Rlimit, setrlimit, setsid};
 
 use crate::env::Env;
 

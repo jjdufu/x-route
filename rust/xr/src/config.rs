@@ -149,11 +149,7 @@ impl Config {
 
     pub fn vm_mem_mb(&self) -> u32 {
         let raw = self.get_raw("VM_MEM_MB").parse::<u32>().unwrap_or(512);
-        if raw < 384 {
-            512
-        } else {
-            raw
-        }
+        if raw < 384 { 512 } else { raw }
     }
 
     pub fn vm_swiotlb_mb(&self) -> u32 {

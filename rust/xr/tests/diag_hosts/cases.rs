@@ -15,11 +15,7 @@ type Failure = String;
 ///
 /// `cond` 为假时返回 `msg`。
 fn ensure(cond: bool, msg: &str) -> Result<(), Failure> {
-    if cond {
-        Ok(())
-    } else {
-        Err(msg.to_owned())
-    }
+    if cond { Ok(()) } else { Err(msg.to_owned()) }
 }
 
 /// 收集 `config/vpn` 与 `run/guest/host/vpn` 中所有 `.ovpn` 的 `remote`，排序去重；不可读目录和非 ovpn 文件被跳过。

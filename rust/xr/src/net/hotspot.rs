@@ -4,9 +4,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::cidr::{cidr_net, cidr_overlap, hs_subnet_clash};
-use crate::env::{is_executable, Env, HS_BR, HS_TAP, XR_IF};
+use crate::env::{Env, HS_BR, HS_TAP, XR_IF, is_executable};
 use crate::log::{dlog, log_err, log_info, unix_now};
-use crate::net::common::{trigger_diag_snap_bg, NetCtx};
+use crate::net::common::{NetCtx, trigger_diag_snap_bg};
 use crate::net::ipv6::v6_tether_offload_off;
 use crate::net::vpn_routes::tether_ifaces;
 use crate::sys::{is_pid_running, proc_cmdline};

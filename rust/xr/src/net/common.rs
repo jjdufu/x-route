@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::env::{is_executable, Env};
+use crate::env::{Env, is_executable};
 use crate::log::log_info;
 
 #[derive(Debug, Clone)]

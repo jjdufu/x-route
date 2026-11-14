@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use xr::config::Config;
 use xr::env::Env;
-use xr::net::common::{combine_quad_max, human_bytes, read_quad, write_quad, NetCtx};
+use xr::net::common::{NetCtx, combine_quad_max, human_bytes, read_quad, write_quad};
 use xr::net::net_status_json;
 use xr::net::vpn_routes::{is_default_route, routes_valid};
 use xr::traffic::{acct_lan4, acct_lan6};

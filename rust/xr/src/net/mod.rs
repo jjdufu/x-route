@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::env::{Env, HS_BR, XR_IF, XR_NET6};
 use crate::log::{dlog, log_err, log_info, unix_now};
-use crate::net::common::{trigger_diag_snap_bg, NetCtx};
+use crate::net::common::{NetCtx, trigger_diag_snap_bg};
 use crate::net::hotspot::{hs_fwd6_rules, hs_sync, hs_tap_down, hs_tap_up, vm_alive, vm_is_ready};
 use crate::net::ipv6::{
     v6_nft_setup, v6_nft_sync, v6_nft_teardown, v6_proxy_remove, v6_proxy_sync, v6_src_fingerprint,
@@ -24,7 +24,7 @@ use crate::net::vpn_routes::{
     routes_clear, routes_file_cksum, routes_reassert, routes_sync, tether_ifaces,
 };
 use crate::sys::spawn::spawn_self_detached;
-use crate::sys::{send_signal, DirLock};
+use crate::sys::{DirLock, send_signal};
 use crate::traffic::{acct_hooks, acct_present, acct_present6, acct_setup, acct_teardown};
 
 const GW_PREF: &str = "19100";
@@ -479,11 +479,7 @@ fn gw_remove(ctx: &NetCtx<'_>) {
 
 fn rules_set(ctx: &NetCtx<'_>, use_v6: bool, up: &str) {
     let run_ip = |args: &[&str]| {
-        if use_v6 {
-            ctx.ip6(args)
-        } else {
-            ctx.ip(args)
-        }
+        if use_v6 { ctx.ip6(args) } else { ctx.ip(args) }
     };
     while run_ip(&["rule", "del", "pref", "18800"]).success() {}
     while run_ip(&["rule", "del", "pref", "18900"]).success() {}
@@ -692,7 +688,9 @@ fn sync_all_unlocked(env: &Env) {
             env,
             &cfg,
             "net",
-            &format!("上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {outs6_disp}"),
+            &format!(
+                "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {outs6_disp}"
+            ),
         );
         if !old_up_trimmed.is_empty() {
             trigger_diag_snap_bg(

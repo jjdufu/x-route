@@ -6,7 +6,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cidr::norm_route;
 use crate::env::Env;
@@ -453,7 +453,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             return (
                 2,
                 "{\"ok\":false,\"error\":\"用法：xr vpn-enable|vpn-disable [ID]\"}".to_string(),
-            )
+            );
         }
     };
     let vpn_dir = env.vpn_dir();

@@ -4,8 +4,8 @@ use std::fs;
 use crate::env::XR_IF;
 use crate::log::unix_now;
 use crate::net::common::{
-    combine_quad_add, combine_quad_max, read_quad, write_quad, NetCtx, TrafficCounters,
-    TrafficSummary,
+    NetCtx, TrafficCounters, TrafficSummary, combine_quad_add, combine_quad_max, read_quad,
+    write_quad,
 };
 use crate::sys::DirLock;
 

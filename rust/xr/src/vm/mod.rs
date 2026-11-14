@@ -10,7 +10,7 @@ use rustix::process::Signal;
 use serde::Serialize;
 
 use crate::cidr::hs_mac;
-use crate::config::{config_hash, Config};
+use crate::config::{Config, config_hash};
 use crate::diag::{diag_snap, diag_snap_bg};
 use crate::env::Env;
 use crate::log::{blog, dlog, log_err, log_info, unix_now};

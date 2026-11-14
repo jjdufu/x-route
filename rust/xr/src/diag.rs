@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use chrono::Local;
 use regex::Regex;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::config::Config;
 use crate::env::Env;

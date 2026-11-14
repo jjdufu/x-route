@@ -14,7 +14,7 @@ use crate::cidr::{hs_subnet_clash, hs_subnet_valid};
 use crate::cli::boot_tail::run_boot_tail;
 use crate::cli::status::{needs_restart, status_json, status_line};
 use crate::cli::vpn_cfg::{list_dir, traffic_split, vpn_delete, vpn_import, vpn_set};
-use crate::config::{config_hash, set_kv, valid_kv, Config, KEYS};
+use crate::config::{Config, KEYS, config_hash, set_kv, valid_kv};
 use crate::daemon::watchdog::watchdog_loop;
 use crate::daemon::{daemon_loop, ensure_daemon, ensure_watchdog, vm_start, vm_stop};
 use crate::diag::{diag_snap, diag_snap_bg, export_pack};
@@ -94,7 +94,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
             return (
                 2,
                 "{\"ok\":false,\"error\":\"用法：xr ipv6 on|off\"}".to_string(),
-            )
+            );
         }
     };
     let v6_file = env.run_dir().join("guest/guest/ipv6");
@@ -544,7 +544,9 @@ pub fn run_cli(args: &[String]) -> i32 {
             _ => 2,
         },
         _ => {
-            println!("usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm");
+            println!(
+                "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm"
+            );
             2
         }
     }

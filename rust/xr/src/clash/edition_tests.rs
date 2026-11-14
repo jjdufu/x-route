@@ -12,11 +12,7 @@ type Failure = &'static str;
 ///
 /// `cond` 为假时返回 `msg`。
 fn ensure(cond: bool, msg: Failure) -> Result<(), Failure> {
-    if cond {
-        Ok(())
-    } else {
-        Err(msg)
-    }
+    if cond { Ok(()) } else { Err(msg) }
 }
 
 /// 从通道收一行并解析为 JSON。

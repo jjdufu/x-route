@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::cli::vpn_cfg::{vpn_profiles, vpn_rejected, vpn_tunnels};
 use crate::config::{Config, KEYS};

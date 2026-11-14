@@ -8,9 +8,9 @@ use xr::cidr::{
     ip2int, ip6_expand, ip6_format, ip6_mask, mac_eui64, mask2len, norm_route, v6_compose,
     v6_is_ll, v6_is_ula, v6_pick_addr, valid_cidr, valid_ip4,
 };
-use xr::config::{config_hash, set_kv, valid_kv, Config, KEYS};
+use xr::config::{Config, KEYS, config_hash, set_kv, valid_kv};
 use xr::daemon::keepalive::{
-    vm_exit_reason, vm_guest_reset_pending, vmm_has_guest_reset, vmm_last_run_slice, VMM_RUN_MARKER,
+    VMM_RUN_MARKER, vm_exit_reason, vm_guest_reset_pending, vmm_has_guest_reset, vmm_last_run_slice,
 };
 use xr::env::Env;
 use xr::log::{blog, boot_clean_run, log_info, xr_now};

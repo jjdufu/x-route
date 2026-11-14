@@ -2,7 +2,7 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use crate::config::{valid_kv, Config};
+use crate::config::{Config, valid_kv};
 use crate::env::Env;
 use crate::log::{log_err, log_info};
 use crate::sys::ce_ready;

@@ -8,8 +8,8 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use rustix::fs::{flock, FlockOperation};
-use rustix::process::{kill_process, test_kill_process, Pid, Signal};
+use rustix::fs::{FlockOperation, flock};
+use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 
 use crate::env::Env;
 use crate::log::log_info;
