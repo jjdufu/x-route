@@ -25,10 +25,10 @@ use crate::vm;
 use crate::vm::reap_in_background;
 
 #[derive(Debug, Clone, Copy, Serialize)]
-pub struct Status {
-    pub installed: bool,
-    pub running: bool,
-    pub port: u16,
+pub(crate) struct Status {
+    pub(crate) installed: bool,
+    pub(crate) running: bool,
+    pub(crate) port: u16,
 }
 
 impl Default for Status {
@@ -42,7 +42,7 @@ impl Default for Status {
 }
 
 #[must_use]
-pub fn status(env: &Env, alive: bool) -> Status {
+pub(crate) fn status(env: &Env, alive: bool) -> Status {
     if !alive {
         return Status::default();
     }
@@ -72,7 +72,7 @@ pub fn status(env: &Env, alive: bool) -> Status {
     st
 }
 
-pub fn stop_clash_mux(env: &Env) {
+pub(crate) fn stop_clash_mux(env: &Env) {
     let run = env.run_dir();
     if let Ok(pid_raw) = fs::read_to_string(run.join("clash_mux.pid")) {
         let pid = pid_raw.trim();
@@ -99,7 +99,7 @@ pub fn stop_clash_mux(env: &Env) {
     }
 }
 
-pub fn start_clash_mux(env: &Env) {
+pub(crate) fn start_clash_mux(env: &Env) {
     stop_clash_mux(env);
     let run = env.run_dir();
     let ready = run.join("clash_mux.ready");
@@ -533,7 +533,7 @@ fn note_sock(env: &Env, what: &str, res: std::io::Result<()>) {
 }
 
 #[must_use]
-pub fn run_clash_mux(env: &Env) -> i32 {
+pub(crate) fn run_clash_mux(env: &Env) -> i32 {
     let run = env.run_dir();
     let ctl_sock = run.join("clash-ctl.sock");
     let rpc_sock = run.join("clash-rpc.sock");
@@ -666,7 +666,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn run_clash_bridge(env: &Env) -> i32 {
+pub(crate) fn run_clash_bridge(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(stream) = UnixStream::connect(&rpc_sock) else {
         return emit(
@@ -719,7 +719,7 @@ pub fn run_clash_bridge(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn run_clash_ping(env: &Env) -> i32 {
+pub(crate) fn run_clash_ping(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
         return emit(
@@ -793,7 +793,7 @@ fn render_rpc_line(line: &str) -> String {
 }
 
 #[must_use]
-pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
+pub(crate) fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     let Ok(mut val) = serde_json::from_str::<Value>(req_json) else {
         return emit(
             env,
@@ -852,7 +852,7 @@ pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     }
 }
 
-pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
+pub(crate) fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     if ws_id.is_empty() || !path.starts_with('/') {
         return emit(
             env,
@@ -908,7 +908,7 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
 }
 
 #[must_use]
-pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i32 {
+pub(crate) fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i32 {
     if ws_id.is_empty() {
         return 2;
     }
@@ -954,7 +954,7 @@ pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i
 }
 
 #[must_use]
-pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
+pub(crate) fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     if ws_id.is_empty() {
         return 2;
     }
