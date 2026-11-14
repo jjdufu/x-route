@@ -50,18 +50,18 @@ pub fn clash_status(env: &Env, alive: bool) -> ClashStatus {
     };
     let mut st = ClashStatus::default();
     for line in raw.lines() {
-        let Some((k, v)) = line.split_once('=') else {
+        let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let val = v.trim();
-        match k.trim() {
+        let val = value.trim();
+        match key.trim() {
             "installed" => st.installed = val == "1",
             "running" => st.running = val == "1",
             "port" => {
-                if let Ok(p) = val.parse::<u16>()
-                    && p > 0
+                if let Ok(port_num) = val.parse::<u16>()
+                    && port_num > 0
                 {
-                    st.port = p;
+                    st.port = port_num;
                 }
             }
             _ => {}
@@ -87,13 +87,13 @@ pub fn stop_clash_mux(env: &Env) {
             }
         }
     }
-    for f in [
+    for name in [
         "clash_mux.pid",
         "clash_mux.ready",
         "clash-ctl.sock",
         "clash-rpc.sock",
     ] {
-        fsx::remove_logged(env, run.join(f));
+        fsx::remove_logged(env, run.join(name));
     }
 }
 
@@ -204,7 +204,7 @@ impl MuxState {
             |mut clients| {
                 clients
                     .remove(&client_id)
-                    .map_or_else(Vec::new, |c| c.ws_ids.into_iter().collect())
+                    .map_or_else(Vec::new, |client| client.ws_ids.into_iter().collect())
             },
         );
         if let Ok(mut pending) = self.pending_reqs.lock() {
@@ -385,7 +385,7 @@ impl MuxState {
                     ws_map.get(&orig_ws).cloned()
                 };
                 let is_local = local_mapped.is_some();
-                let owner = local_mapped.map(|m| (client_id, m)).or_else(|| {
+                let owner = local_mapped.map(|mapped| (client_id, mapped)).or_else(|| {
                     self.resolve_external_ws(client_id, orig_id.as_ref(), &op, &orig_ws)
                 });
                 let Some((owner_cid, mux_ws)) = owner else {
@@ -604,7 +604,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
                         *guard = None;
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(read_err) if read_err.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => break,
@@ -626,7 +626,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
                     next_cid = next_cid.saturating_add(1);
                     spawn_rpc_client(env_rpc.clone(), Arc::clone(&s_rpc), stream, cid);
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => break,
@@ -650,13 +650,13 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     stop.store(true, Ordering::Relaxed);
     note_join(env, "clash 客机通道线程", &ctl_thread.join());
     note_join(env, "clash RPC 监听线程", &rpc_thread.join());
-    for f in [
+    for name in [
         "clash_mux.pid",
         "clash_mux.ready",
         "clash-ctl.sock",
         "clash-rpc.sock",
     ] {
-        fsx::remove_logged(env, run.join(f));
+        fsx::remove_logged(env, run.join(name));
     }
     0
 }
@@ -885,10 +885,10 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
                     // WebUI 已关闭读端：结束流（原来的打印宏在此 panic 中止）
                     return out::finish(env, Err(err), 0);
                 }
-                if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
-                    let is_close = v.get("op").and_then(Value::as_str) == Some("ws_close");
-                    let open_fail = v.get("id").and_then(Value::as_str) == Some("open")
-                        && v.get("ok").and_then(Value::as_bool) == Some(false);
+                if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
+                    let is_close = value.get("op").and_then(Value::as_str) == Some("ws_close");
+                    let open_fail = value.get("id").and_then(Value::as_str) == Some("open")
+                        && value.get("ok").and_then(Value::as_bool) == Some(false);
                     if is_close || open_fail {
                         break;
                     }
@@ -998,9 +998,9 @@ mod tests {
     fn test_clash_status_parsing() {
         let td = TempDir::new().ok();
         assert!(td.is_some());
-        if let Some(d) = td {
+        if let Some(tmp) = td {
             let mut env = Env::from_process();
-            env.xr_data = d.path().to_path_buf();
+            env.xr_data = tmp.path().to_path_buf();
             let st_dir = env.run_dir().join("guest/guest");
             assert!(fs::create_dir_all(&st_dir).is_ok());
             assert!(
