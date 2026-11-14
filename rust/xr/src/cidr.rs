@@ -6,12 +6,12 @@ use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
 mod tests;
 
 #[must_use]
-pub fn is_uint(text: &str) -> bool {
+pub(crate) fn is_uint(text: &str) -> bool {
     !text.is_empty() && text.len() <= 6 && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[must_use]
-pub fn parse_uint(text: &str) -> Option<u32> {
+pub(crate) fn parse_uint(text: &str) -> Option<u32> {
     if !is_uint(text) {
         return None;
     }
@@ -19,7 +19,7 @@ pub fn parse_uint(text: &str) -> Option<u32> {
 }
 
 #[must_use]
-pub fn in_range(text: &str, min: u32, max: u32) -> bool {
+pub(crate) fn in_range(text: &str, min: u32, max: u32) -> bool {
     parse_uint(text).is_some_and(|value| value >= min && value <= max)
 }
 
@@ -84,7 +84,7 @@ pub fn ip2int(raw: &str) -> Option<u32> {
 }
 
 #[must_use]
-pub const fn prefix_mask(plen: u8) -> Option<u32> {
+pub(crate) const fn prefix_mask(plen: u8) -> Option<u32> {
     if plen == 0 {
         Some(0)
     } else if plen <= 32 {
@@ -419,7 +419,7 @@ pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn v6_addr_eq(lhs: &str, rhs: &str) -> bool {
+pub(crate) fn v6_addr_eq(lhs: &str, rhs: &str) -> bool {
     let aa = lhs.split('/').next().unwrap_or(lhs);
     let ba = rhs.split('/').next().unwrap_or(rhs);
     let (Some(ea), Some(eb)) = (ip6_expand(aa), ip6_expand(ba)) else {
