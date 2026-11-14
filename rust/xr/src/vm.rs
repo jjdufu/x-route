@@ -116,7 +116,7 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
             .env("MODDIR", &env.moddir)
             .env("XR_DATA", &env.xr_data)
             .status();
-        return st.map_or(1, |s| s.code().unwrap_or(1));
+        return st.map_or(1, |s| s.code().unwrap_or(1_i32));
     }
     run_net_cli(env, &[op.to_owned()])
 }
@@ -385,7 +385,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
             "net",
             "创建 xr0 / xr1、登记 netd 本地网络、建立转发规则",
         );
-        if run_net_hook(env, "up") != 0 {
+        if run_net_hook(env, "up") != 0_i32 {
             vm_fail(env, "net up 失败", "网络初始化失败");
             return 1;
         }
@@ -652,7 +652,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
             .stderr(Stdio::null())
             .status();
         note_status(env, "crosvm stop", stop_status);
-        for _ in 0..10 {
+        for _ in 0_i32..10_i32 {
             if !vm_running(env) {
                 break;
             }

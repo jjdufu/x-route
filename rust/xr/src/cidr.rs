@@ -70,12 +70,12 @@ pub fn ip2int(raw: &str) -> Option<u32> {
         if val > 255 {
             return None;
         }
-        out = (out << 8) | val;
+        out = (out << 8_u32) | val;
     }
     Some(out)
 }
 
-pub fn prefix_mask(plen: u8) -> Option<u32> {
+pub const fn prefix_mask(plen: u8) -> Option<u32> {
     if plen == 0 {
         Some(0)
     } else if plen <= 32 {
@@ -244,8 +244,8 @@ pub fn cidr_private(raw: &str) -> bool {
     let Some(ip) = ip2int(addr) else {
         return false;
     };
-    let a = (ip >> 24) & 0xFF;
-    let b = (ip >> 16) & 0xFF;
+    let a = (ip >> 24_u32) & 0xFF;
+    let b = (ip >> 16_u32) & 0xFF;
     if a == 10 {
         plen >= 8
     } else if a == 172 && (16..=31).contains(&b) {

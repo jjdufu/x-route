@@ -113,7 +113,7 @@ pub fn vpn_mirror_legacy(env: &Env) {
         {
             fsx::chmod_logged(env, &dst, 0o600);
         }
-        let nm = fs::read_to_string(vpn_dir.join(format!("{pid}.name"))).unwrap_or(pid.clone());
+        let nm = fs::read_to_string(vpn_dir.join(format!("{pid}.name"))).unwrap_or(pid);
         fsx::write_logged(
             env,
             cfg_dir.join("openvpn.name"),
@@ -229,7 +229,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
             "name": nm,
             "status": st,
             "addr": "",
-            "mtu": 0,
+            "mtu": 0_i32,
             "routes": [],
         }));
     }

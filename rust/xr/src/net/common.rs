@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -17,7 +17,7 @@ pub struct NetCtx<'a> {
 }
 
 impl<'a> NetCtx<'a> {
-    pub fn new(env: &'a Env, cfg: &'a Config) -> Self {
+    pub const fn new(env: &'a Env, cfg: &'a Config) -> Self {
         Self { env, cfg }
     }
 
@@ -209,7 +209,7 @@ pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
     }
 }
 
-pub fn combine_quad_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+pub const fn combine_quad_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     [
         a[0].saturating_add(b[0]),
         a[1].saturating_add(b[1]),

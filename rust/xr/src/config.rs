@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::Write as _;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
+use sha2::{Digest as _, Sha256};
 
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid, in_range, valid_ip4};
 use crate::env::Env;

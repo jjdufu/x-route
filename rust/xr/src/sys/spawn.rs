@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 

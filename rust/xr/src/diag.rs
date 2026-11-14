@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -630,11 +630,10 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
         if zw.start_file(&zip_path, opts).is_err() {
             return false;
         }
-        let Ok(mut rf) = File::open(&entry) else {
+        let Ok(buf) = fs::read(&entry) else {
             return false;
         };
-        let mut buf = Vec::new();
-        if rf.read_to_end(&mut buf).is_err() || zw.write_all(&buf).is_err() {
+        if zw.write_all(&buf).is_err() {
             return false;
         }
     }

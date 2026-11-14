@@ -154,7 +154,7 @@ fn bg_exec(env: &Env, action: &str) -> i32 {
     let rc = match action {
         "start" => vm_start(env),
         "stop" => vm_stop(env),
-        _ => 2,
+        _ => 2_i32,
     };
     let run = env.run_dir();
     let tmp = run.join("bg.rc.tmp");
@@ -398,7 +398,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            st.map_or(1, |s| s.code().unwrap_or(1))
+            st.map_or(1, |s| s.code().unwrap_or(1_i32))
         }
         "luci" => {
             let cfg = Config::load(&env);
@@ -409,7 +409,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            st.map_or(1, |s| s.code().unwrap_or(1))
+            st.map_or(1, |s| s.code().unwrap_or(1_i32))
         }
         "ls" => {
             let (rc, items) = list_dir(

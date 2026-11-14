@@ -3,7 +3,7 @@ pub(crate) mod fsx;
 pub mod spawn;
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -117,7 +117,7 @@ pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     let Ok(raw_pid) = trimmed.parse::<i32>() else {
         return false;
     };
-    if raw_pid <= 0 {
+    if raw_pid <= 0_i32 {
         return false;
     }
     if env.proc_base != Path::new("/proc") {

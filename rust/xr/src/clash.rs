@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead as _, BufReader, BufWriter, Write as _};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -75,7 +75,7 @@ pub fn stop_clash_mux(env: &Env) {
         let pid = pid_raw.trim();
         if !pid.is_empty() && is_pid_running(env, pid) {
             send_signal_logged(env, pid, Signal::TERM);
-            for _ in 0..10 {
+            for _ in 0_i32..10_i32 {
                 if !is_pid_running(env, pid) {
                     break;
                 }
@@ -107,7 +107,7 @@ pub fn start_clash_mux(env: &Env) {
     if env.in_daemon {
         reap_in_background(mux);
     }
-    for _ in 0..100 {
+    for _ in 0_i32..100_i32 {
         if ready.is_file() {
             return;
         }
@@ -377,7 +377,7 @@ impl MuxState {
                     if external_ws_owner.is_some() {
                         self.send_to_client(
                             owner_cid,
-                            json!({"op": "ws_close", "ws_id": orig_ws, "code": 1000, "reason": "closed"})
+                            json!({"op": "ws_close", "ws_id": orig_ws, "code": 1000_i32, "reason": "closed"})
                                 .to_string(),
                         );
                     }
@@ -392,7 +392,7 @@ impl MuxState {
         let mux_req_id = if is_ext_ws_ctl {
             let _orig_req_id: Option<Value> = obj.remove("id");
             None
-        } else if let Some(ref oid) = orig_id {
+        } else if let Some(oid) = &orig_id {
             let mid = format!("r{}", self.next_seq());
             if let Ok(mut pending) = self.pending_reqs.lock() {
                 let _reused_mid: Option<(u64, Value)> =
@@ -429,7 +429,7 @@ impl MuxState {
                 err.extend([
                     ("id".to_owned(), oid),
                     ("ok".to_owned(), Value::Bool(false)),
-                    ("status".to_owned(), Value::from(503)),
+                    ("status".to_owned(), Value::from(503_i32)),
                     (
                         "error".to_owned(),
                         Value::String("hvc1 channel not connected".to_owned()),
@@ -1032,7 +1032,7 @@ mod tests {
             let r1: Value =
                 serde_json::from_str(&rx1.recv_timeout(Duration::from_secs(1)).unwrap_or_default())
                     .unwrap_or(Value::Null);
-            assert_eq!(r1.get("id"), Some(&Value::from(10)));
+            assert_eq!(r1.get("id"), Some(&Value::from(10_i32)));
 
             let r2a: Value =
                 serde_json::from_str(&rx2.recv_timeout(Duration::from_secs(1)).unwrap_or_default())
@@ -1137,9 +1137,9 @@ mod tests {
         let resp: Value =
             serde_json::from_str(&rx.recv_timeout(Duration::from_secs(1)).unwrap_or_default())
                 .unwrap_or(Value::Null);
-        assert_eq!(resp.get("id"), Some(&Value::from(99)));
+        assert_eq!(resp.get("id"), Some(&Value::from(99_i32)));
         assert_eq!(resp.get("ok"), Some(&Value::from(false)));
-        assert_eq!(resp.get("status"), Some(&Value::from(503)));
+        assert_eq!(resp.get("status"), Some(&Value::from(503_i32)));
     }
 }
 

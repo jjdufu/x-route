@@ -97,7 +97,7 @@ fn cancel_notifications(env: &Env) {
     }
     let cp = format!("-Djava.class.path={}", jar_path.display());
     if getprop("sys.boot_completed") == "1" {
-        for _ in 0..3 {
+        for _ in 0_i32..3_i32 {
             sys_run(
                 env,
                 &env.app_process,
@@ -357,7 +357,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
 
     if spawn_res.is_ok() {
         let ready_file = stage.join("worker.ready");
-        for _ in 0..400 {
+        for _ in 0_i32..400_i32 {
             if ready_file.is_file() {
                 break;
             }

@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
 use crate::env::Env;

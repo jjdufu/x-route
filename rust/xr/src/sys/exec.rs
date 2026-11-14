@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
-use std::io::Write;
-use std::os::unix::process::ExitStatusExt;
+use std::io::Write as _;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
@@ -16,7 +16,7 @@ pub struct ExecResult {
 }
 
 impl ExecResult {
-    pub fn success(&self) -> bool {
+    pub const fn success(&self) -> bool {
         self.code == 0
     }
 }
@@ -118,8 +118,8 @@ pub fn xr_exec(
             .map(|c| if c == '\n' { ' ' } else { c })
             .collect();
         let de_trimmed = de.trim();
-        let sigpipe_readonly = code == 141 && de_trimmed.is_empty() && !mutating;
-        if !sigpipe_readonly && (code != 0 || !de_trimmed.is_empty() || mutating) {
+        let sigpipe_readonly = code == 141_i32 && de_trimmed.is_empty() && !mutating;
+        if !sigpipe_readonly && (code != 0_i32 || !de_trimmed.is_empty() || mutating) {
             let cmd_str = format_cmd_for_log(env, prog, args);
             if de_trimmed.is_empty() {
                 dlog(env, cfg, "cmd", &format!("rc={code} {cmd_str}"));

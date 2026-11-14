@@ -117,7 +117,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         log_err(env, "daemon", "看门狗未能启动");
         return false;
     }
-    for _ in 0..8 {
+    for _ in 0_i32..8_i32 {
         let p = fs::read_to_string(run.join("watchdog.pid"))
             .unwrap_or_default()
             .trim()
@@ -151,7 +151,7 @@ pub fn ensure_daemon(env: &Env) -> bool {
         log_err(env, "daemon", "守护进程未能启动");
         return false;
     }
-    for _ in 0..10 {
+    for _ in 0_i32..10_i32 {
         if run.join("daemon.ready").is_file() && daemon_running(env) {
             cgroup_escape_tree(env, std::process::id());
             note_ok(env, "ensure_watchdog", ensure_watchdog(env));
@@ -177,7 +177,7 @@ pub fn daemon_send(env: &Env, cmd: &str) -> i32 {
     if !send_signal(&p, Signal::USR1) {
         return 1;
     }
-    for _ in 0..30 {
+    for _ in 0_i32..30_i32 {
         if run.join("daemon.res").is_file() {
             break;
         }
