@@ -67,10 +67,15 @@ pub fn status_json(env: &Env) -> String {
     let ce = ce_ready();
     let rw = !env.rw_map_opt.is_empty();
 
-    let mut cfg_map = Map::new();
-    for k in KEYS {
-        cfg_map.insert((*k).to_string(), Value::String(cfg.get_raw(k).to_string()));
-    }
+    let cfg_map: Map<String, Value> = KEYS
+        .iter()
+        .map(|key| {
+            (
+                (*key).to_string(),
+                Value::String(cfg.get_raw(key).to_string()),
+            )
+        })
+        .collect();
 
     let mut vst = "down".to_string();
     let mut vaddr = String::new();
