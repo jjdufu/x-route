@@ -715,24 +715,8 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
     zw.finish().is_ok()
 }
 
-/// 导出日志（`is_diag` 为 false）或诊断包到下载目录，返回 JSON 结果：成功时含压缩包路径。
-///
-/// 内容含摘要（版本、机型、状态 `status_json_str` 与失败计数）和各日志；诊断包另含手机与客机快照、`logcat`、热点状态、去掉注释的配置、调试日志与通知器日志；文本均先脱敏。
-#[must_use]
-pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
-    let Some(dest) = download_dir(env) else {
-        return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();
-    };
-    let stamp = Local::now().format("%Y%m%d-%H%M%S");
-    let name = format!("{prefix}-{stamp}");
-    let tmpd = env.run_dir().join(format!("export.{}", std::process::id()));
-    fsx::remove_tree_logged(env, &tmpd);
-    let raw_dir = tmpd.join("raw");
-    let pack_dir = tmpd.join(&name);
-    if fs::create_dir_all(&raw_dir).is_err() || fs::create_dir_all(&pack_dir).is_err() {
-        return "{\"ok\":false,\"error\":\"tmp\"}".to_owned();
-    }
-
+/// 写导出包的 `summary.txt`：版本、机型与安卓版本，导出时间，调试模式，状态 JSON 与失败计数。
+fn write_summary(env: &Env, raw_dir: &Path, status_json_str: &str) {
     let ver = fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
         .lines()
@@ -752,7 +736,10 @@ pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_st
     );
     summary.push_str(&log::failures_summary_line());
     fsx::write_logged(env, raw_dir.join("summary.txt"), summary);
+}
 
+/// 复制各日志（及其 `.1` 轮转份）到 `raw_dir`。
+fn copy_logs(env: &Env, raw_dir: &Path) {
     let log_files = [
         env.module_log(),
         env.console_log(),
@@ -771,42 +758,46 @@ pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_st
             }
         }
     }
+}
 
-    if is_diag {
-        fsx::write_logged(env, raw_dir.join("phone.txt"), phone(env));
-        let guest = match guest(env, 15) {
-            Ok(text) | Err(text) => text,
-        };
-        fsx::write_logged(env, raw_dir.join("openwrt.txt"), guest);
-        fsx::write_logged(env, raw_dir.join("logcat.txt"), logcat());
+/// 诊断包额外内容：手机与客机快照、`logcat`、热点状态、去掉注释的配置、调试日志与通知器日志。
+fn add_diag_extras(env: &Env, raw_dir: &Path) {
+    fsx::write_logged(env, raw_dir.join("phone.txt"), phone(env));
+    let guest = match guest(env, 15) {
+        Ok(text) | Err(text) => text,
+    };
+    fsx::write_logged(env, raw_dir.join("openwrt.txt"), guest);
+    fsx::write_logged(env, raw_dir.join("logcat.txt"), logcat());
+    fsx::write_logged(
+        env,
+        raw_dir.join("tethering.txt"),
+        sys_cmd_output(Path::new("dumpsys"), &["tethering"]),
+    );
+    if let Ok(conf) = fs::read_to_string(env.conf_file()) {
+        let filtered: Vec<&str> = conf.lines().filter(|line| !line.starts_with('#')).collect();
         fsx::write_logged(
             env,
-            raw_dir.join("tethering.txt"),
-            sys_cmd_output(Path::new("dumpsys"), &["tethering"]),
+            raw_dir.join("config.conf"),
+            format!("{}\n", filtered.join("\n")),
         );
-        if let Ok(conf) = fs::read_to_string(env.conf_file()) {
-            let filtered: Vec<&str> = conf.lines().filter(|line| !line.starts_with('#')).collect();
-            fsx::write_logged(
-                env,
-                raw_dir.join("config.conf"),
-                format!("{}\n", filtered.join("\n")),
-            );
-        }
-        let dlog = env.debug_log();
-        let dlog1 = PathBuf::from(format!("{}.1", dlog.display()));
-        if dlog1.is_file() {
-            fsx::copy_logged(env, &dlog1, raw_dir.join("debug.log.1"));
-        }
-        if dlog.is_file() {
-            fsx::copy_logged(env, &dlog, raw_dir.join("debug.log"));
-        }
-        let nlog = env.run_dir().join("notifier.log");
-        if nlog.is_file() {
-            fsx::copy_logged(env, &nlog, raw_dir.join("notifier.log"));
-        }
     }
+    let dlog = env.debug_log();
+    let dlog1 = PathBuf::from(format!("{}.1", dlog.display()));
+    if dlog1.is_file() {
+        fsx::copy_logged(env, &dlog1, raw_dir.join("debug.log.1"));
+    }
+    if dlog.is_file() {
+        fsx::copy_logged(env, &dlog, raw_dir.join("debug.log"));
+    }
+    let nlog = env.run_dir().join("notifier.log");
+    if nlog.is_file() {
+        fsx::copy_logged(env, &nlog, raw_dir.join("notifier.log"));
+    }
+}
 
-    if let Ok(rd) = fs::read_dir(&raw_dir) {
+/// 把 `raw_dir` 中每个文件脱敏后写到 `pack_dir`。
+fn redact_into_pack(env: &Env, raw_dir: &Path, pack_dir: &Path) {
+    if let Ok(rd) = fs::read_dir(raw_dir) {
         for ent in rd.flatten() {
             let file_path = ent.path();
             if file_path.is_file()
@@ -819,15 +810,49 @@ pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_st
             }
         }
     }
+}
 
+/// 把 `tmpd/name` 打包为 `dest/name.zip` 并清理临时目录；成功返回压缩包路径，失败时删掉半成品并返回 `None`。
+fn finalize_zip(env: &Env, dest: &Path, tmpd: &Path, name: &str) -> Option<PathBuf> {
     let out_zip = dest.join(format!("{name}.zip"));
     fsx::remove_logged(env, &out_zip);
-    if !write_zip_from_dir(&out_zip, &tmpd, &name) {
+    if !write_zip_from_dir(&out_zip, tmpd, name) {
         fsx::remove_logged(env, &out_zip);
-        fsx::remove_tree_logged(env, &tmpd);
-        return "{\"ok\":false,\"error\":\"zip\"}".to_owned();
+        fsx::remove_tree_logged(env, tmpd);
+        return None;
     }
+    fsx::remove_tree_logged(env, tmpd);
+    Some(out_zip)
+}
+
+/// 导出日志（`is_diag` 为 false）或诊断包到下载目录，返回 JSON 结果：成功时含压缩包路径。
+///
+/// 内容含摘要（版本、机型、状态 `status_json_str` 与失败计数）和各日志；诊断包另含手机与客机快照、`logcat`、热点状态、去掉注释的配置、调试日志与通知器日志；文本均先脱敏。
+#[must_use]
+pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
+    let Some(dest) = download_dir(env) else {
+        return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();
+    };
+    let stamp = Local::now().format("%Y%m%d-%H%M%S");
+    let name = format!("{prefix}-{stamp}");
+    let tmpd = env.run_dir().join(format!("export.{}", std::process::id()));
     fsx::remove_tree_logged(env, &tmpd);
+    let raw_dir = tmpd.join("raw");
+    let pack_dir = tmpd.join(&name);
+    if fs::create_dir_all(&raw_dir).is_err() || fs::create_dir_all(&pack_dir).is_err() {
+        return "{\"ok\":false,\"error\":\"tmp\"}".to_owned();
+    }
+
+    write_summary(env, &raw_dir, status_json_str);
+    copy_logs(env, &raw_dir);
+    if is_diag {
+        add_diag_extras(env, &raw_dir);
+    }
+    redact_into_pack(env, &raw_dir, &pack_dir);
+
+    let Some(out_zip) = finalize_zip(env, &dest, &tmpd, &name) else {
+        return "{\"ok\":false,\"error\":\"zip\"}".to_owned();
+    };
     let label = if is_diag { "诊断包" } else { "日志" };
     log::info(env, "xr", &format!("已导出{label} {name}.zip"));
     serde_json::json!({
