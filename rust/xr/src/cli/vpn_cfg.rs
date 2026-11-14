@@ -571,6 +571,196 @@ pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, 
     )
 }
 
+/// `VPN` 操作成功的应答。
+const VPN_OK: &str = "{\"ok\":true}";
+/// 客机在等待时间内未到达目标状态的应答。
+const VPN_NO_ACK: &str = "{\"ok\":false,\"error\":\"未响应\"}";
+/// 服务未运行时要求启用的应答。
+const VPN_NOT_RUNNING: &str = "{\"ok\":false,\"error\":\"服务未运行\"}";
+
+/// 把 `config/vpn/` 里所有 `.ovpn` 配置标为停用（客机不支持多隧道时启用一份前调用）。
+fn disable_all_profiles(env: &Env, vpn_dir: &Path) {
+    let Ok(rd) = fs::read_dir(vpn_dir) else {
+        return;
+    };
+    for ent in rd.flatten() {
+        let target = ent.path();
+        if target.extension().and_then(|ext_os| ext_os.to_str()) == Some("ovpn")
+            && let Some(oid) = target.file_stem().and_then(|stem_os| stem_os.to_str())
+        {
+            fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
+        }
+    }
+}
+
+/// 客机状态是否已到达配置 `tid` 的目标：启用时出现其隧道、在连接中列表或（非多隧道）汇总为 `up`/`connecting`；
+/// 停用时其隧道与连接中都消失，且多隧道或汇总为 `down`/空。
+fn profile_reached(guest: &Path, tid: &str, want: bool) -> bool {
+    let vst = fs::read_to_string(guest.join("openvpn.status"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let tun = fs::read_to_string(guest.join("openvpn.tunnels")).unwrap_or_default();
+    let conn = fs::read_to_string(guest.join("openvpn.connecting")).unwrap_or_default();
+    let has_tun = tun.contains(&format!("|{tid}|"));
+    let has_conn = conn.lines().any(|line| line.trim() == tid);
+    let is_multi = guest.join("openvpn.multi").is_file();
+    if want {
+        has_tun || has_conn || (!is_multi && matches!(vst.as_str(), "up" | "connecting"))
+    } else {
+        !has_tun && !has_conn && (is_multi || vst == "down" || vst.is_empty())
+    }
+}
+
+/// 下发命令后每秒轮询一次，最多 `vpn_wait` 次：客机应答与 `cmd_trim` 相同或状态到达目标时成功。
+fn wait_profile(env: &Env, tid: &str, want: bool, cmd_trim: &str) -> (i32, String) {
+    let guest = env.run_dir().join("guest/guest");
+    for _ in 0..env.vpn_wait {
+        let ack = fs::read_to_string(guest.join("openvpn.ack")).unwrap_or_default();
+        if ack.trim() == cmd_trim || profile_reached(&guest, tid, want) {
+            return (0, VPN_OK.to_owned());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    (1, VPN_NO_ACK.to_owned())
+}
+
+/// 按编号启用或停用一份配置：检查编号与文件，未运行时只允许停用；运行中写入状态、同步客机、下发命令并等待。
+fn apply_profile_toggle(env: &Env, tid: &str, want: bool) -> (i32, String) {
+    let vpn_dir = env.vpn_dir();
+    vpn_migrate_legacy(env);
+    if !valid_profile_id(tid) {
+        return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
+    }
+    let ovpn = vpn_dir.join(format!("{tid}.ovpn"));
+    if !fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0) {
+        return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
+    }
+    if !vm::running(env) {
+        if want {
+            return (1, VPN_NOT_RUNNING.to_owned());
+        }
+        fsx::write_logged(env, vpn_dir.join(format!("{tid}.enabled")), "0\n");
+        vpn_mirror_legacy(env);
+        return (0, VPN_OK.to_owned());
+    }
+    let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
+    if want && !multi {
+        disable_all_profiles(env, &vpn_dir);
+    }
+    fsx::write_logged(
+        env,
+        vpn_dir.join(format!("{tid}.enabled")),
+        if want { "1\n" } else { "0\n" },
+    );
+    vpn_mirror_legacy(env);
+    let any = vpn_sync_host(env).unwrap_or(false);
+    let host = env.run_dir().join("guest/host");
+    if want {
+        fsx::copy_logged(env, &ovpn, host.join("openvpn.ovpn"));
+    }
+    let cmd_act = if any { "enable" } else { "disable" };
+    let cmd_line = vpn_next_cmd(env, cmd_act);
+    fsx::write_logged(env, host.join("openvpn.cmd"), &cmd_line);
+    wait_profile(env, tid, want, cmd_line.trim())
+}
+
+/// 不指定编号时同步 `config/vpn/` 的启用状态：停用时全部停用；启用时若没有已启用的配置，启用排序后的第一份。
+fn legacy_sync_profiles(env: &Env, vpn_dir: &Path, want: bool) {
+    if !vpn_dir.is_dir() {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(vpn_dir) else {
+        return;
+    };
+    let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    let mut has_en = false;
+    let mut first_id: Option<String> = None;
+    for file_path in &paths {
+        if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn")
+            || !fs::metadata(file_path).is_ok_and(|meta| meta.len() > 0)
+        {
+            continue;
+        }
+        let Some(vid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
+            continue;
+        };
+        if first_id.is_none() {
+            first_id = Some(vid.to_owned());
+        }
+        if !want {
+            fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
+        } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
+            .is_ok_and(|text| text.trim() == "1")
+        {
+            has_en = true;
+        } else {
+            // 要开启但该配置未启用：先不改，循环结束后再决定是否启用第一个配置
+        }
+    }
+    if want
+        && !has_en
+        && let Some(fid) = first_id
+    {
+        fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
+    }
+}
+
+/// 不指定编号时下发命令后每秒轮询一次汇总状态，最多 `vpn_wait` 次：启用时到 `up`/`connecting`、停用时到 `down`/空即成功。
+fn wait_legacy(env: &Env, want: bool) -> (i32, String) {
+    let guest = env.run_dir().join("guest/guest");
+    for _ in 0..env.vpn_wait {
+        let vst = fs::read_to_string(guest.join("openvpn.status"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let reached = if want {
+            matches!(vst.as_str(), "up" | "connecting")
+        } else {
+            vst == "down" || vst.is_empty()
+        };
+        if reached {
+            return (0, VPN_OK.to_owned());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    (1, VPN_NO_ACK.to_owned())
+}
+
+/// 不指定编号时整体启用或停用：要求有旧版单份配置，写入总开关并同步各份配置；运行中同步客机、下发命令并等待。
+fn apply_legacy_toggle(env: &Env, act: &str, want: bool) -> (i32, String) {
+    let vpn_dir = env.vpn_dir();
+    let legacy = env.xr_data.join("config/openvpn.ovpn");
+    if !legacy.is_file() {
+        return (1, "{\"ok\":false,\"error\":\"未导入配置\"}".to_owned());
+    }
+    fsx::mkdirs_logged(env, env.xr_data.join("config"));
+    fsx::write_logged(
+        env,
+        env.xr_data.join("config/openvpn.enabled"),
+        if want { "1\n" } else { "0\n" },
+    );
+    legacy_sync_profiles(env, &vpn_dir, want);
+    if !vm::running(env) {
+        if want {
+            return (1, VPN_NOT_RUNNING.to_owned());
+        }
+        return (0, VPN_OK.to_owned());
+    }
+    let host = env.run_dir().join("guest/host");
+    fsx::mkdirs_logged(env, &host);
+    if vpn_dir.is_dir() && vpn_sync_host(env).is_none() {
+        // 检查与同步之间目录被删除：客机侧本轮不更新，只记调试日志
+        dlog_env(env, "vpn", "切换单配置时同步客机配置：配置目录不存在");
+    }
+    if want {
+        fsx::copy_logged(env, &legacy, host.join("openvpn.ovpn"));
+    }
+    fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, act));
+    wait_legacy(env, want)
+}
+
 /// `xr vpn-enable|vpn-disable [ID]`：启用或停用一份配置，同步给客机并等待其应答；不指定编号时停用全部配置，或在没有已启用配置时启用第一份。
 ///
 /// 客机不支持多隧道时启用一份会停用其它配置；返回（退出码, JSON 结果），参数非法返回 2，配置无效、不存在、服务未运行或客机未响应返回 1。
@@ -586,160 +776,11 @@ pub(crate) fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             );
         }
     };
-    let vpn_dir = env.vpn_dir();
-    if !tid.is_empty() {
-        vpn_migrate_legacy(env);
-        if !valid_profile_id(tid) {
-            return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
-        }
-        let ovpn = vpn_dir.join(format!("{tid}.ovpn"));
-        if !fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0) {
-            return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
-        }
-        if !vm::running(env) {
-            if want {
-                return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
-            }
-            fsx::write_logged(env, vpn_dir.join(format!("{tid}.enabled")), "0\n");
-            vpn_mirror_legacy(env);
-            return (0, "{\"ok\":true}".to_owned());
-        }
-        let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
-        if want
-            && !multi
-            && let Ok(rd) = fs::read_dir(&vpn_dir)
-        {
-            for ent in rd.flatten() {
-                let target = ent.path();
-                if target.extension().and_then(|ext_os| ext_os.to_str()) == Some("ovpn")
-                    && let Some(oid) = target.file_stem().and_then(|stem_os| stem_os.to_str())
-                {
-                    fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
-                }
-            }
-        }
-        fsx::write_logged(
-            env,
-            vpn_dir.join(format!("{tid}.enabled")),
-            if want { "1\n" } else { "0\n" },
-        );
-        vpn_mirror_legacy(env);
-        let any = vpn_sync_host(env).unwrap_or(false);
-        let host = env.run_dir().join("guest/host");
-        if want {
-            fsx::copy_logged(env, &ovpn, host.join("openvpn.ovpn"));
-        }
-        let cmd_act = if any { "enable" } else { "disable" };
-        let cmd_line = vpn_next_cmd(env, cmd_act);
-        fsx::write_logged(env, host.join("openvpn.cmd"), &cmd_line);
-        let cmd_trim = cmd_line.trim();
-        let guest = env.run_dir().join("guest/guest");
-        for _ in 0..env.vpn_wait {
-            let ack = fs::read_to_string(guest.join("openvpn.ack")).unwrap_or_default();
-            if ack.trim() == cmd_trim {
-                return (0, "{\"ok\":true}".to_owned());
-            }
-            let vst = fs::read_to_string(guest.join("openvpn.status"))
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
-            let tun = fs::read_to_string(guest.join("openvpn.tunnels")).unwrap_or_default();
-            let conn = fs::read_to_string(guest.join("openvpn.connecting")).unwrap_or_default();
-            let has_tun = tun.contains(&format!("|{tid}|"));
-            let has_conn = conn.lines().any(|line| line.trim() == tid);
-            let is_multi = guest.join("openvpn.multi").is_file();
-            if want {
-                if has_tun || has_conn || (!is_multi && matches!(vst.as_str(), "up" | "connecting"))
-                {
-                    return (0, "{\"ok\":true}".to_owned());
-                }
-            } else if !has_tun && !has_conn && (is_multi || vst == "down" || vst.is_empty()) {
-                return (0, "{\"ok\":true}".to_owned());
-            } else {
-                // 状态尚未到达目标：继续轮询
-            }
-            thread::sleep(Duration::from_secs(1));
-        }
-        return (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned());
+    if tid.is_empty() {
+        apply_legacy_toggle(env, act, want)
+    } else {
+        apply_profile_toggle(env, tid, want)
     }
-
-    let legacy = env.xr_data.join("config/openvpn.ovpn");
-    if !legacy.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"未导入配置\"}".to_owned());
-    }
-    fsx::mkdirs_logged(env, env.xr_data.join("config"));
-    fsx::write_logged(
-        env,
-        env.xr_data.join("config/openvpn.enabled"),
-        if want { "1\n" } else { "0\n" },
-    );
-    if vpn_dir.is_dir()
-        && let Ok(rd) = fs::read_dir(&vpn_dir)
-    {
-        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
-        paths.sort();
-        let mut has_en = false;
-        let mut first_id: Option<String> = None;
-        for file_path in &paths {
-            if file_path.extension().and_then(|raw_name| raw_name.to_str()) == Some("ovpn")
-                && fs::metadata(file_path).is_ok_and(|meta| meta.len() > 0)
-                && let Some(vid) = file_path.file_stem().and_then(|os_str| os_str.to_str())
-            {
-                if first_id.is_none() {
-                    first_id = Some(vid.to_owned());
-                }
-                if !want {
-                    fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
-                } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
-                    .is_ok_and(|text| text.trim() == "1")
-                {
-                    has_en = true;
-                } else {
-                    // 要开启但该配置未启用：先不改，循环结束后再决定是否启用第一个配置
-                }
-            }
-        }
-        if want
-            && !has_en
-            && let Some(fid) = first_id
-        {
-            fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
-        }
-    }
-    if !vm::running(env) {
-        if want {
-            return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
-        }
-        return (0, "{\"ok\":true}".to_owned());
-    }
-    let host = env.run_dir().join("guest/host");
-    fsx::mkdirs_logged(env, &host);
-    if vpn_dir.is_dir() && vpn_sync_host(env).is_none() {
-        // 检查与同步之间目录被删除：客机侧本轮不更新，只记调试日志
-        dlog_env(env, "vpn", "切换单配置时同步客机配置：配置目录不存在");
-    }
-    if want {
-        fsx::copy_logged(env, &legacy, host.join("openvpn.ovpn"));
-    }
-    fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, act));
-    let guest = env.run_dir().join("guest/guest");
-    for _ in 0..env.vpn_wait {
-        let vst = fs::read_to_string(guest.join("openvpn.status"))
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        if want {
-            if matches!(vst.as_str(), "up" | "connecting") {
-                return (0, "{\"ok\":true}".to_owned());
-            }
-        } else if vst == "down" || vst.is_empty() {
-            return (0, "{\"ok\":true}".to_owned());
-        } else {
-            // 状态尚未到达目标：继续轮询
-        }
-        thread::sleep(Duration::from_secs(1));
-    }
-    (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned())
 }
 
 /// `xr vpn-delete <ID>`：删除一份配置，原来启用时同步给客机；返回（退出码, JSON 结果），配置无效或不存在时返回 1。
