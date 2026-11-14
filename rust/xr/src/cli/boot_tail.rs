@@ -6,7 +6,7 @@ use crate::env::Env;
 use crate::out::emit_raw;
 
 fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
-    let sz = fs::metadata(path).map_or(0, |m| m.len());
+    let sz = fs::metadata(path).map_or(0, |meta| meta.len());
     if offset_str == "-1" {
         return (sz, String::new());
     }
@@ -22,19 +22,19 @@ fn tail_from(path: &Path, offset_str: &str) -> (u64, String) {
         return (sz, String::new());
     }
     let to_read = usize::try_from(sz.saturating_sub(off)).unwrap_or(6144);
-    let Ok(mut f) = File::open(path) else {
+    let Ok(mut file) = File::open(path) else {
         return (sz, String::new());
     };
-    if f.seek(SeekFrom::Start(off)).is_err() {
+    if file.seek(SeekFrom::Start(off)).is_err() {
         return (sz, String::new());
     }
     let mut buf = vec![0_u8; to_read];
-    let n = f.read(&mut buf).unwrap_or(0);
+    let n = file.read(&mut buf).unwrap_or(0);
     let slice = buf.get(..n).unwrap_or(&[]);
     let cleaned: Vec<u8> = slice
         .iter()
         .copied()
-        .filter(|&b| b == b'\t' || b == b'\n' || (b >= 0x20 && b != 0x7f))
+        .filter(|&byte| byte == b'\t' || byte == b'\n' || (byte >= 0x20 && byte != 0x7f))
         .collect();
     (sz, String::from_utf8_lossy(&cleaned).into_owned())
 }
