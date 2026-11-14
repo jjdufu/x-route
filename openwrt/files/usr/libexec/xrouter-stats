@@ -1,0 +1,31 @@
+#!/bin/sh
+# XRouter: 运行负载与在线设备（供手机状态页按需读取）。只读、不改系统。
+#   cpu_pct      与上次调用之间的 CPU 占用（无上次或相隔 >60 s 时现采 1 s）
+#   mem_pct      (MemTotal-MemAvailable)/MemTotal
+#   load1        1 分钟平均负载（原样）
+#   uptime       开机秒数
+#   conntrack    连接跟踪条目数（内核未提供时省略）
+#   hs           热点是否由 OpenWrt 接管（on/off）
+#   dev_hotspot  eth1（热点网桥）上 REACHABLE/STALE/DELAY/PROBE 的不同 MAC 数（v4+v6），不读 DHCP 租约
+# 路径可由环境覆盖（仅测试用）；上次 CPU 采样记在客机 tmpfs，不写手机闪存
+PROC="${XRG_PROC:-/proc}"; TMP="${XRG_TMP:-/tmp}/xrouter-stats.cpu"; DEV=eth1
+cpu_line() { awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6; exit}' "$PROC/stat"; }
+now="$(cut -d. -f1 "$PROC/uptime")"
+t1=""; i1=""; at=""
+read -r t1 i1 at 2>/dev/null < "$TMP"
+if [ -z "$at" ] || [ $((now - at)) -gt 60 ]; then
+  c="$(cpu_line)"; t1="${c% *}"; i1="${c#* }"
+  sleep 1
+fi
+c="$(cpu_line)"; t2="${c% *}"; i2="${c#* }"
+echo "$t2 $i2 $now" > "$TMP"
+dt=$((t2 - t1)); di=$((i2 - i1))
+if [ "$dt" -gt 0 ]; then echo "cpu_pct=$(( (dt - di) * 100 / dt ))"; fi
+awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{if(t>0) printf "mem_pct=%d\n", (t-a)*100/t}' "$PROC/meminfo"
+echo "load1=$(cut -d' ' -f1 "$PROC/loadavg")"
+echo "uptime=$now"
+c="$(cat "$PROC/sys/net/netfilter/nf_conntrack_count" 2>/dev/null)"
+if [ -n "$c" ]; then echo "conntrack=$c"; fi
+hs="$(/usr/libexec/xrouter-hotspot status 2>/dev/null | cut -d' ' -f1)"; echo "hs=${hs:-off}"
+n="$( { ip -4 neigh show dev "$DEV"; ip -6 neigh show dev "$DEV"; } 2>/dev/null | awk '/REACHABLE|STALE|DELAY|PROBE/{for(i=1;i<=NF;i++) if($i=="lladdr") print $(i+1)}' | sort -u | wc -l)"
+echo "dev_hotspot=$((n + 0))"

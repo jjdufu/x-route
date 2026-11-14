@@ -4,7 +4,8 @@
 #          按 host/diag.cmd 生成网络快照（guest/diag.txt，已脱敏）；
 #          按 host/hotspot.cmd 接管 / 交还热点网段（guest/hotspot 上报状态）；
 #          按 host/mtu 让 eth0 跟随手机上游 MTU（guest/mtu 上报实际值），全部 tun* 按上游 MTU 扣封装开销；
-#          按 host/time 跟手机对时；按 host/acct.cmd 输出手机 / 热点分来源流量（guest/acct）。
+#          按 host/time 跟手机对时；按 host/acct.cmd 输出手机 / 热点分来源流量（guest/acct）；
+#          按 host/stats.cmd 输出负载与在线设备（guest/stats，guest/stats.cap 为能力标记）。
 # shellcheck disable=SC2034
 START=21
 STOP=15
@@ -119,7 +120,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""; lasttun=""; lasttime=""; lastacct=""
+  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""; lasttun=""; lasttime=""; lastacct=""; laststats=""
   # 上报热点接管能力与状态（手机侧据此判断系统盘是否支持）
   /usr/libexec/xrouter-hotspot status > "${CTL}/guest/hotspot.tmp" && mv -f "${CTL}/guest/hotspot.tmp" "${CTL}/guest/hotspot"
   while :; do
@@ -178,6 +179,14 @@ watch() {
       { echo "ts=${ac#* }"; /usr/libexec/xrouter-acct show; } > "${CTL}/guest/acct.tmp" 2>/dev/null
       mv -f "${CTL}/guest/acct.tmp" "${CTL}/guest/acct"
     fi
+    # stats-cmd-begin：负载与设备，手机侧写 host/stats.cmd="<ts>"，这里输出到 guest/stats（首行回显 ts）；无请求不写
+    sc="$(cat "${CTL}/host/stats.cmd" 2>/dev/null)"
+    if [ -n "$sc" ] && [ "$sc" != "$laststats" ] && [ -x /usr/libexec/xrouter-stats ]; then
+      laststats="$sc"
+      { echo "ts=$sc"; /usr/libexec/xrouter-stats; } > /tmp/xrouter-stats.out 2>/dev/null
+      cp -f /tmp/xrouter-stats.out "${CTL}/guest/stats.tmp" && mv -f "${CTL}/guest/stats.tmp" "${CTL}/guest/stats"
+    fi
+    # stats-cmd-end
     # 调试快照：手机侧写 host/diag.cmd="snap <ts>"，这里生成后整体替换 guest/diag.txt（首行回显 ts）
     dc="$(cat "${CTL}/host/diag.cmd" 2>/dev/null)"
     if [ -n "$dc" ] && [ "$dc" != "$lastdiag" ]; then
@@ -200,6 +209,7 @@ start() {
   fi
   mkdir -p "${CTL}/host" "${CTL}/guest"
   echo 1 > "${CTL}/guest/openvpn.multi"
+  echo 1 > "${CTL}/guest/stats.cap"
   chmod 0755 /etc/openvpn/xrouter-up.sh /etc/openvpn/xrouter-down.sh 2>/dev/null || true
   /usr/libexec/xrouter-ipv6 boot
   /usr/libexec/xrouter-acct init

@@ -229,4 +229,41 @@ chk 'grep -qx "inet fw4 oc_v4 3" "$T/diag.out"'
 chk 'grep -qx "## 监听端口" "$T/diag.out" && grep -qx "172.29.233.254:22" "$T/diag.out" && grep -qx ":::80" "$T/diag.out" && grep -q "无 tentative/dadfailed 地址" "$T/diag.out"'
 chk '! grep -q "## nft（前 400 行）" "$T/diag.out"'
 
+# 10. xrouter-stats：CPU 两次采样差值、内存占用、邻居表去重计数（FAILED 不计），第二次调用不 sleep；watch 循环按 host/stats.cmd 应答（需求 8）
+P="$T/stproc"; mkdir -p "$P/sys/net/netfilter" "$T/stbin" "$T/sttmp"
+echo "cpu  100 0 100 700 100 0 0 0 0 0" > "$P/stat"
+printf 'MemTotal:       1000 kB\nMemFree:         100 kB\nMemAvailable:    570 kB\n' > "$P/meminfo"
+echo "0.15 0.10 0.05 1/80 123" > "$P/loadavg"
+echo "19967.12 30000.00" > "$P/uptime"
+echo 123 > "$P/sys/net/netfilter/nf_conntrack_count"
+cat > "$T/stbin/ip" <<'EOS'
+#!/bin/sh
+case "$*" in
+  "-4 neigh show dev eth1") printf '%s\n' "192.168.9.2 lladdr aa:bb:cc:dd:ee:01 REACHABLE" "192.168.9.3 lladdr aa:bb:cc:dd:ee:02 FAILED" ;;
+  "-6 neigh show dev eth1") echo "fe80::1 lladdr aa:bb:cc:dd:ee:01 STALE" ;;
+esac
+EOS
+printf '#!/bin/sh\necho "sleep $*" >> "%s/sleep.calls"\n' "$T" > "$T/stbin/sleep"
+chmod +x "$T/stbin/"*
+ST="sh $LX/xrouter-stats"
+XRG_PROC="$P" XRG_TMP="$T/sttmp" PATH="$T/stbin:$PATH" $ST > "$T/st1.out"
+chk '[ "$(cat "$T/sleep.calls")" = "sleep 1" ] && ! grep -q "^cpu_pct=" "$T/st1.out"'
+echo "cpu  200 0 150 1000 100 0 0 0 0 0" > "$P/stat"
+XRG_PROC="$P" XRG_TMP="$T/sttmp" PATH="$T/stbin:$PATH" $ST > "$T/st2.out"
+chk '[ "$(grep -c . "$T/sleep.calls")" = 1 ]'   # 第二次调用有上次采样：不 sleep
+chk '[ "$(cat "$T/st2.out")" = "$(printf "cpu_pct=33\nmem_pct=43\nload1=0.15\nuptime=19967\nconntrack=123\nhs=off\ndev_hotspot=1")" ]'
+mkdir -p "$T/stw/ctl/host" "$T/stw/ctl/guest"
+printf '#!/bin/sh\necho cpu_pct=5\n' > "$T/stw/xrouter-stats"; chmod +x "$T/stw/xrouter-stats"
+sed -n '/# stats-cmd-begin/,/# stats-cmd-end/p' "$VPN_INIT" | sed -e "s#/usr/libexec/xrouter-stats#$T/stw/xrouter-stats#g" -e "s#/tmp/xrouter-stats.out#$T/stw/out#g" > "$T/stw/step.sh"
+chk '[ "$(grep -c . "$T/stw/step.sh")" -ge 6 ]'
+printf 'laststats=""\n. "%s/stw/step.sh"\n' "$T" > "$T/stw/round.sh"
+CTL="$T/stw/ctl" sh "$T/stw/round.sh"
+chk '[ ! -e "$T/stw/ctl/guest/stats" ]'   # 无请求不写
+echo 111 > "$T/stw/ctl/host/stats.cmd"
+printf 'laststats=""\n. "%s/stw/step.sh"\ntouch -t 200001010000 "$CTL/guest/stats"\n. "%s/stw/step.sh"\n' "$T" "$T" > "$T/stw/round.sh"
+CTL="$T/stw/ctl" sh "$T/stw/round.sh"
+chk '[ "$(head -n 1 "$T/stw/ctl/guest/stats")" = ts=111 ] && grep -qx cpu_pct=5 "$T/stw/ctl/guest/stats" && [ ! -e "$T/stw/ctl/guest/stats.tmp" ]'
+chk '[ -n "$(find "$T/stw/ctl/guest/stats" -mtime +1000)" ]'   # 同一请求第二轮不重写
+chk 'grep -q "echo 1 > \"\${CTL}/guest/stats.cap\"" "$VPN_INIT"'
+
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi
