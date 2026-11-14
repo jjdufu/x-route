@@ -9,6 +9,7 @@ pub mod diag;
 pub mod env;
 pub mod log;
 pub mod net;
+pub(crate) mod out;
 pub mod sys;
 pub mod traffic;
 pub mod uninstall;
