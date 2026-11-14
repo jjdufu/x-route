@@ -81,23 +81,28 @@ pub(crate) fn status(env: &Env, alive: bool) -> Status {
     st
 }
 
+/// 结束进程号为 `pid` 的复用进程：先 `TERM`，1 秒内未退出再 `KILL`；进程号为空或进程已不在时什么都不做。
+fn terminate_mux(env: &Env, pid: &str) {
+    if pid.is_empty() || !is_pid_running(env, pid) {
+        return;
+    }
+    send_signal_logged(env, pid, Signal::TERM);
+    for _ in 0_i32..10_i32 {
+        if !is_pid_running(env, pid) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    if is_pid_running(env, pid) {
+        send_signal_logged(env, pid, Signal::KILL);
+    }
+}
+
 /// 停止复用进程：先 `TERM`，1 秒内未退出再 `KILL`，然后删除其进程号、就绪标记与两个套接字。
 pub(crate) fn stop_clash_mux(env: &Env) {
     let run = env.run_dir();
     if let Ok(pid_raw) = fs::read_to_string(run.join("clash_mux.pid")) {
-        let pid = pid_raw.trim();
-        if !pid.is_empty() && is_pid_running(env, pid) {
-            send_signal_logged(env, pid, Signal::TERM);
-            for _ in 0_i32..10_i32 {
-                if !is_pid_running(env, pid) {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
-            if is_pid_running(env, pid) {
-                send_signal_logged(env, pid, Signal::KILL);
-            }
-        }
+        terminate_mux(env, pid_raw.trim());
     }
     for name in [
         "clash_mux.pid",
@@ -787,13 +792,11 @@ pub(crate) fn run_clash_bridge(env: &Env) -> i32 {
         let mut line = String::new();
         loop {
             line.clear();
-            match br.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    if stdout.write_all(line.as_bytes()).is_err() || stdout.flush().is_err() {
-                        break;
-                    }
-                }
+            if !matches!(br.read_line(&mut line), Ok(n) if n > 0)
+                || stdout.write_all(line.as_bytes()).is_err()
+                || stdout.flush().is_err()
+            {
+                break;
             }
         }
     });
@@ -955,6 +958,17 @@ pub(crate) fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     }
 }
 
+/// 流里的一行是否表示流结束：`ws_close`，或打开请求（`id` 为 `open`）失败；不是 JSON 时不算。
+fn stream_ended(line: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return false;
+    };
+    let is_close = value.get("op").and_then(Value::as_str) == Some("ws_close");
+    let open_fail = value.get("id").and_then(Value::as_str) == Some("open")
+        && value.get("ok").and_then(Value::as_bool) == Some(false);
+    is_close || open_fail
+}
+
 /// `xr clash-stream <ws_id> <path>`：打开一个到 `OpenClash` 接口的 ws，并把收到的消息逐行输出直到关闭。
 ///
 /// 参数非法时返回 2。
@@ -999,13 +1013,8 @@ pub(crate) fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
                     // WebUI 已关闭读端：结束流（原来的打印宏在此 panic 中止）
                     return out::finish(env, Err(err), 0);
                 }
-                if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
-                    let is_close = value.get("op").and_then(Value::as_str) == Some("ws_close");
-                    let open_fail = value.get("id").and_then(Value::as_str) == Some("open")
-                        && value.get("ok").and_then(Value::as_bool) == Some(false);
-                    if is_close || open_fail {
-                        break;
-                    }
+                if stream_ended(&line) {
+                    break;
                 }
             }
         }
