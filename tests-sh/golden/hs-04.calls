@@ -1,0 +1,356 @@
+ip rule
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+iptables -t nat -F XR_NAT
+iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+ip link set xr0 mtu 1500
+iptables -t mangle -N XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C POSTROUTING -j XR_MSS
+ip6tables -t mangle -N XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -C POSTROUTING -j XR_MSS
+ip route show table local_network
+ip route show table local_network
+ip -4 -o addr show dev rmnet_data2
+ip -6 -o addr show dev rmnet_data2
+ip -4 -o addr show dev wlan1
+ip -6 -o addr show dev wlan1
+iptables -N XR_ACCT_UP
+iptables -S XR_ACCT_UP
+iptables -C INPUT -i xr0 -j XR_ACCT
+iptables -C OUTPUT -o xr0 -j XR_ACCT
+ip6tables -S XR_ACCT6_UP
+iptables -F XR_FWD
+iptables -S XR_ACCT_UP
+iptables -A XR_FWD -j XR_ACCT
+iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT
+iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+iptables -A XR_FWD -i wlan1 -o xr0 -j ACCEPT
+iptables -A XR_FWD -i xr0 -o wlan1 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o rmnet_data2 -j DROP
+iptables -A XR_FWD -o xr0 -j DROP
+iptables -A XR_FWD -i xr0 -j DROP
+iptables -S FORWARD
+ip route show table local_network
+ip -4 -o addr show dev wlan1
+ip route show table local_network
+ip rule del pref 4790
+ip route flush table 234
+iptables -D OUTPUT -j XR_HS
+iptables -D OUTPUT -j XR_HS
+iptables -F XR_HS
+iptables -X XR_HS
+ip6tables -D OUTPUT -j XR_HS6
+ip6tables -D OUTPUT -j XR_HS6
+ip6tables -F XR_HS6
+ip6tables -X XR_HS6
+ip -6 rule del pref 19050
+ip -6 route flush table 234
+ip6tables -D XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -D XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -D XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -D XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip link del xrbr1
+ip -4 -o addr show dev wlan1
+ip route show table local_network
+ip -6 -o addr show dev wlan1 scope link
+ip -4 neigh show dev wlan1
+ip link show xrbr1
+ip link set xrbr1 type bridge forward_delay 0 stp_state 0
+ip link set xrbr1 up
+ip link set xr1 master xrbr1
+ip link set wlan1 master xrbr1
+iptables -N XR_HS
+iptables -F XR_HS
+iptables -A XR_HS -o wlan1 -p udp --sport 67 -j DROP
+iptables -C OUTPUT -j XR_HS
+iptables -I OUTPUT 1 -j XR_HS
+ip6tables -N XR_HS6
+ip6tables -F XR_HS6
+ip6tables -A XR_HS6 -o wlan1 -p icmpv6 --icmpv6-type router-advertisement -j DROP
+ip6tables -A XR_HS6 -o wlan1 -p udp --sport 547 -j DROP
+ip6tables -C OUTPUT -j XR_HS6
+ip6tables -I OUTPUT 1 -j XR_HS6
+ip -6 rule del pref 19050
+ip -6 route replace default dev xr0 table 234
+ip -6 rule add pref 19050 iif xrbr1 lookup 234
+ip rule del pref 4790
+ip route flush table 234
+ip6tables -I XR_FWD6 1 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -I XR_FWD6 1 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ndc tether offload disable
+ip route show table local_network
+ip -6 -o addr show dev rmnet_data2
+ip -6 -o addr show dev wlan1
+ip route show table local_network
+ip6tables -F XR_FWD6
+ip6tables -S XR_ACCT6_UP
+ip6tables -A XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -d fd7a:7872:e9::/64 -j ACCEPT
+ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -j DROP
+ip6tables -A XR_FWD6 -i xr0 -j DROP
+ip6tables -S FORWARD
+ip route flush table 233
+ip route show table local_network
+ip -4 route show dev rmnet_data2
+ip -4 route show dev wlan1
+ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 233
+ip rule del pref 19100
+ip rule add pref 19100 lookup 233
+ip -6 route flush table 233
+ip -6 route show table main dev rmnet_data2
+ip -6 route show table local_network dev rmnet_data2
+ip -6 route show table main dev wlan1
+ip -6 route show table local_network dev wlan1
+ip -6 route replace unreachable default table 233
+ip -6 rule del pref 19100
+ip -6 rule add pref 19100 lookup 233
+ip -6 rule del pref 19060
+ip -6 route flush table 235
+ip -6 route replace default dev xr0 table 235
+ip -6 rule add pref 19060 iif wlan1 lookup 235
+ip rule
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+iptables -t nat -F XR_NAT
+iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+ip link set xr0 mtu 1500
+iptables -t mangle -N XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C POSTROUTING -j XR_MSS
+ip6tables -t mangle -N XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -C POSTROUTING -j XR_MSS
+ip route show table local_network
+ip route show table local_network
+ip -4 -o addr show dev rmnet_data2
+ip -6 -o addr show dev rmnet_data2
+ip -4 -o addr show dev wlan1
+ip -6 -o addr show dev wlan1
+iptables -N XR_ACCT_UP
+iptables -S XR_ACCT_UP
+iptables -C INPUT -i xr0 -j XR_ACCT
+iptables -C OUTPUT -o xr0 -j XR_ACCT
+ip6tables -S XR_ACCT6_UP
+iptables -F XR_FWD
+iptables -S XR_ACCT_UP
+iptables -A XR_FWD -j XR_ACCT
+iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT
+iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+iptables -A XR_FWD -i wlan1 -o xr0 -j ACCEPT
+iptables -A XR_FWD -i xr0 -o wlan1 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o rmnet_data2 -j DROP
+iptables -A XR_FWD -o xr0 -j DROP
+iptables -A XR_FWD -i xr0 -j DROP
+iptables -S FORWARD
+ip route show table local_network
+ip -4 -o addr show dev wlan1
+ip route show table local_network
+iptables -C OUTPUT -j XR_HS
+ip6tables -C OUTPUT -j XR_HS6
+ip route show table local_network
+ip -6 -o addr show dev rmnet_data2
+ip -6 -o addr show dev wlan1
+ip route show table local_network
+ip6tables -F XR_FWD6
+ip6tables -S XR_ACCT6_UP
+ip6tables -A XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -d fd7a:7872:e9::/64 -j ACCEPT
+ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -j DROP
+ip6tables -A XR_FWD6 -i xr0 -j DROP
+ip6tables -S FORWARD
+ip route flush table 233
+ip route show table local_network
+ip -4 route show dev rmnet_data2
+ip -4 route show dev wlan1
+ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 233
+ip rule del pref 19100
+ip rule add pref 19100 lookup 233
+ip -6 route flush table 233
+ip -6 route show table main dev rmnet_data2
+ip -6 route show table local_network dev rmnet_data2
+ip -6 route show table main dev wlan1
+ip -6 route show table local_network dev wlan1
+ip -6 route replace unreachable default table 233
+ip -6 rule del pref 19100
+ip -6 rule add pref 19100 lookup 233
+ip -6 rule del pref 19060
+ip -6 route flush table 235
+ip -6 route replace default dev xr0 table 235
+ip -6 rule add pref 19060 iif wlan1 lookup 235
+ip route show table local_network
+ip -4 -o addr show
+ip rule
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+iptables -t nat -F XR_NAT
+iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+ip link set xr0 mtu 1500
+iptables -t mangle -N XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C POSTROUTING -j XR_MSS
+ip6tables -t mangle -N XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -C POSTROUTING -j XR_MSS
+ip route show table local_network
+ip route show table local_network
+ip -4 -o addr show dev rmnet_data2
+ip -6 -o addr show dev rmnet_data2
+ip -4 -o addr show dev wlan1
+ip -6 -o addr show dev wlan1
+iptables -N XR_ACCT_UP
+iptables -S XR_ACCT_UP
+iptables -C INPUT -i xr0 -j XR_ACCT
+iptables -C OUTPUT -o xr0 -j XR_ACCT
+ip6tables -S XR_ACCT6_UP
+iptables -F XR_FWD
+iptables -S XR_ACCT_UP
+iptables -A XR_FWD -j XR_ACCT
+iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT
+iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+iptables -A XR_FWD -i wlan1 -o xr0 -j ACCEPT
+iptables -A XR_FWD -i xr0 -o wlan1 -j ACCEPT
+iptables -A XR_FWD -i wlan1 -o rmnet_data2 -j DROP
+iptables -A XR_FWD -o xr0 -j DROP
+iptables -A XR_FWD -i xr0 -j DROP
+iptables -S FORWARD
+ip route show table local_network
+ip -4 -o addr show dev wlan1
+ip route show table local_network
+ip -4 -o addr show
+ip rule del pref 4790
+ip route flush table 234
+iptables -D OUTPUT -j XR_HS
+iptables -D OUTPUT -j XR_HS
+iptables -F XR_HS
+iptables -X XR_HS
+ip6tables -D OUTPUT -j XR_HS6
+ip6tables -D OUTPUT -j XR_HS6
+ip6tables -F XR_HS6
+ip6tables -X XR_HS6
+ip -6 rule del pref 19050
+ip -6 route flush table 234
+ip6tables -D XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -D XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -D XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -D XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip link del xrbr1
+ip -4 -o addr show dev wlan1
+ip route show table local_network
+ip -4 -o addr show
+ip -6 -o addr show dev wlan1 scope link
+ip -4 neigh show dev wlan1
+ip link show xrbr1
+ip link set xrbr1 type bridge forward_delay 0 stp_state 0
+ip link set xrbr1 up
+ip link set xr1 master xrbr1
+ip link set wlan1 master xrbr1
+iptables -N XR_HS
+iptables -F XR_HS
+iptables -A XR_HS -o wlan1 -p udp --sport 67 -j DROP
+iptables -C OUTPUT -j XR_HS
+iptables -I OUTPUT 1 -j XR_HS
+ip6tables -N XR_HS6
+ip6tables -F XR_HS6
+ip6tables -A XR_HS6 -o wlan1 -p icmpv6 --icmpv6-type router-advertisement -j DROP
+ip6tables -A XR_HS6 -o wlan1 -p udp --sport 547 -j DROP
+ip6tables -C OUTPUT -j XR_HS6
+ip6tables -I OUTPUT 1 -j XR_HS6
+ip -6 rule del pref 19050
+ip -6 route replace default dev xr0 table 234
+ip -6 rule add pref 19050 iif xrbr1 lookup 234
+ip rule del pref 4790
+ip route flush table 234
+ip route replace 10.233.0.0/24 via 172.29.233.254 dev xr0 table 234
+ip rule add pref 4790 to 10.233.0.0/24 lookup 234
+ip6tables -I XR_FWD6 1 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -I XR_FWD6 1 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ndc tether offload disable
+ip route show table local_network
+ip -6 -o addr show dev rmnet_data2
+ip -6 -o addr show dev wlan1
+ip route show table local_network
+ip6tables -F XR_FWD6
+ip6tables -S XR_ACCT6_UP
+ip6tables -A XR_FWD6 -i xrbr1 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i xrbr1 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -d fd7a:7872:e9::/64 -j ACCEPT
+ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
+ip route show table local_network
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o xr0 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -j REJECT --reject-with icmp6-adm-prohibited
+ip6tables -A XR_FWD6 -o xr0 -j DROP
+ip6tables -A XR_FWD6 -i xr0 -j DROP
+ip6tables -S FORWARD
+ip route flush table 233
+ip route show table local_network
+ip -4 route show dev rmnet_data2
+ip -4 route show dev wlan1
+ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 233
+ip rule del pref 19100
+ip rule add pref 19100 lookup 233
+ip -6 route flush table 233
+ip -6 route show table main dev rmnet_data2
+ip -6 route show table local_network dev rmnet_data2
+ip -6 route show table main dev wlan1
+ip -6 route show table local_network dev wlan1
+ip -6 route replace unreachable default table 233
+ip -6 rule del pref 19100
+ip -6 rule add pref 19100 lookup 233
+ip -6 rule del pref 19060
+ip -6 route flush table 235
+ip -6 route replace default dev xr0 table 235
+ip -6 rule add pref 19060 iif wlan1 lookup 235

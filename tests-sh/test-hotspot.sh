@@ -13,6 +13,13 @@ echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
 cp "$ROOT/module/config/config.conf" "$CONF"
 NET="sh $ROOT/module/scripts/net.sh"
 XR="sh $ROOT/module/scripts/xr"
+# 调用序列金样（tests-sh/golden/hs-NN.calls）：每次清空 $MOCK/calls 之前与金样逐行比对；
+# XR_GOLDEN_RECORD=1 时改为录制。临时目录路径替换为 @T@。
+GOLD="$ROOT/tests-sh/golden"; seg=0
+golden() { touch "$MOCK/calls"; sed -e "s#$T#@T@#g" "$MOCK/calls" > "$T/golden.cur"
+  if [ -n "${XR_GOLDEN_RECORD:-}" ]; then mkdir -p "$GOLD"; cp "$T/golden.cur" "$GOLD/$1.calls"
+  elif ! diff -u "$GOLD/$1.calls" "$T/golden.cur"; then echo "FAIL: 调用序列金样 $1"; fail=1; fi; }
+rst() { seg=$((seg+1)); golden "hs-$(printf %02d "$seg")"; : > "$MOCK/calls"; }
 
 # 虚拟机视为就绪；手机侧网卡：wlan1 = 热点（Wi-Fi、up），xr1 = 虚拟机第二块网卡
 mkdir -p "$T/proc/4321"
@@ -38,7 +45,7 @@ bridged() { ln -sfn ../xrbr1 "$T/sysnet/wlan1/master"; ln -sfn ../xrbr1 "$T/sysn
 unbridged() { rm -rf "$T/sysnet/wlan1/master" "$T/sysnet/xr1/master" "$T/sysnet/xrbr1"; }
 
 # 1. 跟随安卓（XR_HOTSPOT_SUBNET 为空）：OpenWrt 接管安卓网关，不加 4790 规则
-$XR internal set-kv XR_HOTSPOT_SUBNET "" >/dev/null; : > "$MOCK/calls"
+$XR internal set-kv XR_HOTSPOT_SUBNET "" >/dev/null; rst
 $NET sync; bridged
 chk 'grep -q "^on 192.168.43.1/24 " "$RUN/guest/host/hotspot.cmd" && ! grep -q "+" "$RUN/guest/host/hotspot.cmd"'
 chk '[ "$(cat "$RUN/net.hs_gw")" = 192.168.43.1/24 ] && [ "$(cat "$RUN/net.hs_cidr")" = 192.168.43.1/24 ]'
@@ -47,7 +54,7 @@ chk '! grep -q "rule add pref 4790" "$MOCK/calls"'
 c0="$(cat "$RUN/guest/host/hotspot.cmd")"; $NET sync; chk '[ "$(cat "$RUN/guest/host/hotspot.cmd")" = "$c0" ]'
 
 # 2. 改为固定网段：自动拆桥重桥，OpenWrt 用固定网段并保留安卓原网关；手机经 xr0 访问固定网段
-$XR internal set-kv XR_HOTSPOT_SUBNET "10.233.0.1/24" >/dev/null; : > "$MOCK/calls"
+$XR internal set-kv XR_HOTSPOT_SUBNET "10.233.0.1/24" >/dev/null; rst
 $NET sync; bridged
 chk 'grep -q "^on 10.233.0.1/24 +192.168.43.1/24 " "$RUN/guest/host/hotspot.cmd"'
 chk '[ "$(cat "$RUN/net.hs_gw")" = 10.233.0.1/24 ] && [ "$(cat "$RUN/net.hs_cidr")" = 192.168.43.1/24 ]'
@@ -61,7 +68,7 @@ echo "20: wlan0    inet 10.233.0.88/24 scope global wlan0" > "$T/addr.all"
 mkdir -p "$T/sb"; cp -a "$ROOT/tests-sh/mock/net/." "$T/sb/"
 printf '#!/bin/sh\ncase "$*" in "-4 -o addr show") cat "%s/addr.all" "%s/addr.wlan1" ;; *) exec "%s/ip" "$@" ;; esac\n' "$T" "$MOCK" "$ROOT/tests-sh/mock/net" > "$T/sb/ip"
 chmod +x "$T/sb/ip"
-unbridged; : > "$MOCK/calls"
+unbridged; rst
 XR_SYSBIN="$T/sb" $NET sync; bridged
 chk 'grep -q "^on 192.168.43.1/24 " "$RUN/guest/host/hotspot.cmd" && [ "$(cat "$RUN/net.hs_gw")" = 192.168.43.1/24 ]'
 chk '[ "$(grep -c "与 wlan0 10.233.0.88/24 冲突" "$LOG")" = 1 ]'
@@ -70,7 +77,7 @@ XR_SYSBIN="$T/sb" $NET sync; chk '[ "$(grep -c "与 wlan0 10.233.0.88/24 冲突"
 # 4. 拆桥：关闭热点桥接后，清掉 4790 规则与表 234，记录文件全部删除
 $XR internal set-kv XR_HOTSPOT_SUBNET "10.233.0.1/24" >/dev/null
 unbridged; $NET sync; bridged
-: > "$MOCK/calls"
+rst
 $XR internal set-kv XR_HOTSPOT_BRIDGE 0 >/dev/null
 $NET sync
 chk 'grep -q "^ip route flush table 234" "$MOCK/calls" && [ ! -f "$RUN/net.hs_gw" ] && [ ! -f "$RUN/net.hs_if" ]'
@@ -81,4 +88,5 @@ eval "$(sed -n '/^okcidr()/,/^}/p; /^net_of()/,/^}/p' "$OW")"
 chk 'okcidr 10.233.0.1/24 && okcidr 192.168.43.1/30 && ! okcidr 10.233.0.1/31 && ! okcidr 10.233.0.1 && ! okcidr "10.233.0.1/24;x" && ! okcidr 10.233.0.256/24'
 chk '[ "$(net_of 10.233.0.1 24)" = 10.233.0.0/24 ]'
 
+rst
 if [ "$fail" = 0 ]; then echo "test-hotspot OK"; else echo "test-hotspot FAILED"; exit 1; fi

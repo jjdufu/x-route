@@ -1,0 +1,70 @@
+ip link del xr1
+ip rule del pref 19100
+ip route flush table 233
+ip -6 rule del pref 19100
+ip -6 route flush table 233
+ip -6 rule del pref 19060
+ip -6 route flush table 235
+iptables -D FORWARD -j XR_FWD
+iptables -D FORWARD -j XR_FWD
+iptables -F XR_FWD
+iptables -X XR_FWD
+iptables -t nat -D POSTROUTING -j XR_NAT
+iptables -t nat -D POSTROUTING -j XR_NAT
+iptables -t nat -F XR_NAT
+iptables -t nat -X XR_NAT
+ndc ipfwd remove xr0 rmnet_data2
+ip6tables -D FORWARD -j XR_FWD6
+ip6tables -D FORWARD -j XR_FWD6
+ip6tables -F XR_FWD6
+ip6tables -X XR_FWD6
+ip6tables -t nat -D POSTROUTING -j XR_NAT6
+ip6tables -t nat -F XR_NAT6
+ip6tables -t nat -X XR_NAT6
+iptables -t mangle -D POSTROUTING -j XR_MSS
+iptables -t mangle -D POSTROUTING -j XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -X XR_MSS
+ip6tables -t mangle -D POSTROUTING -j XR_MSS
+ip6tables -t mangle -D POSTROUTING -j XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -X XR_MSS
+iptables -S XR_ACCT_UP
+iptables -nvxL XR_ACCT_UP
+iptables -nvxL XR_ACCT_DN
+ip6tables -S XR_ACCT6_UP
+ip6tables -nvxL XR_ACCT6_UP
+ip6tables -nvxL XR_ACCT6_DN
+iptables -D INPUT -i xr0 -j XR_ACCT
+iptables -D INPUT -i xr0 -j XR_ACCT
+iptables -D OUTPUT -o xr0 -j XR_ACCT
+iptables -D OUTPUT -o xr0 -j XR_ACCT
+iptables -F XR_ACCT
+iptables -F XR_ACCT_UP
+iptables -F XR_ACCT_DN
+iptables -X XR_ACCT
+iptables -X XR_ACCT_UP
+iptables -X XR_ACCT_DN
+ip6tables -D INPUT -i xr0 -j XR_ACCT6
+ip6tables -D INPUT -i xr0 -j XR_ACCT6
+ip6tables -D OUTPUT -o xr0 -j XR_ACCT6
+ip6tables -D OUTPUT -o xr0 -j XR_ACCT6
+ip6tables -F XR_ACCT6
+ip6tables -F XR_ACCT6_UP
+ip6tables -F XR_ACCT6_DN
+ip6tables -X XR_ACCT6
+ip6tables -X XR_ACCT6_UP
+ip6tables -X XR_ACCT6_DN
+ip rule del pref 18800
+ip -6 rule del pref 18800
+ip rule del pref 18900
+ip -6 rule del pref 18900
+ip rule del pref 4800
+ip -6 rule del pref 4800
+ndc ipfwd disable xrouter
+ndc network route remove local xr0 172.29.233.0/24
+ndc network route remove local xr0 fd7a:7872:e9::/64
+ndc network interface remove local xr0
+ip route flush table 97 dev xr0
+ip -6 route flush table 97 dev xr0
+ip link del xr0

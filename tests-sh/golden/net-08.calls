@@ -1,0 +1,60 @@
+ip rule
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+iptables -t nat -F XR_NAT
+iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+ip link set xr0 mtu 1500
+iptables -t mangle -N XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C POSTROUTING -j XR_MSS
+ip6tables -t mangle -N XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -C POSTROUTING -j XR_MSS
+ip route show table local_network
+ip -4 -o addr show dev rmnet_data2
+ip -6 -o addr show dev rmnet_data2
+ip -4 -o addr show dev wlan1
+ip -6 -o addr show dev wlan1
+iptables -N XR_ACCT_UP
+ip6tables -N XR_ACCT6_UP
+iptables -S XR_ACCT_UP
+iptables -C INPUT -i xr0 -j XR_ACCT
+iptables -C OUTPUT -o xr0 -j XR_ACCT
+ip6tables -S XR_ACCT6_UP
+ip6tables -C INPUT -i xr0 -j XR_ACCT6
+ip6tables -C OUTPUT -o xr0 -j XR_ACCT6
+iptables -F XR_FWD
+iptables -S XR_ACCT_UP
+iptables -A XR_FWD -j XR_ACCT
+iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
+iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
+iptables -A XR_FWD -o xr0 -j DROP
+iptables -A XR_FWD -i xr0 -j DROP
+iptables -S FORWARD
+ip route show table local_network
+ip -6 -o addr show dev rmnet_data2
+ip -6 -o addr show dev wlan1
+ip route show table local_network
+ip6tables -F XR_FWD6
+ip6tables -S XR_ACCT6_UP
+ip6tables -A XR_FWD6 -j XR_ACCT6
+ip6tables -A XR_FWD6 -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
+ip6tables -A XR_FWD6 -o xr0 -j DROP
+ip6tables -A XR_FWD6 -i xr0 -j DROP
+ip6tables -S FORWARD
+ip rule del pref 19100
+ip route flush table 233
+ip -6 rule del pref 19100
+ip -6 route flush table 233
+ip -6 rule del pref 19060
+ip -6 route flush table 235
