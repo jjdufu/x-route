@@ -1,0 +1,12 @@
+普通行保留
+<已隐去证书或密钥>
+<已隐去证书或密钥>
+<connection>非密钥标签保留</connection>
+访问 <URL> 与 <URL>
+password=<已隐去> Passwd: <已隐去> "token" = <已隐去> secret:<已隐去> psk=<已隐去> private_key=<已隐去> preshared-key=k2 auth-user-pass /etc/x
+	option password <已隐去>
+option key <已隐去>
+option ssid MyWifi
+TCP link remote: [AF_INET]<VPN服务器>
+TCPv6 [AF_INET]<VPN服务器>
+连接 <VPN服务器> 与 <VPN服务器> 正常

@@ -1,0 +1,21 @@
+普通行保留
+-----BEGIN CERTIFICATE----- 单行证书 -----END CERTIFICATE-----
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASC
+-----END PRIVATE KEY-----
+<ca>
+MIIDazCCAlOgAwIBAgIU
+</ca>
+<tls-crypt-v2>内联同一行</tls-crypt-v2>
+  <key>
+  secretbody
+  </key>
+<connection>非密钥标签保留</connection>
+访问 https://user:pw@example.com/path?q=1 与 ftp://files.example.net/a
+password=hunter2 Passwd: abc "token" = xyz secret:s3 psk=p private_key=k1 preshared-key=k2 auth-user-pass /etc/x
+	option password 'abc'
+option key mykey
+option ssid MyWifi
+TCP link remote: [AF_INET]203.0.113.5:1194
+TCPv6 [AF_INET6]2001:db8::1:1194
+连接 vpn.example.com 与 b.example.org 正常
