@@ -7,6 +7,11 @@
 - 内核内建 BBR 并设为默认拥塞控制。网卡开启 TSO / GSO / GRO，不启用软件流量卸载。根分区使用 noatime 并定期 fstrim。虚拟机时钟跟随手机。
 - 日志统一导出为 zip。保活通知只显示在通知栏，不在锁屏显示。制品与界面文案将「虚拟机」改为「服务」。
 - WebUI 采用 Google Material Design 3（M3 Expressive）规范与官方组件，支持跟随系统及深浅色切换、默认三栏底栏导航（状态 · 网络 · 系统）、首页色阶状态主卡（含三阶段启动步骤条与波浪进度指示器）、状态页累计流量汇总与按需分源详情弹窗、系统页可折叠关于（含立即卸载与「分流管理」开关）及触感返回反馈；当 OpenClash 核心运行且存在 zashboard 并启用「分流管理」时，底部在「网络」与「系统」之间动态显示「分流」页，经由纯内部 `hvc1` 通道无 IP 直连内嵌 zashboard。
+- 状态页一屏总览：实时上传和下载速率（由手机侧 iptables 计数在内存中计算，不落盘）、OpenWrt CPU、内存和负载、在线设备数（本机加热点，按邻居表统计，设备离开后会延迟几分钟才减少）、累计流量。
+- 配置备份：在系统页「配置备份」中导出或导入明文 zip，内容包括手机侧设置、VPN 配置和 OpenWrt 的 sysupgrade 备份。导入后服务会自动重启。服务必须在运行，并且需要新系统盘。**备份文件包含密码和密钥，请妥善保管。**
+- 流量快照：变化达到 64 MiB 或满 30 分钟时才写入闪存；正常停止和关机时会立即写入。意外掉电最多丢失这一区间内的计数。
+- 日志和导出文件名使用手机本地时区。
+- VPN 推送的网段如果与当前 Wi-Fi 同网段，会显示「本地直连」，表示不经过 VPN；切换网络后自动恢复。
 
 ## 安装
 
@@ -19,6 +24,9 @@
 ```sh
 XR="sh /data/adb/modules/xrouter/scripts/xr"
 $XR start | stop | status-json
+$XR config-export                    # 导出到 Download/xrouter-config-<时间>.zip
+$XR config-import <zip> [--restart]  # 导入；--restart 立即重启服务
+$XR guest-stats                      # 调试：读取 OpenWrt 负载与设备
 ```
 
 ## 构建
@@ -29,6 +37,8 @@ bash scripts/build-rootfs.sh
 bash scripts/package-module.sh
 sh scripts/lint.sh
 ```
+
+Rust 工具链由根目录 `rust-toolchain.toml` 锁定为 1.100.0（edition 2024），首次构建时 rustup 会自动安装。
 
 Rust 改动以 `bash scripts/gate.sh` 全绿为准，标准见 [`docs/门禁-Rust最严Lint.md`](docs/门禁-Rust最严Lint.md)。
 

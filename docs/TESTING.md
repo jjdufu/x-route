@@ -1,6 +1,6 @@
 # XRouter 真机测试清单
 
-只在用户的测试手机上，并且得到用户同意后执行。每一项都记录：结果（通过 / 失败）、相关日志片段（设置 → 日志 → 日志导出 / 诊断导出，或 `xr log-export` / `xr diag-export`，导出到 Download 的 .tar.gz）、发现的问题。不记录 IMEI、序列号、证书和密码。
+只在用户的测试手机上，并且得到用户同意后执行。每一项都记录：结果（通过 / 失败）、相关日志片段（设置 → 日志 → 日志导出 / 诊断导出，或 `xr log-export` / `xr diag-export`，导出到 Download 的 .zip）、发现的问题。不记录 IMEI、序列号、证书和密码。
 
 ## 0 前置检查（在安装之前，只读）
 
@@ -18,7 +18,7 @@
 2. 刷入 `xrouter-sukisu-full-<版本>.zip`：安装日志显示空间检查通过；`images/` 下有 `Image`、`openwrt-rootfs.img`（大小为 `VM_DISK_SIZE_MB`）、`openwrt-rootfs.img.gz`；模块目录中没有 `data/`。
 3. 重启手机：VM **没有**自动启动（`AUTOSTART=0`），`module.log` 有记录 “AUTOSTART=0”。
 4. 在 WebUI 点主页的电源按钮：
-   - 顶部标题栏固定，三个 Tab 为：主页、组网、设置（日志在设置的「日志」分组里导出）；点击或左右滑动切换时标题不动；
+   - 顶部标题栏固定，底栏导航为：状态 · 网络 ·［分流］· 系统（「分流」仅在 OpenClash 运行且启用「分流管理」时出现；日志在系统页的「日志」分组里导出）；点击或左右滑动切换时标题不动；
    - 启动中电源按钮外圈转动，依次显示「启动虚拟机 → 网络就绪 → 运行中」；`READY_TIMEOUT_SEC` 内出现 `XR_READY`，记录走的是 hvc 还是 ttyS0；
    - 启动完成后按钮呈绿色（无呼吸光），标题栏状态为「运行中」（不要出现「已稳定」）；后台在 `STABLE_SEC` 后写入 `last_good`；
    - 启动失败时按钮变红并显示原因，状态为「异常」；
@@ -86,6 +86,33 @@
 
 在管理器卸载模块并重启：进程退出；`/data/adb/xrouter`（含日志和系统盘）被删除；`ip rule`、iptables、`ndc` 网络中没有本模块残留（含 19100 / table 98）；通知和 `xrouter` 唤醒锁清除。Download 里此前导出的日志包可以保留。
 
+## 8 状态页与实时数据
+
+1. 412×915 与 360×640 下状态页一屏放下、无滚动；不出现 OpenClash、分流、IPv6、组网、热点卡片。
+2. 实时上传 / 下载与手机下载速度一致（`xr status-json` 的 `traffic.rate`）；`kill` 掉 daemon 后磁贴显示「—」，`status-json` 不卡顿。
+3. OpenWrt 负载显示 CPU%，副标题为内存与 load；在线设备为「本机 1 · 热点 N」：开热点并接入一台设备后为 2。设备离开后要过几分钟（邻居表老化）才减少。
+4. 累计流量随状态轮询刷新；关闭 WebUI 后 `guest/stats` 不再更新（只按需上报）。
+
+## 9 配置备份
+
+1. 服务未运行：系统页「配置备份」两个按钮禁用，说明行为「服务未运行，需先启动」。
+2. 运行中点「导出配置」：10 秒内提示 `Download/xrouter-config-<本地时间>.zip`；解压可见 manifest.json、phone/config.conf、phone/vpn/*、openwrt/backup.tar.gz。
+3. 修改设置、删一个 VPN 配置、LuCI 改主机名后点「导入配置」：文件浏览器只列目录和 .zip，从 Download 开始；确认框提示明文、含密码与密钥；确认后服务自动重启，全部恢复，VPN 自动连上。
+4. 坏包：改坏 zip 的一个字节后导入，提示「校验失败」，配置不变、服务不重启。
+5. 旧系统盘：两个按钮禁用，说明行为「当前系统盘不支持」；命令行导出提示「当前系统盘不支持配置备份」。
+
+## 10 日志与诊断
+
+1. 时区：导出文件名、`module.log`、诊断包 `summary.txt` 都是手机本地时间（+0800）。
+2. 看门狗：在 OpenWrt 内执行 `reboot` 3 次，都没有 ERROR；`kill -9 crosvm` 时仍立即撤路由。
+3. 诊断降噪：诊断包的 nft 段是 terse 输出并附元素计数，有「监听端口」段；打开调试模式后 `debug.log` 中没有幂等删除（如 `ip rule del` 不存在）的噪声。
+4. dropbear：记录「监听端口」段里 dropbear :22 的监听地址，作为观察项留档。
+
+## 11 写盘与长稳
+
+1. 写盘：熄屏 5 分钟，`run/` 和 `config/` 下没有周期性写入。测量方法：熄屏前后各执行一次 `cat /proc/$(pidof xr | cut -d' ' -f1)/io`（对 daemon 进程），记录两次 `write_bytes` 与时间差；配合 `ls -l --time-style=full-iso /data/adb/xrouter/run /data/adb/xrouter/config` 核对修改时间。
+2. 长稳：运行 2 小时，期间熄屏、亮屏、切换网络、开关热点各若干次；没有整机复位，没有新增 ERROR（只允许真实故障）。结束后 `xr diag-export` 留档，并保存状态页两种尺寸的截图。
+
 ## 建议的首测顺序
 
 1. 第 0 节前置检查（只读）。
@@ -93,6 +120,7 @@
 3. 第 4 节手机访问 LuCI、VM 上网、停止后规则清空。
 4. 第 2 节 1 小时稳定性，然后再开自启。
 5. 其余各节。
+6. 之后依次执行 8 → 9 → 10 → 11。
 
 ## 附：OpenVPN / Clash 能力核对（VM 内，可离线）
 
@@ -132,4 +160,15 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
 | `bash scripts/package-module.sh --lite-only` | 生成 `xrouter-sukisu-lite-v3.0.0.zip`：`id=xrouter`，无旧路径，无 META-INF |
 | `tests-sh/test-webui.sh`（node） | 通过 |
 | `tests-sh/e2e-qemu.sh` | 通过（先用当前源码重新构建 rootfs，再启动；已核对主机名 XRouter、型号、zh_cn、fw4、OpenVPN、透明代理能力） |
+
+本次（v4.x，2026-11-15，Rust 1.100.0 工具链，edition 2024）：
+
+| 检查 | 结果 |
+|---|---|
+| `bash scripts/gate.sh`（由 `sh scripts/lint.sh` 调用） | 「gate: 全部通过」 |
+| `cargo clippy … --target aarch64-unknown-linux-musl -- -D warnings`、`cargo build --release --locked --target aarch64-unknown-linux-musl` | 通过 |
+| `python3 scripts/gate-count.py --check` / `python3 scripts/lint-guard.py` | TOTAL 0 / 无输出 |
+| `sh scripts/lint.sh`（全部 `tests-sh/test-*.sh` 在 dash / mksh / busybox sh 下，含金样比对） | 通过（25 个配置键） |
+| `npm ci` + `npm run build`；`tests-sh/test-webui.sh` | 无警告；通过 |
+| `bash scripts/package-module.sh --lite-only` | 生成 `xrouter-sukisu-lite-v4.1.2.zip`：`id=xrouter`，无 META-INF |
 
