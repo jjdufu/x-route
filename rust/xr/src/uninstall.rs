@@ -321,14 +321,24 @@ fn pick_stage_base(env: &Env) -> PathBuf {
     dev
 }
 
-/// `xr uninstall-now confirm`：校验模块目录后把 `xr` 与 `uninstall.sh` 复制到暂存目录，启动后台卸载进程，再删除模块目录。
+/// （退出码, JSON 应答）。
+type Reply = (i32, String);
+
+/// 核对通过的模块信息。
+#[derive(Debug)]
+struct ModuleCheck {
+    /// 模块 `id`（与目录名一致）。
+    id: String,
+    /// 模块目录下的 `uninstall.sh`。
+    uninst_sh: PathBuf,
+}
+
+/// 立即卸载前核对模块目录：`module.prop` 的 `id` 非空且与目录名一致，并且有 `uninstall.sh`。
 ///
-/// 返回（退出码, JSON 结果）；未确认时返回 2，模块目录异常或缺少 `uninstall.sh` 时返回 1。
-#[must_use]
-pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
-    if confirm_arg != "confirm" {
-        return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_owned());
-    }
+/// # Errors
+///
+/// 不满足时返回（退出码 1, JSON 错误应答）。
+fn check_module(env: &Env) -> Result<ModuleCheck, Reply> {
     let id = fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
         .lines()
@@ -342,25 +352,26 @@ pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
         .and_then(|os_str| os_str.to_str())
         .unwrap_or("");
     if id.is_empty() || dir_name != id {
-        return (1, "{\"ok\":false,\"error\":\"模块目录异常\"}".to_owned());
+        return Err((1, "{\"ok\":false,\"error\":\"模块目录异常\"}".to_owned()));
     }
     let uninst_sh = env.moddir.join("uninstall.sh");
     if !uninst_sh.is_file() {
-        return (
+        return Err((
             1,
             "{\"ok\":false,\"error\":\"缺少 uninstall.sh\"}".to_owned(),
-        );
+        ));
     }
+    Ok(ModuleCheck { id, uninst_sh })
+}
 
-    log::info(env, "xr", "WebUI 请求立即卸载");
-
+/// 把 `self_exe` 指向的 `xr`（权限 755）、通知器 `jar`（有则复制）与 `uninstall.sh`（权限 755）复制到新的暂存目录，返回（暂存目录, 暂存的 `xr` 路径）。
+fn stage_files(env: &Env, self_exe: &Path, uninst_sh: &Path) -> (PathBuf, PathBuf) {
     let stage = pick_stage_base(env);
     let stage_bin = stage.join("bin");
     fsx::mkdirs_logged(env, &stage_bin);
 
     let staged_xr = stage_bin.join("xr");
-    let self_exe = env.self_exe();
-    if fs::copy(&self_exe, &staged_xr).is_ok() {
+    if fs::copy(self_exe, &staged_xr).is_ok() {
         fsx::chmod_logged(env, &staged_xr, 0o755);
     }
     let jar = env.moddir.join("bin/xrnotify.jar");
@@ -368,14 +379,17 @@ pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
         fsx::copy_logged(env, &jar, stage_bin.join("xrnotify.jar"));
     }
     let staged_sh = stage.join("uninstall.sh");
-    fsx::copy_logged(env, &uninst_sh, &staged_sh);
+    fsx::copy_logged(env, uninst_sh, &staged_sh);
     fsx::chmod_logged(env, &staged_sh, 0o755);
+    (stage, staged_xr)
+}
 
-    let upd_dir = env.modules_update.join(&id);
+/// 启动后台卸载进程 `xr internal uninstall-worker`（优先用暂存的 `xr`），拉起成功时最多等 2 秒它写出 `worker.ready`。
+fn spawn_worker(env: &Env, stage: &Path, staged_xr: &Path, self_exe: &Path, upd_dir: &Path) {
     let worker_bin = if staged_xr.is_file() {
-        &staged_xr
+        staged_xr
     } else {
-        &self_exe
+        self_exe
     };
     let spawn_res = Command::new(worker_bin)
         .args([
@@ -386,23 +400,44 @@ pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
             &upd_dir.to_string_lossy(),
         ])
         .current_dir("/")
-        .env("MODDIR", &stage)
+        .env("MODDIR", stage)
         .env("XR_DATA", &env.xr_data)
         .env("XR_UNINSTALL_STAGED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
-
-    if spawn_res.is_ok() {
-        let ready_file = stage.join("worker.ready");
-        for _ in 0_i32..400_i32 {
-            if ready_file.is_file() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+    if spawn_res.is_err() {
+        return;
     }
+    let ready_file = stage.join("worker.ready");
+    for _ in 0_i32..400_i32 {
+        if ready_file.is_file() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// `xr uninstall-now confirm`：校验模块目录后把 `xr` 与 `uninstall.sh` 复制到暂存目录，启动后台卸载进程，再删除模块目录。
+///
+/// 返回（退出码, JSON 结果）；未确认时返回 2，模块目录异常或缺少 `uninstall.sh` 时返回 1。
+#[must_use]
+pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
+    if confirm_arg != "confirm" {
+        return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_owned());
+    }
+    let ModuleCheck { id, uninst_sh } = match check_module(env) {
+        Ok(found) => found,
+        Err(reply) => return reply,
+    };
+
+    log::info(env, "xr", "WebUI 请求立即卸载");
+
+    let self_exe = env.self_exe();
+    let (stage, staged_xr) = stage_files(env, &self_exe, &uninst_sh);
+    let upd_dir = env.modules_update.join(&id);
+    spawn_worker(env, &stage, &staged_xr, &self_exe, &upd_dir);
 
     fsx::remove_tree_logged(env, &env.moddir);
     fsx::remove_tree_logged(env, &upd_dir);
