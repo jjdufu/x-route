@@ -143,13 +143,9 @@ fn cancel_notifications(env: &Env) {
     }
 }
 
-/// 标准卸载：停止虚拟机与网络、结束本模块的所有进程、删除 `iptables`/`ip6tables` 链与策略路由、撤销通知、释放唤醒锁并删除数据目录；总是返回 0。
-#[must_use]
-pub(crate) fn standard(env: &Env) -> i32 {
+/// 先礼后兵地结束本模块的进程：按 `run/*.pid` 发 `TERM`、让 `crosvm` 自行停止、按名字匹配发 `TERM`，等 1 秒后对残留进程发 `KILL`。
+fn stop_processes(env: &Env) {
     let run = env.run_dir();
-    note_rc(env, "vm_stop", vm_stop(env));
-    note_rc(env, "run_net_cli", run_net_cli(env, &["down".to_owned()]));
-
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
             let target = ent.path();
@@ -177,33 +173,35 @@ pub(crate) fn standard(env: &Env) -> i32 {
         }
     }
     kill_matching_procs(env, Signal::KILL);
+}
 
-    let iptables_bin = env.sysbin_cmd("iptables");
-    let ip6tables_cmd = env.sysbin_cmd("ip6tables");
-    let ip_cmd = env.sysbin_cmd("ip");
-    let ndc = env.sysbin_cmd("ndc");
-
-    while sys_ok(&iptables_bin, &["-w", "-D", "FORWARD", "-j", "XR_FWD"]) {}
-    sys_run(env, &iptables_bin, &["-w", "-F", "XR_FWD"]);
-    sys_run(env, &iptables_bin, &["-w", "-X", "XR_FWD"]);
+/// 删除转发与 `NAT` 链（`XR_FWD`、`XR_NAT` 及其 `IPv6` 对应链）：先反复删除跳转规则直到失败，再清空并删除链。
+fn drop_nat_chains(env: &Env, iptables_bin: &Path, ip6tables_cmd: &Path) {
+    while sys_ok(iptables_bin, &["-w", "-D", "FORWARD", "-j", "XR_FWD"]) {}
+    sys_run(env, iptables_bin, &["-w", "-F", "XR_FWD"]);
+    sys_run(env, iptables_bin, &["-w", "-X", "XR_FWD"]);
     while sys_ok(
-        &iptables_bin,
+        iptables_bin,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT"],
     ) {}
-    sys_run(env, &iptables_bin, &["-w", "-t", "nat", "-F", "XR_NAT"]);
-    sys_run(env, &iptables_bin, &["-w", "-t", "nat", "-X", "XR_NAT"]);
+    sys_run(env, iptables_bin, &["-w", "-t", "nat", "-F", "XR_NAT"]);
+    sys_run(env, iptables_bin, &["-w", "-t", "nat", "-X", "XR_NAT"]);
 
-    while sys_ok(&ip6tables_cmd, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
-    sys_run(env, &ip6tables_cmd, &["-w", "-F", "XR_FWD6"]);
-    sys_run(env, &ip6tables_cmd, &["-w", "-X", "XR_FWD6"]);
+    while sys_ok(ip6tables_cmd, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
+    sys_run(env, ip6tables_cmd, &["-w", "-F", "XR_FWD6"]);
+    sys_run(env, ip6tables_cmd, &["-w", "-X", "XR_FWD6"]);
     while sys_ok(
-        &ip6tables_cmd,
+        ip6tables_cmd,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"],
     ) {}
-    sys_run(env, &ip6tables_cmd, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
-    sys_run(env, &ip6tables_cmd, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
+    sys_run(env, ip6tables_cmd, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
+    sys_run(env, ip6tables_cmd, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
+}
 
-    for bin in [&iptables_bin, &ip6tables_cmd] {
+/// 删除流量统计、热点与 `MSS` 链（`XR_ACCT*`、`XR_HS*`、`XR_MSS`）：先反复删除跳转规则直到失败，再清空并删除链。
+fn drop_chains(env: &Env, iptables_bin: &Path, ip6tables_cmd: &Path) {
+    drop_nat_chains(env, iptables_bin, ip6tables_cmd);
+    for bin in [iptables_bin, ip6tables_cmd] {
         for chain in ["XR_ACCT", "XR_ACCT6"] {
             while sys_ok(bin, &["-w", "-D", "INPUT", "-i", "xr0", "-j", chain]) {}
             while sys_ok(bin, &["-w", "-D", "OUTPUT", "-o", "xr0", "-j", chain]) {}
@@ -216,14 +214,14 @@ pub(crate) fn standard(env: &Env) -> i32 {
         }
     }
 
-    while sys_ok(&iptables_bin, &["-w", "-D", "OUTPUT", "-j", "XR_HS"]) {}
-    sys_run(env, &iptables_bin, &["-w", "-F", "XR_HS"]);
-    sys_run(env, &iptables_bin, &["-w", "-X", "XR_HS"]);
-    while sys_ok(&ip6tables_cmd, &["-w", "-D", "OUTPUT", "-j", "XR_HS6"]) {}
-    sys_run(env, &ip6tables_cmd, &["-w", "-F", "XR_HS6"]);
-    sys_run(env, &ip6tables_cmd, &["-w", "-X", "XR_HS6"]);
+    while sys_ok(iptables_bin, &["-w", "-D", "OUTPUT", "-j", "XR_HS"]) {}
+    sys_run(env, iptables_bin, &["-w", "-F", "XR_HS"]);
+    sys_run(env, iptables_bin, &["-w", "-X", "XR_HS"]);
+    while sys_ok(ip6tables_cmd, &["-w", "-D", "OUTPUT", "-j", "XR_HS6"]) {}
+    sys_run(env, ip6tables_cmd, &["-w", "-F", "XR_HS6"]);
+    sys_run(env, ip6tables_cmd, &["-w", "-X", "XR_HS6"]);
 
-    for bin in [&iptables_bin, &ip6tables_cmd] {
+    for bin in [iptables_bin, ip6tables_cmd] {
         while sys_ok(
             bin,
             &["-w", "-t", "mangle", "-D", "POSTROUTING", "-j", "XR_MSS"],
@@ -231,43 +229,65 @@ pub(crate) fn standard(env: &Env) -> i32 {
         sys_run(env, bin, &["-w", "-t", "mangle", "-F", "XR_MSS"]);
         sys_run(env, bin, &["-w", "-t", "mangle", "-X", "XR_MSS"]);
     }
+}
 
+/// 拆除热点网桥 `xrbr1`（先把成员口移出）与虚拟网卡 `xr1`，并撤销 `ndc` 转发登记。
+fn drop_bridge(env: &Env, ip_cmd: &Path, ndc: &Path) {
     let br_dir = env.sysnet.join("xrbr1");
     if br_dir.is_dir() {
         if let Ok(rd) = fs::read_dir(br_dir.join("brif")) {
             for ent in rd.flatten() {
                 let port = ent.file_name().to_string_lossy().into_owned();
-                sys_run(env, &ip_cmd, &["link", "set", &port, "nomaster"]);
+                sys_run(env, ip_cmd, &["link", "set", &port, "nomaster"]);
             }
         }
-        sys_run(env, &ip_cmd, &["link", "del", "xrbr1"]);
+        sys_run(env, ip_cmd, &["link", "del", "xrbr1"]);
     }
-    sys_run(env, &ip_cmd, &["link", "del", "xr1"]);
-    sys_run(env, &ndc, &["ipfwd", "disable", "xrouter"]);
-    sys_run(env, &ndc, &["ipfwd", "disable", "xroute"]);
+    sys_run(env, ip_cmd, &["link", "del", "xr1"]);
+    sys_run(env, ndc, &["ipfwd", "disable", "xrouter"]);
+    sys_run(env, ndc, &["ipfwd", "disable", "xroute"]);
+}
 
+/// 删除本模块的策略路由规则（`IPv4`/`IPv6` 各优先级，反复删到失败）、清空路由表，并删除虚拟网卡 `xr0`。
+fn drop_rules(env: &Env, ip_cmd: &Path) {
     for pref in [
         "4790", "4800", "4801", "18800", "18900", "19050", "19060", "19100",
     ] {
-        while sys_ok(&ip_cmd, &["rule", "del", "pref", pref]) {}
-        while sys_ok(&ip_cmd, &["-6", "rule", "del", "pref", pref]) {}
+        while sys_ok(ip_cmd, &["rule", "del", "pref", pref]) {}
+        while sys_ok(ip_cmd, &["-6", "rule", "del", "pref", pref]) {}
     }
     sys_run(
         env,
-        &ip_cmd,
+        ip_cmd,
         &["route", "flush", "table", "97", "dev", "xr0"],
     );
-    sys_run(env, &ip_cmd, &["route", "flush", "table", "233"]);
-    sys_run(env, &ip_cmd, &["route", "flush", "table", "234"]);
+    sys_run(env, ip_cmd, &["route", "flush", "table", "233"]);
+    sys_run(env, ip_cmd, &["route", "flush", "table", "234"]);
     sys_run(
         env,
-        &ip_cmd,
+        ip_cmd,
         &["-6", "route", "flush", "table", "97", "dev", "xr0"],
     );
-    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "233"]);
-    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "234"]);
-    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "235"]);
-    sys_run(env, &ip_cmd, &["link", "del", "xr0"]);
+    sys_run(env, ip_cmd, &["-6", "route", "flush", "table", "233"]);
+    sys_run(env, ip_cmd, &["-6", "route", "flush", "table", "234"]);
+    sys_run(env, ip_cmd, &["-6", "route", "flush", "table", "235"]);
+    sys_run(env, ip_cmd, &["link", "del", "xr0"]);
+}
+
+/// 标准卸载：停止虚拟机与网络、结束本模块的所有进程、删除 `iptables`/`ip6tables` 链与策略路由、撤销通知、释放唤醒锁并删除数据目录；总是返回 0。
+#[must_use]
+pub(crate) fn standard(env: &Env) -> i32 {
+    note_rc(env, "vm_stop", vm_stop(env));
+    note_rc(env, "run_net_cli", run_net_cli(env, &["down".to_owned()]));
+    stop_processes(env);
+
+    let iptables_bin = env.sysbin_cmd("iptables");
+    let ip6tables_cmd = env.sysbin_cmd("ip6tables");
+    let ip_cmd = env.sysbin_cmd("ip");
+    let ndc = env.sysbin_cmd("ndc");
+    drop_chains(env, &iptables_bin, &ip6tables_cmd);
+    drop_bridge(env, &ip_cmd, &ndc);
+    drop_rules(env, &ip_cmd);
 
     cancel_notifications(env);
     fsx::write_logged(env, "/sys/power/wake_unlock", "xrouter\n");
