@@ -85,7 +85,7 @@ fn format_failures_line(fs_n: u64, exec_n: u64, log_n: u64) -> String {
 pub fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+        .map_or(0, |dur| dur.as_secs())
 }
 
 #[must_use]
@@ -106,24 +106,24 @@ pub fn time_full_tz() -> String {
 #[must_use]
 pub fn xr_now(env: &Env) -> String {
     if !env.fake_date_fail {
-        let s = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        if !s.is_empty() {
-            return s;
+        let stamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        if !stamp.is_empty() {
+            return stamp;
         }
     }
     if is_executable(&env.bb)
         && let Ok(out) = Command::new(&env.bb).args(["date", "+%F %T"]).output()
         && out.status.success()
     {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-        if !s.is_empty() {
-            return s;
+        let content = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !content.is_empty() {
+            return content;
         }
     }
     let up = fs::read_to_string(&env.proc_uptime)
         .ok()
-        .and_then(|s| s.split_whitespace().next().map(str::to_owned))
-        .filter(|s| !s.is_empty())
+        .and_then(|raw| raw.split_whitespace().next().map(str::to_owned))
+        .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "?".to_owned());
     format!("uptime+{up}s")
 }
@@ -283,23 +283,23 @@ pub fn boot_clean_run(env: &Env) -> bool {
     if let Ok(mounts) = fs::read_to_string(&env.proc_mounts)
         && mounts
             .lines()
-            .any(|l| l.contains(&pat_slash) || l.contains(&pat_space))
+            .any(|line| line.contains(&pat_slash) || line.contains(&pat_space))
     {
         log_err(env, "service", "run/ 下存在挂载点，跳过开机清理");
         return false;
     }
     fsx::mkdirs_logged(env, env.log_dir());
     let con = env.console_log();
-    if fs::metadata(&con).is_ok_and(|m| m.is_file() && m.len() > 0) {
+    if fs::metadata(&con).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
         fsx::rename_logged(env, &con, env.log_dir().join("console.prev.log"));
     }
     if let Ok(entries) = fs::read_dir(&run) {
         for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                fsx::remove_tree_logged(env, &p);
+            let file_path = entry.path();
+            if file_path.is_dir() {
+                fsx::remove_tree_logged(env, &file_path);
             } else {
-                fsx::remove_logged(env, &p);
+                fsx::remove_logged(env, &file_path);
             }
         }
     }
