@@ -14,6 +14,10 @@ use xr_test_support::{Failure, ensure, ensure_eq, ensure_ok};
 const STOPPED: &str = include_str!("../fixtures/status_stopped.json");
 /// "运行中"状态的金样。
 const RUNNING: &str = include_str!("../fixtures/status_running.json");
+/// 运行中、旧版 `xrouter` 隧道与连接中配置并存时的金样。
+const CONNECTING: &str = include_str!("../fixtures/status_connecting.json");
+/// 运行中、隧道都不属于任何配置、汇总状态为 `up` 时的金样。
+const SUMMARY: &str = include_str!("../fixtures/status_summary_up.json");
 /// 只有旧版单份 `OpenVPN` 配置（没有 `config/vpn/` 目录）时的金样。
 const LEGACY: &str = include_str!("../fixtures/status_legacy_vpn.json");
 
@@ -194,4 +198,47 @@ fn legacy_vpn_matches_golden() -> Result<(), Failure> {
     )?;
     let got = status_json(tmp.path())?;
     check_golden(&got, LEGACY, "status_legacy_vpn.json")
+}
+
+/// 运行中：唯一的隧道是旧版 `xrouter`（显示名取 `openvpn.name`），启用的配置匹配它，另一份配置在 `openvpn.connecting` 里，
+/// 汇总状态为 `connecting`，`status-json` 与金样一致。
+///
+/// # Errors
+///
+/// 准备失败或输出与金样不一致时返回 [`Failure`]。
+#[test]
+fn connecting_matches_golden() -> Result<(), Failure> {
+    let tmp = ensure_ok(TempDir::new(), "建临时目录")?;
+    base_layout(tmp.path())?;
+    running_layout(tmp.path())?;
+    let run = tmp.path().join("data/run/guest/guest");
+    put(
+        &run.join("openvpn.tunnels"),
+        "tun0|xrouter|10.8.0.6/24|1400|10.8.0.0/24\n|skip|x|1|\n",
+    )?;
+    put(&run.join("openvpn.connecting"), "spare\n")?;
+    put(&run.join("openvpn.status"), "connecting\n")?;
+    put(&run.join("openvpn.addr"), "10.8.0.6\n")?;
+    put(&tmp.path().join("data/config/openvpn.name"), "旧隧道\n")?;
+    let got = status_json(tmp.path())?;
+    check_golden(&got, CONNECTING, "status_connecting.json")
+}
+
+/// 运行中：唯一的隧道不属于任何配置、不是多隧道模式、汇总状态为 `up`，启用的配置按汇总状态记为连接中，`status-json` 与金样一致。
+///
+/// # Errors
+///
+/// 准备失败或输出与金样不一致时返回 [`Failure`]。
+#[test]
+fn summary_up_matches_golden() -> Result<(), Failure> {
+    let tmp = ensure_ok(TempDir::new(), "建临时目录")?;
+    base_layout(tmp.path())?;
+    running_layout(tmp.path())?;
+    let run = tmp.path().join("data/run/guest/guest");
+    put(
+        &run.join("openvpn.tunnels"),
+        "tun5|ghost|10.30.0.2/24|1300|10.30.0.0/24\n",
+    )?;
+    let got = status_json(tmp.path())?;
+    check_golden(&got, SUMMARY, "status_summary_up.json")
 }
