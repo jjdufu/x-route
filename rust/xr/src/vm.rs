@@ -5,6 +5,7 @@ pub(crate) mod share;
 
 use std::fs::{self, OpenOptions};
 use std::ops::ControlFlow;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -249,6 +250,24 @@ pub(crate) fn fuse_watch(env: &Env) {
     wait_stable(env);
 }
 
+/// 删除 `guest/host/vpn/` 里已没有对应非空 `config/vpn/<名>.ovpn` 的文件。
+fn prune_host_vpn(env: &Env, host_vpn: &Path, vpn_dir: &Path) {
+    let Ok(rd) = fs::read_dir(host_vpn) else {
+        return;
+    };
+    for ent in rd.flatten() {
+        let target = ent.path();
+        let Some(stem) = target.file_stem().and_then(|stem_os| stem_os.to_str()) else {
+            continue;
+        };
+        let ovpn = vpn_dir.join(format!("{stem}.ovpn"));
+        let keep = fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0);
+        if !keep {
+            fsx::remove_logged(env, &target);
+        }
+    }
+}
+
 /// 把 `config/vpn/*.ovpn` 及其启用标记同步到给客机的 `guest/host/vpn/`，并删除已不存在的配置。
 ///
 /// 返回 `Some(是否有启用的配置)`；没有 `VPN` 配置目录时返回 `None`。
@@ -262,18 +281,7 @@ pub(crate) fn vpn_sync_host(env: &Env) -> Option<bool> {
     }
     let host_vpn = host_dir.join("vpn");
     fsx::mkdirs_logged(env, &host_vpn);
-    if let Ok(rd) = fs::read_dir(&host_vpn) {
-        for ent in rd.flatten() {
-            let target = ent.path();
-            if let Some(stem) = target.file_stem().and_then(|stem_os| stem_os.to_str()) {
-                let ovpn = vpn_dir.join(format!("{stem}.ovpn"));
-                let keep = fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0);
-                if !keep {
-                    fsx::remove_logged(env, target);
-                }
-            }
-        }
-    }
+    prune_host_vpn(env, &host_vpn, &vpn_dir);
     let mut any = false;
     let mut first = None;
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
