@@ -777,7 +777,11 @@ fn render_rpc_line(line: &str) -> String {
         if end == start {
             end = trimmed.len();
         }
-        chunks.push(&trimmed[start..end]);
+        // start 与 end 都在字符边界上（start 是上一轮的 end），get 恒为 Some；None 时结束循环
+        let Some(part) = trimmed.get(start..end) else {
+            break;
+        };
+        chunks.push(part);
         start = end;
     }
     let header = format!("{{\"_chunks\":{}}}", chunks.len());
