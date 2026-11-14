@@ -312,6 +312,32 @@ impl MuxState {
         }
     }
 
+    /// 按复用 `ws_id` 查客机消息所属的（客户端号, 原 `ws_id`）；`is_close` 时同时注销 `active_ws`、`ws_by_key` 与客户端名下的登记。
+    ///
+    /// 没有登记或 `active_ws` 的锁中毒时返回 `None`。
+    fn guest_ws_owner(&self, mux_ws: &str, is_close: bool) -> Option<(u64, String)> {
+        let mut active = self.active_ws.lock().ok()?;
+        let found = if is_close {
+            active.remove(mux_ws)
+        } else {
+            active.get(mux_ws).cloned()
+        };
+        let (cid, orig_ws) = found?;
+        if is_close {
+            if let Ok(mut by_key) = self.ws_by_key.lock() {
+                let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
+            }
+            if let Ok(mut clients) = self.clients.lock()
+                && let Some(ch) = clients.get_mut(&cid)
+            {
+                ch.ws_ids.retain(|owned| owned != mux_ws);
+            }
+        }
+        // 与原来一样：active_ws 的锁持有到注销完成
+        drop(active);
+        Some((cid, orig_ws))
+    }
+
     /// 处理客机发来的一行：按登记表把复用 `id`/`ws_id` 改回原值并发给对应客户端，`ws_close` 时同时注销该 ws。
     fn handle_guest_line(&self, raw: &str) {
         let trimmed = raw.trim();
@@ -334,32 +360,13 @@ impl MuxState {
             let _mux_id: Option<Value> = obj.insert("id".to_owned(), orig_id);
         }
 
-        if let Some(mux_ws) = obj.get("ws_id").and_then(Value::as_str).map(str::to_owned) {
-            let is_close = obj.get("op").and_then(Value::as_str) == Some("ws_close");
-            if let Ok(mut active) = self.active_ws.lock() {
-                let found = if is_close {
-                    active.remove(&mux_ws)
-                } else {
-                    active.get(&mux_ws).cloned()
-                };
-                if let Some((cid, orig_ws)) = found {
-                    if is_close {
-                        if let Ok(mut by_key) = self.ws_by_key.lock() {
-                            let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
-                        }
-                        if let Ok(mut clients) = self.clients.lock()
-                            && let Some(ch) = clients.get_mut(&cid)
-                        {
-                            ch.ws_ids.retain(|owned| owned != &mux_ws);
-                        }
-                    }
-                    if target_client.is_none() {
-                        target_client = Some(cid);
-                    }
-                    let _mux_ws_id: Option<Value> =
-                        obj.insert("ws_id".to_owned(), Value::String(orig_ws));
-                }
-            }
+        let is_close = obj.get("op").and_then(Value::as_str) == Some("ws_close");
+        if let Some(mux_ws) = obj.get("ws_id").and_then(Value::as_str).map(str::to_owned)
+            && let Some((cid, orig_ws)) = self.guest_ws_owner(&mux_ws, is_close)
+        {
+            // 请求应答已定位到客户端时以它为准，否则交给 ws 的主人
+            target_client = target_client.or(Some(cid));
+            let _mux_ws_id: Option<Value> = obj.insert("ws_id".to_owned(), Value::String(orig_ws));
         }
 
         if let Some(cid) = target_client
