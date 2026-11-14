@@ -1,0 +1,174 @@
+     Removed 1359 files, 528.7MiB total
+    Checking xr v4.0.0 (/workspace/x-proj/x-route/rust/xr)
+    Checking xr-test-support v4.0.0 (/workspace/x-proj/x-route/rust/test-support)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.63s
+ Documenting xr-test-support v4.0.0 (/workspace/x-proj/x-route/rust/test-support)
+ Documenting xr v4.0.0 (/workspace/x-proj/x-route/rust/xr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.36s
+   Generated /workspace/x-proj/x-route/rust/xr/target/doc/xr/index.html and 1 other file
+   Compiling xr v4.0.0 (/workspace/x-proj/x-route/rust/xr)
+   Compiling xr-test-support v4.0.0 (/workspace/x-proj/x-route/rust/test-support)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.98s
+     Running unittests src/lib.rs (rust/xr/target/debug/build/xr/b83f743c47804139/out/xr-b83f743c47804139)
+
+running 50 tests
+test cidr::tests::dev_values_takes_each_dev_argument ... ok
+test cidr::tests::ip6_format_known_values ... ok
+test clash::render_tests::long_reply_is_chunked ... ok
+test clash::tests::guest_ws_close_unregisters ... ok
+test clash::tests::external_ws_ctl_without_guest ... ok
+test clash::tests::malformed_client_lines_are_dropped ... ok
+test clash::tests::local_ws_open_and_send_tables ... ok
+test clash::tests::mux_cleanup ... ok
+test clash::tests::mux_multiplex ... ok
+test clash::tests::mux_without_guest_returns_503 ... ok
+test clash::render_tests::short_reply_is_one_line ... ok
+test clash::tests::unregister_client_releases_locks ... ok
+test clash::tests::clash_status_parsing ... ok
+test clash::tests::ws_ctl_missing_key_replies_as_before ... ok
+test clash::tests::ws_close_by_external_key_returns_owner ... ok
+test config::tests::restart_keys_exact ... ok
+test env::tests::daemon_mode_from_flag ... ok
+test clash::tests::cross_client_ws_control ... ok
+test config::tests::restart_keys_are_config_keys ... ok
+test cidr::tests::ip6_format_matches_reference_for_all_lengths ... ok
+test clash::tests::local_ws_close_tables ... ok
+test env::tests::from_process_dump_child ... ok
+test env::tests::role_queries_match_old_fields ... ok
+test clash::tests::unknown_op_forwards_with_rewritten_id ... ok
+test log::tests::append_line_reports_error ... ok
+test log::tests::failures_line_format ... ok
+test env::tests::role_from_flags_all_combinations ... ok
+test log::tests::log_msg_counts_write_failure ... ok
+test log::tests::note_failure_saturates ... ok
+test log::tests::log_msg_success_counts_nothing ... ok
+test log::tests::tz_offset_invalid_values ... ok
+test log::tests::tz_offset_valid_values ... ok
+test out::tests::broken_writer_is_error ... ok
+test out::tests::join_lines_matches_println_loop ... ok
+test out::tests::line_and_raw_bytes ... ok
+test sys::fsx::tests::failures_are_counted_once_each ... ok
+test env::tests::from_process_fallbacks ... ok
+test env::tests::from_process_all_vars ... ok
+test env::tests::from_process_defaults ... ok
+test sys::fsx::tests::wrappers_succeed_without_counting ... ok
+test log::tests::prop_tz_offset_roundtrip ... ok
+test sys::fsx::tests::remove_not_found_is_not_failure ... ok
+test sys::tests::stale_legacy_dir_lock_is_replaced ... ok
+test sys::tests::stale_pid_file_is_taken_at_once ... ok
+test log::tests::prop_tz_offset_never_panics ... ok
+test sys::tests::held_lock_is_forced_after_timeout ... ok
+test sys::tests::legacy_dir_lock_is_forced_after_timeout ... ok
+test sys::tests::concurrent_threads_are_mutually_exclusive ... ok
+test clash::tests::ctl_reconnect_clears_writer ... ok
+test clash::tests::rpc_accept_assigns_increasing_cid ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.22s
+
+     Running unittests src/main.rs (rust/xr/target/debug/build/xr/8402f2df2a76f450/out/xr-8402f2df2a76f450)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/diag_export/main.rs (rust/xr/target/debug/build/xr/e44497f12540eae2/out/diag_export-e44497f12540eae2)
+
+running 2 tests
+test cases::log_export_contents ... ok
+test cases::diag_export_contents ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/diag_format/main.rs (rust/xr/target/debug/build/xr/6c7803f1c3ff1dcb/out/diag_format-6c7803f1c3ff1dcb)
+
+running 2 tests
+test cases::diag_phone_matches_fixture ... ok
+test cases::diag_phone_full_matches_fixture ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/diag_hosts/main.rs (rust/xr/target/debug/build/xr/fd9edfec0e49075e/out/diag_hosts-fd9edfec0e49075e)
+
+running 2 tests
+test cases::collects_remote_hosts ... ok
+test cases::redact_matches_fixture ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/human_bytes/main.rs (rust/xr/target/debug/build/xr/537a8f6c880097f4/out/human_bytes-537a8f6c880097f4)
+
+running 2 tests
+test cases::boundaries_match_float_version ... ok
+test cases::random_values_match_float_version ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/net_traffic/main.rs (rust/xr/target/debug/build/xr/1c8320c1f1f3961d/out/net_traffic-1c8320c1f1f3961d)
+
+running 3 tests
+test cases::human_bytes_and_quads ... ok
+test cases::acct_lan_and_status_json ... ok
+test cases::routes_valid_and_default_route ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/prop_core/main.rs (rust/xr/target/debug/build/xr/b9eb856dcc00db6d/out/prop_core-b9eb856dcc00db6d)
+
+running 14 tests
+test cases::boot_clean_rotates_console ... ok
+test cases::cgroup_escape_paths ... ok
+test cases::cidr_parity ... ok
+test cases::ipv6_eui64 ... ok
+test cases::log_without_date ... ok
+test cases::boot_log_records_mutating_cmds ... ok
+test cases::valid_kv_parity ... ok
+test cases::hotspot_clash ... ok
+test cases::prop_mask2len_only_contiguous ... ok
+test cases::vm_exit_reason_zombie_and_guest_reset ... ok
+test cases::prop_valid_ip4_roundtrips_and_never_panics ... ok
+test cases::prop_arbitrary_strings_never_panic ... ok
+test cases::prop_ip6_expand_mask_format_no_panic ... ok
+test cases::set_kv_roundtrip ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/status_json/main.rs (rust/xr/target/debug/build/xr/48d73f160630263a/out/status_json-48d73f160630263a)
+
+running 5 tests
+test cases::legacy_vpn_matches_golden ... ok
+test cases::stopped_matches_golden ... ok
+test cases::running_matches_golden ... ok
+test cases::summary_up_matches_golden ... ok
+test cases::connecting_matches_golden ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/uninstall/main.rs (rust/xr/target/debug/build/xr/9b7e234baca6cb70/out/uninstall-9b7e234baca6cb70)
+
+running 3 tests
+test cases::uninstall_now_requires_confirm ... ok
+test cases::uninstall_now_removes_moddir_without_remove_marker_and_runs_worker ... ok
+test cases::uninstall_worker_cleans_dirs_without_staged_sh ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.22s
+
+     Running unittests src/lib.rs (rust/xr/target/debug/build/xr-test-support/4b973ebc05c7604e/out/xr_test_support-4b973ebc05c7604e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+   Doc-tests xr
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests xr_test_support
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+gate: 全部通过

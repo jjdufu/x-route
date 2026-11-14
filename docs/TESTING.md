@@ -113,6 +113,12 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
   `cargo clippy --workspace --all-targets --all-features --locked --target aarch64-unknown-linux-musl -- -D warnings`。
   标准是《门禁-Rust最严Lint.md》（门禁全绿后放入 `docs/`）；本项目额外开启 `clippy::cognitive_complexity`（阈值 15）。
 - 不得用任何方式压制或降级告警（`allow`/`expect`/`cfg_attr`、降级 lint 级别的编译器参数、`RUSTFLAGS` 等）。
+- Rust 测试：`bash scripts/gate.sh` 已包含 `cargo test --workspace --all-targets --all-features --locked`。测试目录如下：
+  - `rust/xr/src/**/tests.rs`：各模块单元测试，含属性测试。
+  - `rust/xr/tests/<名称>/`：集成测试，包括 `diag_export`、`diag_format`、`diag_hosts`、`human_bytes`、`net_traffic`、`prop_core`、`status_json`、`uninstall`；`fixtures/` 里是金样。
+  - `rust/test-support/`：测试辅助 crate `xr_test_support`（`Failure`、`ensure*`）。
+  - 金样用 `XR_GOLDEN_RECORD=1` 重录。
+- 计数门禁：`python3 scripts/gate-count.py --check`，基线是 `gate-baseline.json`，目前 TOTAL 0，一次性跳变已用掉。
 - 产物路径不变：`rust/xr/target/aarch64-unknown-linux-musl/release/xr`（根目录 `.cargo/config.toml` 的 `target-dir` 指回 `rust/xr/target`）。
 
 ## 附：本机已跑过的检查（发版前）
