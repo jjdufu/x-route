@@ -629,3 +629,329 @@ fn mux_without_guest_returns_503() -> Result<(), Failure> {
         "状态 503",
     )
 }
+
+/// 三张登记表的快照：（`ws_by_key` 键集合, `active_ws` 键集合, `pending_reqs` 键集合）。
+type Tables = (Vec<String>, Vec<String>, Vec<String>);
+
+/// 读出三张登记表的键（排序后），并确认都没有残留锁。
+///
+/// # Errors
+///
+/// 任一张表仍被锁住时返回错误。
+fn tables(state: &MuxState) -> Result<Tables, Failure> {
+    let mut by_key: Vec<String> = state
+        .ws_by_key
+        .try_lock()
+        .map_err(|_lock| Failure::new("ws_by_key 仍被锁"))?
+        .keys()
+        .cloned()
+        .collect();
+    let mut active: Vec<String> = state
+        .active_ws
+        .try_lock()
+        .map_err(|_lock| Failure::new("active_ws 仍被锁"))?
+        .keys()
+        .cloned()
+        .collect();
+    let mut pending: Vec<String> = state
+        .pending_reqs
+        .try_lock()
+        .map_err(|_lock| Failure::new("pending_reqs 仍被锁"))?
+        .keys()
+        .cloned()
+        .collect();
+    by_key.sort_unstable();
+    active.sort_unstable();
+    pending.sort_unstable();
+    Ok((by_key, active, pending))
+}
+
+/// 客户端 `cid` 名下登记的复用 ws 编号（排序后）。
+///
+/// # Errors
+///
+/// 锁中毒时返回错误。
+fn client_ws(state: &MuxState, cid: u64) -> Result<Vec<String>, Failure> {
+    let mut ids: Vec<String> = state
+        .clients
+        .try_lock()
+        .map_err(|_lock| Failure::new("clients 仍被锁"))?
+        .get(&cid)
+        .map_or_else(Vec::new, |handle| handle.ws_ids.iter().cloned().collect());
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+/// 未知 `op`：原样转发，只把 `id` 改写为 `r<序号>` 并登记到 `pending_reqs`；客机应答后改回原 `id` 并注销。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn unknown_op_forwards_with_rewritten_id() -> Result<(), Failure> {
+    let (state, mut br, rx_a, _rx_b) = wired_state()?;
+    let mut map = HashMap::new();
+    state.handle_client_line(1, &mut map, "{\"id\":5,\"op\":\"whatever\",\"x\":1}");
+    let fwd = guest_value(&mut br)?;
+    ensure_eq(&fwd.get("op"), &Some(&Value::from("whatever")), "op 原样")?;
+    ensure_eq(&fwd.get("x"), &Some(&Value::from(1_i32)), "其余字段原样")?;
+    let mid = fwd
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    ensure(mid.starts_with('r'), "id 改写为 r<序号>")?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), vec![mid.clone()]),
+        "只登记 pending",
+    )?;
+    state.handle_guest_line(&format!("{{\"id\":\"{mid}\",\"ok\":true}}"));
+    let reply = recv_value(&rx_a)?;
+    ensure_eq(
+        &reply.get("id"),
+        &Some(&Value::from(5_i32)),
+        "应答改回原 id",
+    )?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), Vec::new()),
+        "应答后 pending 清空",
+    )
+}
+
+/// 空行、非 JSON、非对象、缺 `ws_id` 的 `ws_open` 都被丢弃：不转发、不回复、不登记。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn malformed_client_lines_are_dropped() -> Result<(), Failure> {
+    let (state, mut br, rx_a, _rx_b) = wired_state()?;
+    let mut map = HashMap::new();
+    for raw in [
+        "",
+        "   ",
+        "not json",
+        "[1,2]",
+        "{\"id\":1,\"op\":\"ws_open\"}",
+        "{\"id\":2,\"op\":\"ws_open\",\"ws_id\":\"\"}",
+    ] {
+        state.handle_client_line(1, &mut map, raw);
+    }
+    ensure(rx_a.try_recv().is_err(), "没有回复")?;
+    ensure(map.is_empty(), "本连接映射为空")?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), Vec::new()),
+        "三张表为空",
+    )?;
+    // 之后的第一条请求就是客机侧读到的第一行，证明前面的行都没有转发
+    state.handle_client_line(1, &mut map, "{\"id\":3,\"op\":\"ping\"}");
+    let first = guest_value(&mut br)?;
+    ensure_eq(
+        &first.get("op"),
+        &Some(&Value::from("ping")),
+        "客机侧第一行是 ping",
+    )
+}
+
+/// 客户端 1 在本连接打开 ws `k`，返回（复用 ws 编号, `ws_open` 请求的复用 `id`）。
+///
+/// # Errors
+///
+/// 读客机侧失败时返回错误。
+fn open_local_ws(
+    state: &MuxState,
+    br: &mut BufReader<UnixStream>,
+    map: &mut HashMap<String, String>,
+) -> Result<(String, String), Failure> {
+    state.handle_client_line(
+        1,
+        map,
+        "{\"id\":\"o\",\"op\":\"ws_open\",\"ws_id\":\"k\",\"path\":\"/x\"}",
+    );
+    let opened = guest_value(br)?;
+    let field = |key: &str| {
+        opened
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    Ok((field("ws_id"), field("id")))
+}
+
+/// 本连接打开的 ws：`ws_open` 登记本连接映射、`active_ws`、`ws_by_key`、`pending_reqs` 与客户端名下；
+/// `ws_send` 改写 `ws_id` 与 `id` 后转发。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn local_ws_open_and_send_tables() -> Result<(), Failure> {
+    let (state, mut br, _rx_a, _rx_b) = wired_state()?;
+    let mut map = HashMap::new();
+    let (mws, open_mid) = open_local_ws(&state, &mut br, &mut map)?;
+    ensure(mws.starts_with('w'), "ws_id 改写为 w<序号>")?;
+    ensure_eq(&map.get("k"), &Some(&mws), "本连接映射")?;
+    ensure_eq(
+        &tables(&state)?,
+        &(vec!["k".to_owned()], vec![mws.clone()], vec![open_mid]),
+        "ws_open 后的登记",
+    )?;
+    ensure_eq(&client_ws(&state, 1)?, &vec![mws.clone()], "客户端名下")?;
+
+    state.handle_client_line(
+        1,
+        &mut map,
+        "{\"id\":\"s\",\"op\":\"ws_send\",\"ws_id\":\"k\",\"data\":\"d\"}",
+    );
+    let sent = guest_value(&mut br)?;
+    ensure_eq(
+        &sent.get("ws_id"),
+        &Some(&Value::from(mws.as_str())),
+        "发送到复用 ws",
+    )?;
+    ensure(
+        sent.get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|mid| mid.starts_with('r')),
+        "本连接 ws_send 的 id 也改写",
+    )
+}
+
+/// 本连接关闭自己的 ws：转发时不加 `id`，清掉本连接映射、`active_ws`、`ws_by_key` 与客户端名下的登记，不通知自己。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn local_ws_close_tables() -> Result<(), Failure> {
+    let (state, mut br, rx_a, _rx_b) = wired_state()?;
+    let mut map = HashMap::new();
+    let (mws, open_mid) = open_local_ws(&state, &mut br, &mut map)?;
+    state.handle_client_line(1, &mut map, "{\"op\":\"ws_close\",\"ws_id\":\"k\"}");
+    let closed = guest_value(&mut br)?;
+    ensure_eq(
+        &closed.get("op"),
+        &Some(&Value::from("ws_close")),
+        "客机收到关闭",
+    )?;
+    ensure_eq(
+        &closed.get("ws_id"),
+        &Some(&Value::from(mws.as_str())),
+        "关闭复用 ws",
+    )?;
+    ensure(closed.get("id").is_none(), "无 id 的请求不加 id")?;
+    ensure(map.is_empty(), "本连接映射已清")?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), vec![open_mid]),
+        "关闭后只剩未应答的 ws_open 请求",
+    )?;
+    ensure(client_ws(&state, 1)?.is_empty(), "客户端名下已清")?;
+    ensure(rx_a.try_recv().is_err(), "本连接关闭不通知自己")
+}
+
+/// 客机未连接时控制外部客户端的 ws：`ws_send` 回 `ok:false`，`ws_close` 回 `ok:true` 并照常通知原主人、清掉登记；
+/// 不带 `id` 的普通请求不回复。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn external_ws_ctl_without_guest() -> Result<(), Failure> {
+    let state = MuxState::new();
+    let (tx_a, rx_a) = mpsc::channel::<String>();
+    let (tx_b, rx_b) = mpsc::channel::<String>();
+    state.register_client(1, tx_a);
+    state.register_client(2, tx_b);
+    let mut map_a = HashMap::new();
+    let mut map_b = HashMap::new();
+    state.handle_client_line(1, &mut map_a, "{\"op\":\"ws_open\",\"ws_id\":\"k\"}");
+    ensure(rx_a.try_recv().is_err(), "无 id 的 ws_open 失败也不回复")?;
+    ensure_eq(&tables(&state)?.0, &vec!["k".to_owned()], "已登记 k")?;
+
+    state.handle_client_line(
+        2,
+        &mut map_b,
+        "{\"id\":7,\"op\":\"ws_send\",\"ws_id\":\"k\"}",
+    );
+    let send_reply = recv_value(&rx_b)?;
+    ensure_eq(&send_reply.get("id"), &Some(&Value::from(7_i32)), "原 id")?;
+    ensure_eq(
+        &send_reply.get("ok"),
+        &Some(&Value::from(false)),
+        "未送达回 ok:false",
+    )?;
+    ensure(tables(&state)?.2.is_empty(), "外部 ws 控制不登记 pending")?;
+
+    state.handle_client_line(
+        2,
+        &mut map_b,
+        "{\"id\":8,\"op\":\"ws_close\",\"ws_id\":\"k\"}",
+    );
+    let note = recv_value(&rx_a)?;
+    ensure_eq(
+        &note.get("op"),
+        &Some(&Value::from("ws_close")),
+        "原主人收到关闭",
+    )?;
+    ensure_eq(
+        &note.get("code"),
+        &Some(&Value::from(1000_i32)),
+        "关闭码 1000",
+    )?;
+    let close_reply = recv_value(&rx_b)?;
+    ensure_eq(
+        &close_reply.get("ok"),
+        &Some(&Value::from(true)),
+        "ws_close 回 ok:true",
+    )?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), Vec::new()),
+        "登记已清",
+    )?;
+    ensure(client_ws(&state, 1)?.is_empty(), "原主人名下已清")
+}
+
+/// 客机发来 `ws_close`：按登记改回原 `ws_id` 送给原客户端，并清掉 `active_ws`、`ws_by_key` 与客户端名下的登记；
+/// 未登记的 `id`/`ws_id`、空行与非 JSON 不转发。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn guest_ws_close_unregisters() -> Result<(), Failure> {
+    let (state, mut br, rx_a, _rx_b) = wired_state()?;
+    let mut map = HashMap::new();
+    state.handle_client_line(1, &mut map, "{\"op\":\"ws_open\",\"ws_id\":\"k\"}");
+    let opened = guest_value(&mut br)?;
+    let mws = opened
+        .get("ws_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    for raw in [
+        "",
+        "nope",
+        "{\"id\":\"r999\",\"ok\":true}",
+        "{\"op\":\"ws_msg\",\"ws_id\":\"w999\"}",
+    ] {
+        state.handle_guest_line(raw);
+    }
+    ensure(rx_a.try_recv().is_err(), "未登记的行不转发")?;
+    state.handle_guest_line(&format!(
+        "{{\"op\":\"ws_close\",\"ws_id\":\"{mws}\",\"code\":1000}}"
+    ));
+    let got = recv_value(&rx_a)?;
+    ensure_eq(&got.get("ws_id"), &Some(&Value::from("k")), "改回原 ws_id")?;
+    ensure_eq(
+        &tables(&state)?,
+        &(Vec::new(), Vec::new(), Vec::new()),
+        "登记已清",
+    )?;
+    ensure(client_ws(&state, 1)?.is_empty(), "客户端名下已清")
+}
