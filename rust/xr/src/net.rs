@@ -1072,6 +1072,180 @@ pub(crate) fn up(env: &Env) -> i32 {
     0
 }
 
+/// 列表非空时以空格连接并带一个尾随空格（与状态文件的写法一致），空时为空串。
+fn joined_trailing(list: &[String]) -> String {
+    if list.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", list.join(" "))
+    }
+}
+
+/// 比对上游、出口、开放接口、网关形态、`IPv6` 出口与来源、路由文件校验和、`MTU` 与上次记录，有变化时记调试日志并完整对账。
+///
+/// 返回本轮探测到的（上游接口, `IPv4` 出口）。
+fn watch_state(ctx: &NetCtx<'_>) -> (String, Vec<String>) {
+    let (env, cfg) = (ctx.env, ctx.cfg);
+    let run = env.run_dir();
+    let up = upstream_iface(ctx);
+    let outs = upstream_out(ctx, &up);
+    let ex = expose_ifaces(ctx, &up);
+    let ex_str = joined_trailing(&ex);
+    let outs_str = joined_trailing(&outs);
+    let outs6 = upstream_out6(ctx, &up);
+    let v6_outs_str = joined_trailing(&outs6);
+
+    let have_gw = fs::read_to_string(run.join("net.gw")).unwrap_or_else(|_| "off".to_owned());
+    let gw_trimmed = have_gw.trim();
+    let want_gw = gw_want(ctx);
+    let ck = routes_file_cksum(ctx);
+    let mtu_now = upstream_mtu(ctx, &up, &outs).to_string();
+
+    let read = |name: &str| fs::read_to_string(run.join(name)).unwrap_or_default();
+    let old_up = read("net.up_if");
+    let old_ex = read("net.expose_if");
+    let old_mtu = read("net.mtu");
+    let vm_v6_s = if vm_v6(env) { "1" } else { "" };
+    let v6src_now = format!("{} ", v6_src_fingerprint(ctx, &outs6));
+    let changed = up != old_up.trim()
+        || outs_str.trim() != read("net.up_out").trim()
+        || ex_str.trim() != old_ex.trim()
+        || want_gw != gw_trimmed
+        || v6_outs_str.trim() != read("net.up_out6").trim()
+        || vm_v6_s != read("net.v6").trim()
+        || v6src_now.trim() != read("net.v6src").trim()
+        || ck != read("vpn.cksum").trim()
+        || mtu_now != old_mtu.trim();
+    if changed {
+        dlog(
+            env,
+            cfg,
+            "watch",
+            &format!(
+                "状态变化触发同步：上游 {}->{up} 接管 {gw_trimmed}->{want_gw} 暴露 [{}]->[{ex_str}] MTU {}->{mtu_now}",
+                old_up.trim(),
+                old_ex.trim(),
+                old_mtu.trim()
+            ),
+        );
+        let _lock = net_lock(env);
+        sync_all_unlocked(env);
+    }
+    (up, outs)
+}
+
+/// 规则列表 `rules` 中没有以 `<优先级>:` 开头且含 `needle` 的条目时，用 `args`（`rule add pref <优先级> …`）补加；
+/// `use_v6` 决定走 `ip` 还是 `ip -6`。
+fn ensure_rule(ctx: &NetCtx<'_>, use_v6: bool, rules: &str, needle: &str, args: &[&str]) {
+    let head = format!("{}:", args.get(3).copied().unwrap_or_default());
+    if rules
+        .lines()
+        .any(|line| line.starts_with(&head) && line.contains(needle))
+    {
+        return;
+    }
+    if use_v6 {
+        ctx.ip6_run(args);
+    } else {
+        ctx.ip_run(args);
+    }
+}
+
+/// 补回被外部删除的策略路由：4800（虚拟机网段查本地网络表），有上游时再补 18800（`xr0` 入站查本地网络表）与 18900（`xr0` 入站查上游表）。
+fn reassert_rules(ctx: &NetCtx<'_>, up: &str, net4: &str, net6: &str) {
+    let tbl = ctx.lnt();
+    let rules4 = ctx.ip(&["rule"]).stdout;
+    let to4 = format!("to {net4}");
+    ensure_rule(
+        ctx,
+        false,
+        &rules4,
+        &to4,
+        &["rule", "add", "pref", "4800", "to", net4, "lookup", tbl],
+    );
+    let rules6 = ctx.ip6(&["rule"]).stdout;
+    let to6 = format!("to {net6}");
+    ensure_rule(
+        ctx,
+        true,
+        &rules6,
+        &to6,
+        &["rule", "add", "pref", "4800", "to", net6, "lookup", tbl],
+    );
+    if up.is_empty() {
+        return;
+    }
+    let iif = format!("iif {XR_IF}");
+    let iif_up = format!("iif {XR_IF} lookup {up}");
+    for use_v6 in [false, true] {
+        let rules_out = if use_v6 {
+            ctx.ip6(&["rule"]).stdout
+        } else {
+            ctx.ip(&["rule"]).stdout
+        };
+        ensure_rule(
+            ctx,
+            use_v6,
+            &rules_out,
+            &iif,
+            &["rule", "add", "pref", "18800", "iif", XR_IF, "lookup", tbl],
+        );
+        ensure_rule(
+            ctx,
+            use_v6,
+            &rules_out,
+            &iif_up,
+            &["rule", "add", "pref", "18900", "iif", XR_IF, "lookup", up],
+        );
+    }
+}
+
+/// 回退模式（`net.mode` 为 `fallback`）下补回 `table 97` 中虚拟机网段的路由，并重新下发 `VPN` 路由。
+fn reassert_fallback(ctx: &NetCtx<'_>, net4: &str, net6: &str) {
+    if !fs::read_to_string(ctx.env.run_dir().join("net.mode"))
+        .is_ok_and(|text| text.trim() == "fallback")
+    {
+        return;
+    }
+    let head4 = format!("{net4} dev {XR_IF}");
+    if !ctx
+        .ip(&["route", "show", "table", "97"])
+        .stdout
+        .lines()
+        .any(|row| row.starts_with(&head4))
+    {
+        ctx.ip_run(&["route", "replace", net4, "dev", XR_IF, "table", "97"]);
+    }
+    let head6 = format!("{net6} dev {XR_IF}");
+    if !ctx
+        .ip6(&["route", "show", "table", "97"])
+        .stdout
+        .lines()
+        .any(|line| line.starts_with(&head6))
+    {
+        ctx.ip6_run(&["route", "replace", net6, "dev", XR_IF, "table", "97"]);
+    }
+    routes_reassert(ctx);
+}
+
+/// 每轮补回挂链钩子、流量计数钩子、`MSS` 规则与热点规则。
+fn reassert_hooks(ctx: &NetCtx<'_>, outs: &[String]) {
+    fwd_first(ctx);
+    nat_first(ctx);
+    fwd6_first(ctx);
+    nat6_first(ctx);
+    acct_hooks(ctx);
+    if !ctx
+        .ipt(&["-t", "mangle", "-C", "POSTROUTING", "-j", "XR_MSS"])
+        .success()
+    {
+        let _lock = net_lock(ctx.env);
+        mss_rules(ctx, outs);
+    }
+    let _lock = net_lock(ctx.env);
+    hs_sync(ctx);
+}
+
 /// `xr net watch`：`xr0` 存在期间每 10 秒比对上游、出口、MTU、路由文件等指纹，有变化时完整对账，否则只补齐被外部删除的规则。
 #[must_use]
 pub(crate) fn watch(env: &Env) -> i32 {
@@ -1082,158 +1256,13 @@ pub(crate) fn watch(env: &Env) -> i32 {
         }
         let cfg = Config::load(env);
         let ctx = NetCtx::new(env, &cfg);
-        let run = env.run_dir();
         time_push(env);
-
-        let up = upstream_iface(&ctx);
-        let outs = upstream_out(&ctx, &up);
-        let ex = expose_ifaces(&ctx, &up);
-        let ex_str = if ex.is_empty() {
-            String::new()
-        } else {
-            format!("{} ", ex.join(" "))
-        };
-        let outs_str = if outs.is_empty() {
-            String::new()
-        } else {
-            format!("{} ", outs.join(" "))
-        };
-        let outs6 = upstream_out6(&ctx, &up);
-        let v6_outs_str = if outs6.is_empty() {
-            String::new()
-        } else {
-            format!("{} ", outs6.join(" "))
-        };
-
-        let have_gw = fs::read_to_string(run.join("net.gw")).unwrap_or_else(|_| "off".to_owned());
-        let gw_trimmed = have_gw.trim();
-        let want_gw = gw_want(&ctx);
-        let ck = routes_file_cksum(&ctx);
-        let mtu_now = upstream_mtu(&ctx, &up, &outs).to_string();
-
-        let old_up = fs::read_to_string(run.join("net.up_if")).unwrap_or_default();
-        let old_outs = fs::read_to_string(run.join("net.up_out")).unwrap_or_default();
-        let old_ex = fs::read_to_string(run.join("net.expose_if")).unwrap_or_default();
-        let old_outs6 = fs::read_to_string(run.join("net.up_out6")).unwrap_or_default();
-        let old_v6 = fs::read_to_string(run.join("net.v6")).unwrap_or_default();
-        let old_v6src = fs::read_to_string(run.join("net.v6src")).unwrap_or_default();
-        let old_ck = fs::read_to_string(run.join("vpn.cksum")).unwrap_or_default();
-        let old_mtu = fs::read_to_string(run.join("net.mtu")).unwrap_or_default();
-
-        let vm_v6_s = if vm_v6(env) { "1" } else { "" };
-        let v6src_now = format!("{} ", v6_src_fingerprint(&ctx, &outs6));
-
-        if up != old_up.trim()
-            || outs_str.trim() != old_outs.trim()
-            || ex_str.trim() != old_ex.trim()
-            || want_gw != gw_trimmed
-            || v6_outs_str.trim() != old_outs6.trim()
-            || vm_v6_s != old_v6.trim()
-            || v6src_now.trim() != old_v6src.trim()
-            || ck != old_ck.trim()
-            || mtu_now != old_mtu.trim()
-        {
-            dlog(
-                env,
-                &cfg,
-                "watch",
-                &format!(
-                    "状态变化触发同步：上游 {}->{up} 接管 {gw_trimmed}->{want_gw} 暴露 [{}]->[{ex_str}] MTU {}->{mtu_now}",
-                    old_up.trim(),
-                    old_ex.trim(),
-                    old_mtu.trim()
-                ),
-            );
-            let _lock = net_lock(env);
-            sync_all_unlocked(env);
-        }
-
-        fwd_first(&ctx);
-        nat_first(&ctx);
-        fwd6_first(&ctx);
-        nat6_first(&ctx);
-        acct_hooks(&ctx);
-
-        if !ctx
-            .ipt(&["-t", "mangle", "-C", "POSTROUTING", "-j", "XR_MSS"])
-            .success()
-        {
-            let _lock = net_lock(env);
-            mss_rules(&ctx, &outs);
-        }
-        {
-            let _lock = net_lock(env);
-            hs_sync(&ctx);
-        }
-
+        let (up, outs) = watch_state(&ctx);
+        reassert_hooks(&ctx, &outs);
         let net4 = format!("{}.0/24", cfg.net_prefix());
         let net6 = format!("{XR_NET6}::/64");
-        let tbl = ctx.lnt();
-        if !ctx
-            .ip(&["rule"])
-            .stdout
-            .lines()
-            .any(|rule4| rule4.starts_with("4800:") && rule4.contains(&format!("to {net4}")))
-        {
-            ctx.ip_run(&["rule", "add", "pref", "4800", "to", &net4, "lookup", tbl]);
-        }
-        if !ctx
-            .ip6(&["rule"])
-            .stdout
-            .lines()
-            .any(|rule6| rule6.starts_with("4800:") && rule6.contains(&format!("to {net6}")))
-        {
-            ctx.ip6_run(&["rule", "add", "pref", "4800", "to", &net6, "lookup", tbl]);
-        }
-        if !up.is_empty() {
-            for use_v6 in [false, true] {
-                let rules_out = if use_v6 {
-                    ctx.ip6(&["rule"]).stdout
-                } else {
-                    ctx.ip(&["rule"]).stdout
-                };
-                if !rules_out.lines().any(|rule_line| {
-                    rule_line.starts_with("18800:") && rule_line.contains(&format!("iif {XR_IF}"))
-                }) {
-                    let args = ["rule", "add", "pref", "18800", "iif", XR_IF, "lookup", tbl];
-                    if use_v6 {
-                        ctx.ip6_run(&args);
-                    } else {
-                        ctx.ip_run(&args);
-                    }
-                }
-                if !rules_out.lines().any(|entry_line| {
-                    entry_line.starts_with("18900:")
-                        && entry_line.contains(&format!("iif {XR_IF} lookup {up}"))
-                }) {
-                    let args = ["rule", "add", "pref", "18900", "iif", XR_IF, "lookup", &up];
-                    if use_v6 {
-                        ctx.ip6_run(&args);
-                    } else {
-                        ctx.ip_run(&args);
-                    }
-                }
-            }
-        }
-        if fs::read_to_string(run.join("net.mode")).is_ok_and(|text| text.trim() == "fallback") {
-            if !ctx
-                .ip(&["route", "show", "table", "97"])
-                .stdout
-                .lines()
-                .any(|row| row.starts_with(&format!("{net4} dev {XR_IF}")))
-            {
-                ctx.ip_run(&["route", "replace", &net4, "dev", XR_IF, "table", "97"]);
-            }
-            if !ctx
-                .ip6(&["route", "show", "table", "97"])
-                .stdout
-                .lines()
-                .any(|line| line.starts_with(&format!("{net6} dev {XR_IF}")))
-            {
-                ctx.ip6_run(&["route", "replace", &net6, "dev", XR_IF, "table", "97"]);
-            }
-            routes_reassert(&ctx);
-        }
+        reassert_rules(&ctx, &up, &net4, &net6);
+        reassert_fallback(&ctx, &net4, &net6);
     }
     0
 }
