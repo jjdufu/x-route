@@ -433,22 +433,16 @@ pub(crate) fn v6_nft_teardown(env: &Env) {
     fsx::remove_logged(env, marker);
 }
 
-/// 按网关形态重建 nft 转发链中的 `IPv6` 规则（仅在使用 nft 回退时）。
-pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[String]) {
-    let run = ctx.env.run_dir();
-    if !run.join("net.fwd6nft").is_file() {
-        return;
-    }
-    if !nft_cmd(&["flush", "chain", "inet", "xr_v6", "fwd"]) {
-        return;
-    }
-    let net6 = format!("{XR_NET6}::/64");
-    nft_run(&[
-        "add",
-        "rule",
-        "inet",
-        "xr_v6",
-        "fwd",
+/// 在 `inet xr_v6` 表的 `fwd` 链末尾追加一条规则（`rule` 为 `add rule inet xr_v6 fwd` 之后的部分）。
+fn nft_fwd(rule: &[&str]) {
+    let mut args = vec!["add", "rule", "inet", "xr_v6", "fwd"];
+    args.extend_from_slice(rule);
+    nft_run(&args);
+}
+
+/// nft 出口段：放行进出 `xr0` 的已建立连接；虚拟机开启 `IPv6` 时放行 `xr0` 到各上游出口。
+fn v6_nft_rules_out(ctx: &NetCtx<'_>, outs6: &[String]) {
+    nft_fwd(&[
         "oifname",
         XR_IF,
         "ct",
@@ -456,12 +450,7 @@ pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex:
         "related,established",
         "accept",
     ]);
-    nft_run(&[
-        "add",
-        "rule",
-        "inet",
-        "xr_v6",
-        "fwd",
+    nft_fwd(&[
         "iifname",
         XR_IF,
         "ct",
@@ -471,96 +460,94 @@ pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex:
     ]);
     if vm_v6(ctx.env) {
         for out6 in outs6 {
-            nft_run(&[
-                "add", "rule", "inet", "xr_v6", "fwd", "iifname", XR_IF, "oifname", out6, "accept",
-            ]);
+            nft_fwd(&["iifname", XR_IF, "oifname", out6, "accept"]);
         }
     }
-    let active_routes: Vec<String> = fs::read_to_string(run.join("routes.active"))
+}
+
+/// nft 例外接口段：例外接口可访问虚拟机网段与已生效的 `IPv6` `VPN` 路由；非例外的上游出口到 `xr0` 一律丢弃。
+fn v6_nft_rules_ex(ctx: &NetCtx<'_>, outs6: &[String], ex: &[String]) {
+    let net6 = format!("{XR_NET6}::/64");
+    let active_routes: Vec<String> = fs::read_to_string(ctx.env.run_dir().join("routes.active"))
         .unwrap_or_default()
         .lines()
         .filter(|line| line.contains(':'))
         .map(str::to_owned)
         .collect();
     for i in ex {
-        nft_run(&[
-            "add", "rule", "inet", "xr_v6", "fwd", "iifname", i, "oifname", XR_IF, "ip6", "daddr",
-            &net6, "accept",
+        nft_fwd(&[
+            "iifname", i, "oifname", XR_IF, "ip6", "daddr", &net6, "accept",
         ]);
         for route in &active_routes {
-            nft_run(&[
-                "add", "rule", "inet", "xr_v6", "fwd", "iifname", i, "oifname", XR_IF, "ip6",
-                "daddr", route, "accept",
+            nft_fwd(&[
+                "iifname", i, "oifname", XR_IF, "ip6", "daddr", route, "accept",
             ]);
         }
     }
     let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
     for iface in outs6 {
         if !ex_set.contains(iface.as_str()) {
-            nft_run(&[
-                "add", "rule", "inet", "xr_v6", "fwd", "iifname", iface, "oifname", XR_IF, "drop",
+            nft_fwd(&["iifname", iface, "oifname", XR_IF, "drop"]);
+        }
+    }
+}
+
+/// nft 网关段：`v6` 模式下共享网络与 `xr0` 双向放行，其余模式拒绝共享网络到 `xr0`；共享网络直连上游出口一律拒绝。
+fn v6_nft_rules_gw(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String]) {
+    if gw_mode == "off" {
+        return;
+    }
+    for i in tether_ifaces(ctx) {
+        if gw_mode == "v6" {
+            nft_fwd(&["iifname", &i, "oifname", XR_IF, "accept"]);
+            nft_fwd(&["iifname", XR_IF, "oifname", &i, "accept"]);
+        } else {
+            nft_fwd(&[
+                "iifname", &i, "oifname", XR_IF, "meta", "l4proto", "tcp", "reject", "with", "tcp",
+                "reset",
+            ]);
+            nft_fwd(&[
+                "iifname",
+                &i,
+                "oifname",
+                XR_IF,
+                "reject",
+                "with",
+                "icmpv6",
+                "admin-prohibited",
+            ]);
+        }
+        for out_if in outs6 {
+            nft_fwd(&[
+                "iifname", &i, "oifname", out_if, "meta", "l4proto", "tcp", "reject", "with",
+                "tcp", "reset",
+            ]);
+            nft_fwd(&[
+                "iifname",
+                &i,
+                "oifname",
+                out_if,
+                "reject",
+                "with",
+                "icmpv6",
+                "admin-prohibited",
             ]);
         }
     }
-    if gw_mode != "off" {
-        for i in tether_ifaces(ctx) {
-            if gw_mode == "v6" {
-                nft_run(&[
-                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", &i, "oifname", XR_IF,
-                    "accept",
-                ]);
-                nft_run(&[
-                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", XR_IF, "oifname", &i,
-                    "accept",
-                ]);
-            } else {
-                nft_run(&[
-                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", &i, "oifname", XR_IF, "meta",
-                    "l4proto", "tcp", "reject", "with", "tcp", "reset",
-                ]);
-                nft_run(&[
-                    "add",
-                    "rule",
-                    "inet",
-                    "xr_v6",
-                    "fwd",
-                    "iifname",
-                    &i,
-                    "oifname",
-                    XR_IF,
-                    "reject",
-                    "with",
-                    "icmpv6",
-                    "admin-prohibited",
-                ]);
-            }
-            for out_if in outs6 {
-                nft_run(&[
-                    "add", "rule", "inet", "xr_v6", "fwd", "iifname", &i, "oifname", out_if,
-                    "meta", "l4proto", "tcp", "reject", "with", "tcp", "reset",
-                ]);
-                nft_run(&[
-                    "add",
-                    "rule",
-                    "inet",
-                    "xr_v6",
-                    "fwd",
-                    "iifname",
-                    &i,
-                    "oifname",
-                    out_if,
-                    "reject",
-                    "with",
-                    "icmpv6",
-                    "admin-prohibited",
-                ]);
-            }
-        }
+}
+
+/// 按网关形态重建 nft 转发链中的 `IPv6` 规则（仅在使用 nft 回退时）。
+pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[String]) {
+    let run = ctx.env.run_dir();
+    if !run.join("net.fwd6nft").is_file() {
+        return;
     }
-    nft_run(&[
-        "add", "rule", "inet", "xr_v6", "fwd", "oifname", XR_IF, "drop",
-    ]);
-    nft_run(&[
-        "add", "rule", "inet", "xr_v6", "fwd", "iifname", XR_IF, "drop",
-    ]);
+    if !nft_cmd(&["flush", "chain", "inet", "xr_v6", "fwd"]) {
+        return;
+    }
+    v6_nft_rules_out(ctx, outs6);
+    v6_nft_rules_ex(ctx, outs6, ex);
+    v6_nft_rules_gw(ctx, gw_mode, outs6);
+    nft_fwd(&["oifname", XR_IF, "drop"]);
+    nft_fwd(&["iifname", XR_IF, "drop"]);
 }
