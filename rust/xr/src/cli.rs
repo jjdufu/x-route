@@ -283,6 +283,19 @@ const OK_JSON: &str = "{\"ok\":true}";
 /// `xr set` 参数个数不对时的应答。
 const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
 
+/// 未知子命令时打印的用法。
+const USAGE: &str = "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm";
+
+/// 取 `rest` 的第 `idx` 个参数，没有时用 `default`。
+fn arg<'a>(rest: &'a [String], idx: usize, default: &'a str) -> &'a str {
+    rest.get(idx).map_or(default, String::as_str)
+}
+
+/// 打印用法并返回退出码 2。
+fn usage(env: &Env) -> i32 {
+    emit(env, USAGE, 2)
+}
+
 /// `xr` 的入口：按第一个参数分发子命令，返回进程退出码。
 pub fn run(args: &[String]) -> i32 {
     let env = Env::from_process();
@@ -292,9 +305,7 @@ pub fn run(args: &[String]) -> i32 {
     let rest = args.get(1..).unwrap_or(&[]);
 
     if cmd == "boot-tail" {
-        let moff = rest.first().map_or("-1", String::as_str);
-        let coff = rest.get(1).map_or("-1", String::as_str);
-        return boot_tail::run(&env, moff, coff);
+        return boot_tail::run(&env, arg(rest, 0, "-1"), arg(rest, 1, "-1"));
     }
 
     if let Err(err) = env.ensure_dirs() {
@@ -302,253 +313,297 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     match cmd {
-        "start" => vm_start(&env),
-        "stop" => vm_stop(&env),
-        "start-bg" => bg_run(&env, "start"),
-        "stop-bg" => bg_run(&env, "stop"),
-        "traffic" => run_traffic_cmd(&env, rest.first().map_or("json", String::as_str)),
-        "traffic-reset" => {
-            let cfg = Config::load(&env);
-            let ctx = NetCtx::new(&env, &cfg);
-            acct_reset(&ctx);
-            fsx::write_logged(&env, env.run_dir().join("notify.force"), "");
-            if vm::running(&env) && env.run_dir().join("guest/host").is_dir() {
-                fsx::write_logged(
-                    &env,
-                    env.run_dir().join("guest/host/acct.cmd"),
-                    format!("reset {}{}\n", unix_now(), std::process::id()),
-                );
-            }
-            log::info(&env, "xr", "流量统计已清零");
-            emit(&env, OK_JSON, 0)
+        "start" | "stop" | "start-bg" | "stop-bg" | "running" => cmd_vm(&env, cmd),
+        "ack-trip" | "expand" | "reset-disk" | "sync" => cmd_vm_misc(&env, cmd, rest),
+        "traffic" | "traffic-reset" | "traffic-split" => cmd_traffic(&env, cmd, rest),
+        "status-json" | "status-line" | "get" | "ipv6" => cmd_status(&env, cmd, rest),
+        "set" => cmd_set(&env, rest),
+        "vpn-import" | "vpn-enable" | "vpn-disable" | "vpn-delete" => cmd_vpn(&env, cmd, rest),
+        "project" | "luci" | "ls" | "log-export" | "diag-export" | "uninstall-now" => {
+            cmd_misc(&env, cmd, rest)
         }
-        "traffic-split" => {
-            let (rc, out) = traffic_split(&env, 4);
-            emit(&env, &out, rc)
-        }
-        "running" => i32::from(!vm::running(&env)),
-        "status-json" => emit(&env, &status::json(&env), 0),
-        "status-line" => emit(&env, &status::line(&env), 0),
-        "get" => {
-            let cfg = Config::load(&env);
-            emit_lines(
-                &env,
-                KEYS.iter().map(|key| format!("{key}={}", cfg.get_raw(key))),
-                0,
-            )
-        }
-        "set" => {
-            let (Some(cfg_key), Some(item)) = (rest.first(), rest.get(1)) else {
-                return emit(&env, SET_USAGE_JSON, 2);
-            };
-            if rest.len() != 2 {
-                return emit(&env, SET_USAGE_JSON, 2);
-            }
-            let cfg = Config::load(&env);
-            if cfg_key == "XR_HOTSPOT_SUBNET" && !item.is_empty() {
-                if !hs_subnet_valid(item) {
-                    let msg = json!({"ok": false, "error": "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24"});
-                    return emit(&env, &msg.to_string(), 1);
-                }
-                if let Some(clash) = hs_subnet_clash(&env, cfg.net_prefix(), item, None) {
-                    let msg = json!({"ok": false, "error": format!("与 {clash} 冲突")});
-                    return emit(&env, &msg.to_string(), 1);
-                }
-            }
-            if !set_kv(&env, cfg_key, item) {
-                let msg = json!({"ok": false, "error": format!("取值不合法：{cfg_key}")});
-                return emit(&env, &msg.to_string(), 1);
-            }
-            if let Err(msg) = after_set(&env, cfg_key) {
-                return emit(&env, &json!({"ok": false, "error": msg}).to_string(), 1);
-            }
-            let done = json!({"ok": true, "restart": needs_restart(&env, cfg_key)});
-            emit(&env, &done.to_string(), 0)
-        }
-        "ipv6" => {
-            let (rc, out) = ipv6_set(&env, rest.first().map_or("", String::as_str));
-            emit(&env, &out, rc)
-        }
+        "clash-bridge" | "clash-ping" | "clash-call" | "clash-stream" | "clash-ws-send"
+        | "clash-ws-close" => cmd_clash(&env, cmd, rest),
+        "internal" => cmd_internal(&env, rest),
+        _ => usage(&env),
+    }
+}
+
+/// 虚拟机启停类子命令：`start`、`stop`、`start-bg`、`stop-bg`、`running`。
+fn cmd_vm(env: &Env, cmd: &str) -> i32 {
+    match cmd {
+        "start" => vm_start(env),
+        "stop" => vm_stop(env),
+        "start-bg" => bg_run(env, "start"),
+        "stop-bg" => bg_run(env, "stop"),
+        "running" => i32::from(!vm::running(env)),
+        _ => usage(env),
+    }
+}
+
+/// 虚拟机杂项子命令：`ack-trip`、`expand`、`reset-disk`、`sync`。
+fn cmd_vm_misc(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    match cmd {
         "ack-trip" => {
-            fsx::remove_logged(&env, env.tripped_file());
-            log::info(&env, "xr", "熔断已确认");
+            fsx::remove_logged(env, env.tripped_file());
+            log::info(env, "xr", "熔断已确认");
             0
         }
         "expand" => {
             let Some(mb) = rest.first() else {
-                return emit(&env, "usage: xr expand MB", 2);
+                return emit(env, "usage: xr expand MB", 2);
             };
             if mb.trim().parse::<u64>().is_err() {
-                return emit(&env, "usage: xr expand MB", 2);
+                return emit(env, "usage: xr expand MB", 2);
             }
-            disk::expand(&env, mb)
+            disk::expand(env, mb)
         }
-        "reset-disk" => disk::reset(&env),
+        "reset-disk" => disk::reset(env),
         "sync" => {
-            if vm::running(&env) {
-                run_net_hook(&env, "sync")
+            if vm::running(env) {
+                run_net_hook(env, "sync")
             } else {
                 1
             }
         }
-        "vpn-import" => {
-            let (rc, out) = vpn_import(
-                &env,
-                rest.first().map_or("", String::as_str),
-                rest.get(1).map_or("1", String::as_str),
-            );
-            emit(&env, &out, rc)
+        _ => usage(env),
+    }
+}
+
+/// 流量类子命令：`traffic`、`traffic-reset`、`traffic-split`。
+fn cmd_traffic(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    match cmd {
+        "traffic" => run_traffic_cmd(env, arg(rest, 0, "json")),
+        "traffic-reset" => traffic_reset(env),
+        "traffic-split" => {
+            let (rc, out) = traffic_split(env, 4);
+            emit(env, &out, rc)
         }
-        "vpn-enable" => {
-            let (rc, out) = vpn_set(&env, "enable", rest.first().map_or("", String::as_str));
-            emit(&env, &out, rc)
+        _ => usage(env),
+    }
+}
+
+/// `xr traffic-reset`：清零手机侧计数，通知界面刷新，虚拟机在线时让客机侧也清零。
+fn traffic_reset(env: &Env) -> i32 {
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    acct_reset(&ctx);
+    fsx::write_logged(env, env.run_dir().join("notify.force"), "");
+    if vm::running(env) && env.run_dir().join("guest/host").is_dir() {
+        fsx::write_logged(
+            env,
+            env.run_dir().join("guest/host/acct.cmd"),
+            format!("reset {}{}\n", unix_now(), std::process::id()),
+        );
+    }
+    log::info(env, "xr", "流量统计已清零");
+    emit(env, OK_JSON, 0)
+}
+
+/// 状态与配置读取类子命令：`status-json`、`status-line`、`get`、`ipv6`。
+fn cmd_status(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    match cmd {
+        "status-json" => emit(env, &status::json(env), 0),
+        "status-line" => emit(env, &status::line(env), 0),
+        "get" => {
+            let cfg = Config::load(env);
+            emit_lines(
+                env,
+                KEYS.iter().map(|key| format!("{key}={}", cfg.get_raw(key))),
+                0,
+            )
         }
-        "vpn-disable" => {
-            let (rc, out) = vpn_set(&env, "disable", rest.first().map_or("", String::as_str));
-            emit(&env, &out, rc)
+        "ipv6" => {
+            let (rc, out) = ipv6_set(env, arg(rest, 0, ""));
+            emit(env, &out, rc)
         }
-        "vpn-delete" => {
-            let (rc, out) = vpn_delete(&env, rest.first().map_or("", String::as_str));
-            emit(&env, &out, rc)
+        _ => usage(env),
+    }
+}
+
+/// `xr set KEY VALUE`：校验并写入一个配置键，再做联动。
+fn cmd_set(env: &Env, rest: &[String]) -> i32 {
+    let (Some(cfg_key), Some(item)) = (rest.first(), rest.get(1)) else {
+        return emit(env, SET_USAGE_JSON, 2);
+    };
+    if rest.len() != 2 {
+        return emit(env, SET_USAGE_JSON, 2);
+    }
+    let cfg = Config::load(env);
+    if cfg_key == "XR_HOTSPOT_SUBNET" && !item.is_empty() {
+        if !hs_subnet_valid(item) {
+            let msg = json!({"ok": false, "error": "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24"});
+            return emit(env, &msg.to_string(), 1);
         }
-        "project" => {
-            let st = Command::new("am")
-                .args([
-                    "start",
-                    "-a",
-                    "android.intent.action.VIEW",
-                    "-d",
-                    "https://github.com/jjdufu/x-route",
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            st.map_or(1, |run_status| run_status.code().unwrap_or(1_i32))
+        if let Some(clash) = hs_subnet_clash(env, cfg.net_prefix(), item, None) {
+            let msg = json!({"ok": false, "error": format!("与 {clash} 冲突")});
+            return emit(env, &msg.to_string(), 1);
         }
+    }
+    if !set_kv(env, cfg_key, item) {
+        let msg = json!({"ok": false, "error": format!("取值不合法：{cfg_key}")});
+        return emit(env, &msg.to_string(), 1);
+    }
+    if let Err(msg) = after_set(env, cfg_key) {
+        return emit(env, &json!({"ok": false, "error": msg}).to_string(), 1);
+    }
+    let done = json!({"ok": true, "restart": needs_restart(env, cfg_key)});
+    emit(env, &done.to_string(), 0)
+}
+
+/// `VPN` 配置类子命令：`vpn-import`、`vpn-enable`、`vpn-disable`、`vpn-delete`。
+fn cmd_vpn(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    let (rc, out) = match cmd {
+        "vpn-import" => vpn_import(env, arg(rest, 0, ""), arg(rest, 1, "1")),
+        "vpn-enable" => vpn_set(env, "enable", arg(rest, 0, "")),
+        "vpn-disable" => vpn_set(env, "disable", arg(rest, 0, "")),
+        "vpn-delete" => vpn_delete(env, arg(rest, 0, "")),
+        _ => return usage(env),
+    };
+    emit(env, &out, rc)
+}
+
+/// 用 `am start` 在系统浏览器里打开 `url`，返回 `am` 的退出码（拉不起来时为 1）。
+fn am_view(url: &str) -> i32 {
+    let st = Command::new("am")
+        .args(["start", "-a", "android.intent.action.VIEW", "-d", url])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    st.map_or(1, |exit_status| exit_status.code().unwrap_or(1_i32))
+}
+
+/// 导出日志包或诊断包，返回导出结果并按是否成功给出退出码。
+fn cmd_export(env: &Env, prefix: &str, full: bool) -> i32 {
+    let st_j = status::json(env);
+    let out = export_pack(env, prefix, full, &st_j);
+    emit(env, &out, i32::from(!out.contains("\"ok\":true")))
+}
+
+/// 杂项子命令：`project`、`luci`、`ls`、`log-export`、`diag-export`、`uninstall-now`。
+fn cmd_misc(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    match cmd {
+        "project" => am_view("https://github.com/jjdufu/x-route"),
         "luci" => {
-            let cfg = Config::load(&env);
-            let url = format!("http://{}.254", cfg.net_prefix());
-            let st = Command::new("am")
-                .args(["start", "-a", "android.intent.action.VIEW", "-d", &url])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            st.map_or(1, |exit_status| exit_status.code().unwrap_or(1_i32))
+            let cfg = Config::load(env);
+            am_view(&format!("http://{}.254", cfg.net_prefix()))
         }
         "ls" => {
-            let (rc, items) = list_dir(
-                &env,
-                rest.first().map_or("", String::as_str),
-                rest.get(1).map_or("dir", String::as_str),
-            );
-            emit_lines(&env, items, rc)
+            let (rc, items) = list_dir(env, arg(rest, 0, ""), arg(rest, 1, "dir"));
+            emit_lines(env, items, rc)
         }
-        "log-export" => {
-            let st_j = status::json(&env);
-            let out = export_pack(&env, "xrouter-logs", false, &st_j);
-            emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
-        }
-        "diag-export" => {
-            let st_j = status::json(&env);
-            let out = export_pack(&env, "xrouter-diag", true, &st_j);
-            emit(&env, &out, i32::from(!out.contains("\"ok\":true")))
-        }
+        "log-export" => cmd_export(env, "xrouter-logs", false),
+        "diag-export" => cmd_export(env, "xrouter-diag", true),
         "uninstall-now" => {
-            let (rc, out) = uninstall::now(&env, rest.first().map_or("", String::as_str));
-            emit(&env, &out, rc)
+            let (rc, out) = uninstall::now(env, arg(rest, 0, ""));
+            emit(env, &out, rc)
         }
-        "clash-bridge" => crate::clash::run_clash_bridge(&env),
-        "clash-ping" => crate::clash::run_clash_ping(&env),
-        "clash-call" => crate::clash::run_clash_call(&env, rest.first().map_or("", String::as_str)),
-        "clash-stream" => crate::clash::run_clash_stream(
-            &env,
-            rest.first().map_or("", String::as_str),
-            rest.get(1).map_or("", String::as_str),
-        ),
+        _ => usage(env),
+    }
+}
+
+/// `OpenClash` 面板桥接类子命令：`clash-bridge`、`clash-ping`、`clash-call`、`clash-stream`、`clash-ws-send`、`clash-ws-close`。
+fn cmd_clash(env: &Env, cmd: &str, rest: &[String]) -> i32 {
+    match cmd {
+        "clash-bridge" => crate::clash::run_clash_bridge(env),
+        "clash-ping" => crate::clash::run_clash_ping(env),
+        "clash-call" => crate::clash::run_clash_call(env, arg(rest, 0, "")),
+        "clash-stream" => crate::clash::run_clash_stream(env, arg(rest, 0, ""), arg(rest, 1, "")),
         "clash-ws-send" => crate::clash::run_clash_ws_send(
-            &env,
-            rest.first().map_or("", String::as_str),
-            rest.get(1).map_or("text", String::as_str),
-            rest.get(2).map_or("", String::as_str),
+            env,
+            arg(rest, 0, ""),
+            arg(rest, 1, "text"),
+            arg(rest, 2, ""),
         ),
-        "clash-ws-close" => {
-            crate::clash::run_clash_ws_close(&env, rest.first().map_or("", String::as_str))
+        "clash-ws-close" => crate::clash::run_clash_ws_close(env, arg(rest, 0, "")),
+        _ => usage(env),
+    }
+}
+
+/// `xr internal …`：供脚本与自身后台进程调用的内部子命令，未知时返回 2。
+fn cmd_internal(env: &Env, rest: &[String]) -> i32 {
+    match rest.first().map(String::as_str) {
+        Some("dump-config-keys") => emit_lines(env, KEYS, 0),
+        Some("config-hash") => emit(env, &config::hash(env), 0),
+        Some("valid-kv") => {
+            let (Some(set_key), Some(val)) = (rest.get(1), rest.get(2)) else {
+                return 2;
+            };
+            let cfg = Config::load(env);
+            i32::from(!valid_kv(env, &cfg, set_key, val))
         }
-        "internal" => match rest.first().map(String::as_str) {
-            Some("dump-config-keys") => emit_lines(&env, KEYS, 0),
-            Some("config-hash") => emit(&env, &config::hash(&env), 0),
-            Some("valid-kv") => {
-                let (Some(set_key), Some(val)) = (rest.get(1), rest.get(2)) else {
-                    return 2;
-                };
-                let cfg = Config::load(&env);
-                i32::from(!valid_kv(&env, &cfg, set_key, val))
+        Some("set-kv") => {
+            let (Some(name_key), Some(value)) = (rest.get(1), rest.get(2)) else {
+                return 2;
+            };
+            i32::from(!set_kv(env, name_key, value))
+        }
+        Some("net") => run_net_cli(env, rest.get(1..).unwrap_or(&[])),
+        Some("traffic") => run_traffic_cmd(env, arg(rest, 1, "json")),
+        Some("vm") => internal_vm(env, rest),
+        Some("daemon" | "watchdog") => internal_daemon(env, arg(rest, 0, "")),
+        Some(_) => internal_misc(env, rest),
+        None => 2,
+    }
+}
+
+/// `xr internal vm …`：虚拟机启停、状态、扩容与重置磁盘。
+fn internal_vm(env: &Env, rest: &[String]) -> i32 {
+    match rest.get(1).map(String::as_str) {
+        Some("start") => vm_start(env),
+        Some("stop") => vm_stop(env),
+        Some("status") => emit(env, &vm::status_json(env), 0),
+        Some("expand") => {
+            let Some(mb) = rest.get(2) else {
+                return 2;
+            };
+            disk::expand(env, mb)
+        }
+        Some("reset-disk") => disk::reset(env),
+        _ => 2,
+    }
+}
+
+/// `xr internal daemon` 与 `xr internal watchdog`：以对应角色进入常驻循环。
+fn internal_daemon(env: &Env, which: &str) -> i32 {
+    let mut role_env = env.clone();
+    if which == "daemon" {
+        role_env.role = ProcRole::Daemon;
+        daemon::main_loop(&role_env)
+    } else {
+        role_env.role = ProcRole::Watchdog;
+        watchdog::main_loop(&role_env)
+    }
+}
+
+/// 其余内部子命令：后台执行、开机服务、模块按钮、诊断快照、`crosvm` 跳板与卸载。
+fn internal_misc(env: &Env, rest: &[String]) -> i32 {
+    match rest.first().map(String::as_str) {
+        Some("fuse-watch") => {
+            fuse_watch(env);
+            0
+        }
+        Some("clash-mux") => crate::clash::run_clash_mux(env),
+        Some("bg-exec") => bg_exec(env, arg(rest, 1, "")),
+        Some("boot-service") => boot_service(env),
+        Some("action-toggle") => action_toggle(env),
+        Some("diag-snap") => {
+            let cfg = Config::load(env);
+            if cfg.debug_on() {
+                diag::snap(env, arg(rest, 1, "manual"), 10);
             }
-            Some("set-kv") => {
-                let (Some(name_key), Some(value)) = (rest.get(1), rest.get(2)) else {
-                    return 2;
-                };
-                i32::from(!set_kv(&env, name_key, value))
-            }
-            Some("net") => run_net_cli(&env, rest.get(1..).unwrap_or(&[])),
-            Some("traffic") => run_traffic_cmd(&env, rest.get(1).map_or("json", String::as_str)),
-            Some("vm") => match rest.get(1).map(String::as_str) {
-                Some("start") => vm_start(&env),
-                Some("stop") => vm_stop(&env),
-                Some("status") => emit(&env, &vm::status_json(&env), 0),
-                Some("expand") => {
-                    let Some(mb) = rest.get(2) else {
-                        return 2;
-                    };
-                    disk::expand(&env, mb)
-                }
-                Some("reset-disk") => disk::reset(&env),
-                _ => 2,
-            },
-            Some("daemon") => {
-                let mut daemon_env = env;
-                daemon_env.role = ProcRole::Daemon;
-                daemon::main_loop(&daemon_env)
-            }
-            Some("watchdog") => {
-                let mut role_env = env;
-                role_env.role = ProcRole::Watchdog;
-                watchdog::main_loop(&role_env)
-            }
-            Some("fuse-watch") => {
-                fuse_watch(&env);
-                0
-            }
-            Some("clash-mux") => crate::clash::run_clash_mux(&env),
-            Some("bg-exec") => bg_exec(&env, rest.get(1).map_or("", String::as_str)),
-            Some("boot-service") => boot_service(&env),
-            Some("action-toggle") => action_toggle(&env),
-            Some("diag-snap") => {
-                let reason = rest.get(1).map_or("manual", String::as_str);
-                let cfg = Config::load(&env);
-                if cfg.debug_on() {
-                    diag::snap(&env, reason, 10);
-                }
-                0
-            }
-            Some("exec-crosvm") => exec_crosvm_trampoline(&env, rest.get(1..).unwrap_or(&[])),
-            Some("uninstall") => uninstall::standard(&env),
-            Some("uninstall-worker") => {
-                let (Some(stage), Some(moddir), Some(upd)) =
-                    (rest.get(1), rest.get(2), rest.get(3))
-                else {
-                    return 2;
-                };
-                uninstall::worker(&env, stage, moddir, upd)
-            }
-            _ => 2,
-        },
-        _ => emit(
-            &env,
-            "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm",
-            2,
-        ),
+            0
+        }
+        Some("exec-crosvm") => exec_crosvm_trampoline(env, rest.get(1..).unwrap_or(&[])),
+        Some("uninstall") => uninstall::standard(env),
+        Some("uninstall-worker") => {
+            let (Some(stage), Some(moddir), Some(upd)) = (rest.get(1), rest.get(2), rest.get(3))
+            else {
+                return 2;
+            };
+            uninstall::worker(env, stage, moddir, upd)
+        }
+        _ => 2,
     }
 }
