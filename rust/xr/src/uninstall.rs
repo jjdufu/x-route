@@ -38,7 +38,7 @@ fn sys_ok(bin: &Path, args: &[&str]) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|s| s.success())
+        .is_ok_and(|exit_status| exit_status.success())
 }
 
 fn kill_matching_procs(env: &Env, sig: Signal) {
@@ -50,7 +50,8 @@ fn kill_matching_procs(env: &Env, sig: Signal) {
     };
     for ent in rd.flatten() {
         let name = ent.file_name().to_string_lossy().into_owned();
-        if name == self_pid || name.is_empty() || !name.bytes().all(|b| b.is_ascii_digit()) {
+        if name == self_pid || name.is_empty() || !name.bytes().all(|octet| octet.is_ascii_digit())
+        {
             continue;
         }
         let Ok(bytes) = fs::read(ent.path().join("cmdline")) else {
@@ -61,7 +62,7 @@ fn kill_matching_procs(env: &Env, sig: Signal) {
         }
         let mapped: Vec<u8> = bytes
             .into_iter()
-            .map(|b| if b == 0 { b' ' } else { b })
+            .map(|byte| if byte == 0 { b' ' } else { byte })
             .collect();
         let cmd = String::from_utf8_lossy(&mapped);
         if cmd.contains("uninstall") {
@@ -85,7 +86,7 @@ fn notify_present() -> bool {
     Command::new("dumpsys")
         .arg("notification")
         .output()
-        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("id=233 tag=xrouter"))
+        .is_ok_and(|result| String::from_utf8_lossy(&result.stdout).contains("id=233 tag=xrouter"))
 }
 
 fn cancel_notifications(env: &Env) {
@@ -143,9 +144,9 @@ pub fn uninstall_standard(env: &Env) -> i32 {
 
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
-            let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("pid")
-                && let Ok(pid) = fs::read_to_string(&p)
+            let target = ent.path();
+            if target.extension().and_then(|raw_name| raw_name.to_str()) == Some("pid")
+                && let Ok(pid) = fs::read_to_string(&target)
             {
                 send_signal_logged(env, pid.trim(), Signal::TERM);
             }
@@ -159,9 +160,9 @@ pub fn uninstall_standard(env: &Env) -> i32 {
     thread::sleep(Duration::from_secs(1));
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
-            let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("pid")
-                && let Ok(pid) = fs::read_to_string(&p)
+            let file_path = ent.path();
+            if file_path.extension().and_then(|os_str| os_str.to_str()) == Some("pid")
+                && let Ok(pid) = fs::read_to_string(&file_path)
             {
                 send_signal_logged(env, pid.trim(), Signal::KILL);
             }
@@ -169,52 +170,52 @@ pub fn uninstall_standard(env: &Env) -> i32 {
     }
     kill_matching_procs(env, Signal::KILL);
 
-    let ipt = env.sysbin_cmd("iptables");
-    let ip6t = env.sysbin_cmd("ip6tables");
-    let ip = env.sysbin_cmd("ip");
+    let iptables_bin = env.sysbin_cmd("iptables");
+    let ip6tables_cmd = env.sysbin_cmd("ip6tables");
+    let ip_cmd = env.sysbin_cmd("ip");
     let ndc = env.sysbin_cmd("ndc");
 
-    while sys_ok(&ipt, &["-w", "-D", "FORWARD", "-j", "XR_FWD"]) {}
-    sys_run(env, &ipt, &["-w", "-F", "XR_FWD"]);
-    sys_run(env, &ipt, &["-w", "-X", "XR_FWD"]);
+    while sys_ok(&iptables_bin, &["-w", "-D", "FORWARD", "-j", "XR_FWD"]) {}
+    sys_run(env, &iptables_bin, &["-w", "-F", "XR_FWD"]);
+    sys_run(env, &iptables_bin, &["-w", "-X", "XR_FWD"]);
     while sys_ok(
-        &ipt,
+        &iptables_bin,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT"],
     ) {}
-    sys_run(env, &ipt, &["-w", "-t", "nat", "-F", "XR_NAT"]);
-    sys_run(env, &ipt, &["-w", "-t", "nat", "-X", "XR_NAT"]);
+    sys_run(env, &iptables_bin, &["-w", "-t", "nat", "-F", "XR_NAT"]);
+    sys_run(env, &iptables_bin, &["-w", "-t", "nat", "-X", "XR_NAT"]);
 
-    while sys_ok(&ip6t, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
-    sys_run(env, &ip6t, &["-w", "-F", "XR_FWD6"]);
-    sys_run(env, &ip6t, &["-w", "-X", "XR_FWD6"]);
+    while sys_ok(&ip6tables_cmd, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
+    sys_run(env, &ip6tables_cmd, &["-w", "-F", "XR_FWD6"]);
+    sys_run(env, &ip6tables_cmd, &["-w", "-X", "XR_FWD6"]);
     while sys_ok(
-        &ip6t,
+        &ip6tables_cmd,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"],
     ) {}
-    sys_run(env, &ip6t, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
-    sys_run(env, &ip6t, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
+    sys_run(env, &ip6tables_cmd, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
+    sys_run(env, &ip6tables_cmd, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
 
-    for bin in [&ipt, &ip6t] {
-        for c in ["XR_ACCT", "XR_ACCT6"] {
-            while sys_ok(bin, &["-w", "-D", "INPUT", "-i", "xr0", "-j", c]) {}
-            while sys_ok(bin, &["-w", "-D", "OUTPUT", "-o", "xr0", "-j", c]) {}
-            for s in [c, &format!("{c}_UP"), &format!("{c}_DN")] {
-                sys_run(env, bin, &["-w", "-F", s]);
+    for bin in [&iptables_bin, &ip6tables_cmd] {
+        for chain in ["XR_ACCT", "XR_ACCT6"] {
+            while sys_ok(bin, &["-w", "-D", "INPUT", "-i", "xr0", "-j", chain]) {}
+            while sys_ok(bin, &["-w", "-D", "OUTPUT", "-o", "xr0", "-j", chain]) {}
+            for raw in [chain, &format!("{chain}_UP"), &format!("{chain}_DN")] {
+                sys_run(env, bin, &["-w", "-F", raw]);
             }
-            for s in [c, &format!("{c}_UP"), &format!("{c}_DN")] {
-                sys_run(env, bin, &["-w", "-X", s]);
+            for text in [chain, &format!("{chain}_UP"), &format!("{chain}_DN")] {
+                sys_run(env, bin, &["-w", "-X", text]);
             }
         }
     }
 
-    while sys_ok(&ipt, &["-w", "-D", "OUTPUT", "-j", "XR_HS"]) {}
-    sys_run(env, &ipt, &["-w", "-F", "XR_HS"]);
-    sys_run(env, &ipt, &["-w", "-X", "XR_HS"]);
-    while sys_ok(&ip6t, &["-w", "-D", "OUTPUT", "-j", "XR_HS6"]) {}
-    sys_run(env, &ip6t, &["-w", "-F", "XR_HS6"]);
-    sys_run(env, &ip6t, &["-w", "-X", "XR_HS6"]);
+    while sys_ok(&iptables_bin, &["-w", "-D", "OUTPUT", "-j", "XR_HS"]) {}
+    sys_run(env, &iptables_bin, &["-w", "-F", "XR_HS"]);
+    sys_run(env, &iptables_bin, &["-w", "-X", "XR_HS"]);
+    while sys_ok(&ip6tables_cmd, &["-w", "-D", "OUTPUT", "-j", "XR_HS6"]) {}
+    sys_run(env, &ip6tables_cmd, &["-w", "-F", "XR_HS6"]);
+    sys_run(env, &ip6tables_cmd, &["-w", "-X", "XR_HS6"]);
 
-    for bin in [&ipt, &ip6t] {
+    for bin in [&iptables_bin, &ip6tables_cmd] {
         while sys_ok(
             bin,
             &["-w", "-t", "mangle", "-D", "POSTROUTING", "-j", "XR_MSS"],
@@ -228,33 +229,37 @@ pub fn uninstall_standard(env: &Env) -> i32 {
         if let Ok(rd) = fs::read_dir(br_dir.join("brif")) {
             for ent in rd.flatten() {
                 let port = ent.file_name().to_string_lossy().into_owned();
-                sys_run(env, &ip, &["link", "set", &port, "nomaster"]);
+                sys_run(env, &ip_cmd, &["link", "set", &port, "nomaster"]);
             }
         }
-        sys_run(env, &ip, &["link", "del", "xrbr1"]);
+        sys_run(env, &ip_cmd, &["link", "del", "xrbr1"]);
     }
-    sys_run(env, &ip, &["link", "del", "xr1"]);
+    sys_run(env, &ip_cmd, &["link", "del", "xr1"]);
     sys_run(env, &ndc, &["ipfwd", "disable", "xrouter"]);
     sys_run(env, &ndc, &["ipfwd", "disable", "xroute"]);
 
     for pref in [
         "4790", "4800", "4801", "18800", "18900", "19050", "19060", "19100",
     ] {
-        while sys_ok(&ip, &["rule", "del", "pref", pref]) {}
-        while sys_ok(&ip, &["-6", "rule", "del", "pref", pref]) {}
+        while sys_ok(&ip_cmd, &["rule", "del", "pref", pref]) {}
+        while sys_ok(&ip_cmd, &["-6", "rule", "del", "pref", pref]) {}
     }
-    sys_run(env, &ip, &["route", "flush", "table", "97", "dev", "xr0"]);
-    sys_run(env, &ip, &["route", "flush", "table", "233"]);
-    sys_run(env, &ip, &["route", "flush", "table", "234"]);
     sys_run(
         env,
-        &ip,
+        &ip_cmd,
+        &["route", "flush", "table", "97", "dev", "xr0"],
+    );
+    sys_run(env, &ip_cmd, &["route", "flush", "table", "233"]);
+    sys_run(env, &ip_cmd, &["route", "flush", "table", "234"]);
+    sys_run(
+        env,
+        &ip_cmd,
         &["-6", "route", "flush", "table", "97", "dev", "xr0"],
     );
-    sys_run(env, &ip, &["-6", "route", "flush", "table", "233"]);
-    sys_run(env, &ip, &["-6", "route", "flush", "table", "234"]);
-    sys_run(env, &ip, &["-6", "route", "flush", "table", "235"]);
-    sys_run(env, &ip, &["link", "del", "xr0"]);
+    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "233"]);
+    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "234"]);
+    sys_run(env, &ip_cmd, &["-6", "route", "flush", "table", "235"]);
+    sys_run(env, &ip_cmd, &["link", "del", "xr0"]);
 
     cancel_notifications(env);
     fsx::write_logged(env, "/sys/power/wake_unlock", "xrouter\n");
@@ -268,10 +273,10 @@ pub fn uninstall_standard(env: &Env) -> i32 {
 
 fn pick_stage_base(env: &Env) -> PathBuf {
     let name = format!(".xr-uninst-{}-{}", unix_now(), std::process::id());
-    if let Some(t) = &env.tmpdir {
-        let p = t.join(&name);
-        if fs::create_dir_all(&p).is_ok() {
-            return p;
+    if let Some(tmp_dir) = &env.tmpdir {
+        let path = tmp_dir.join(&name);
+        if fs::create_dir_all(&path).is_ok() {
+            return path;
         }
     }
     let tmp = Path::new("/data/local/tmp").join(&name);
@@ -295,14 +300,14 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
     let id = fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
         .lines()
-        .find_map(|l| l.strip_prefix("id="))
+        .find_map(|line| line.strip_prefix("id="))
         .unwrap_or("")
         .trim()
         .to_owned();
     let dir_name = env
         .moddir
         .file_name()
-        .and_then(|s| s.to_str())
+        .and_then(|os_str| os_str.to_str())
         .unwrap_or("");
     if id.is_empty() || dir_name != id {
         return (1, "{\"ok\":false,\"error\":\"模块目录异常\"}".to_owned());
