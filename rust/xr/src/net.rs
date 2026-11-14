@@ -557,6 +557,117 @@ fn rules_set(ctx: &NetCtx<'_>, use_v6: bool, up: &str) {
     ]));
 }
 
+/// 在 `XR_FWD6` 链末尾追加一条 `ip6tables` 规则（`rule` 为 `-A XR_FWD6` 之后的部分）。
+fn ip6t_fwd(ctx: &NetCtx<'_>, rule: &[&str]) {
+    let mut args = vec!["-A", "XR_FWD6"];
+    args.extend_from_slice(rule);
+    ctx.ip6t_run(&args);
+}
+
+/// `IPv6` 出口段：放行进出 `xr0` 的已建立连接；虚拟机开启 `IPv6` 时放行 `xr0` 到各上游出口。
+fn v6_rules_out(ctx: &NetCtx<'_>, outs6: &[String]) {
+    ip6t_fwd(
+        ctx,
+        &[
+            "-o",
+            XR_IF,
+            "-m",
+            "conntrack",
+            "--ctstate",
+            "RELATED,ESTABLISHED",
+            "-j",
+            "ACCEPT",
+        ],
+    );
+    ip6t_fwd(
+        ctx,
+        &[
+            "-i",
+            XR_IF,
+            "-m",
+            "conntrack",
+            "--ctstate",
+            "RELATED,ESTABLISHED",
+            "-j",
+            "ACCEPT",
+        ],
+    );
+    if vm_v6(ctx.env) {
+        for out6 in outs6 {
+            ip6t_fwd(ctx, &["-i", XR_IF, "-o", out6, "-j", "ACCEPT"]);
+        }
+    }
+}
+
+/// `IPv6` 例外接口段：例外接口可访问虚拟机网段与已生效的 `IPv6` `VPN` 路由；非例外的上游出口到 `xr0` 一律丢弃。
+fn v6_rules_ex(ctx: &NetCtx<'_>, outs6: &[String], ex: &[String]) {
+    let net6 = format!("{XR_NET6}::/64");
+    let active_v6: Vec<String> = fs::read_to_string(ctx.env.run_dir().join("routes.active"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains(':'))
+        .map(str::to_owned)
+        .collect();
+    for i in ex {
+        ip6t_fwd(ctx, &["-i", i, "-o", XR_IF, "-d", &net6, "-j", "ACCEPT"]);
+        for route in &active_v6 {
+            ip6t_fwd(ctx, &["-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT"]);
+        }
+    }
+    let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
+    for iface in outs6 {
+        if !ex_set.contains(iface.as_str()) {
+            ip6t_fwd(ctx, &["-i", iface, "-o", XR_IF, "-j", "DROP"]);
+        }
+    }
+}
+
+/// 拒绝 `from` 到 `to` 的 `IPv6` 转发：`TCP` 回 `tcp-reset`，其余回 `icmp6-adm-prohibited`。
+fn ip6t_reject(ctx: &NetCtx<'_>, from: &str, to: &str) {
+    let tcp = [
+        "-i",
+        from,
+        "-o",
+        to,
+        "-p",
+        "tcp",
+        "-j",
+        "REJECT",
+        "--reject-with",
+        "tcp-reset",
+    ];
+    ip6t_fwd(ctx, &tcp);
+    let other = [
+        "-i",
+        from,
+        "-o",
+        to,
+        "-j",
+        "REJECT",
+        "--reject-with",
+        "icmp6-adm-prohibited",
+    ];
+    ip6t_fwd(ctx, &other);
+}
+
+/// `IPv6` 网关段：`v6` 模式下共享网络与 `xr0` 双向放行，其余模式拒绝共享网络到 `xr0`；共享网络直连上游出口一律拒绝。
+fn v6_rules_gw(ctx: &NetCtx<'_>, gw: &str, outs6: &[String]) {
+    if gw == "off" {
+        return;
+    }
+    for i in tether_ifaces(ctx) {
+        if gw == "v6" {
+            ip6t_fwd(ctx, &["-i", &i, "-o", XR_IF, "-j", "ACCEPT"]);
+            ip6t_fwd(ctx, &["-i", XR_IF, "-o", &i, "-j", "ACCEPT"]);
+        } else {
+            ip6t_reject(ctx, &i, XR_IF);
+        }
+        for out_if in outs6 {
+            ip6t_reject(ctx, &i, out_if);
+        }
+    }
+}
+
 /// 同步 `IPv6`：记录出口与虚拟机 `IPv6` 状态，维护 `XR_FWD6` 转发规则与 nft 回退规则。
 fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
     let run = ctx.env.run_dir();
@@ -574,126 +685,14 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
 
     ctx.ip6t_run(&["-F", "XR_FWD6"]);
     if acct_present6(ctx) {
-        ctx.ip6t_run(&["-A", "XR_FWD6", "-j", "XR_ACCT6"]);
+        ip6t_fwd(ctx, &["-j", "XR_ACCT6"]);
     }
     hs_fwd6_rules(ctx);
-    ctx.ip6t_run(&[
-        "-A",
-        "XR_FWD6",
-        "-o",
-        XR_IF,
-        "-m",
-        "conntrack",
-        "--ctstate",
-        "RELATED,ESTABLISHED",
-        "-j",
-        "ACCEPT",
-    ]);
-    ctx.ip6t_run(&[
-        "-A",
-        "XR_FWD6",
-        "-i",
-        XR_IF,
-        "-m",
-        "conntrack",
-        "--ctstate",
-        "RELATED,ESTABLISHED",
-        "-j",
-        "ACCEPT",
-    ]);
-    if vm_v6(ctx.env) {
-        for out6 in outs6 {
-            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", XR_IF, "-o", out6, "-j", "ACCEPT"]);
-        }
-    }
-    let net6 = format!("{XR_NET6}::/64");
-    let active_v6: Vec<String> = fs::read_to_string(run.join("routes.active"))
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| line.contains(':'))
-        .map(str::to_owned)
-        .collect();
-    for i in ex {
-        ctx.ip6t_run(&[
-            "-A", "XR_FWD6", "-i", i, "-o", XR_IF, "-d", &net6, "-j", "ACCEPT",
-        ]);
-        for route in &active_v6 {
-            ctx.ip6t_run(&[
-                "-A", "XR_FWD6", "-i", i, "-o", XR_IF, "-d", route, "-j", "ACCEPT",
-            ]);
-        }
-    }
-    let ex_set: BTreeSet<&str> = ex.iter().map(String::as_str).collect();
-    for iface in outs6 {
-        if !ex_set.contains(iface.as_str()) {
-            ctx.ip6t_run(&["-A", "XR_FWD6", "-i", iface, "-o", XR_IF, "-j", "DROP"]);
-        }
-    }
-    if gw != "off" {
-        for i in tether_ifaces(ctx) {
-            if gw == "v6" {
-                ctx.ip6t_run(&["-A", "XR_FWD6", "-i", &i, "-o", XR_IF, "-j", "ACCEPT"]);
-                ctx.ip6t_run(&["-A", "XR_FWD6", "-i", XR_IF, "-o", &i, "-j", "ACCEPT"]);
-            } else {
-                ctx.ip6t_run(&[
-                    "-A",
-                    "XR_FWD6",
-                    "-i",
-                    &i,
-                    "-o",
-                    XR_IF,
-                    "-p",
-                    "tcp",
-                    "-j",
-                    "REJECT",
-                    "--reject-with",
-                    "tcp-reset",
-                ]);
-                ctx.ip6t_run(&[
-                    "-A",
-                    "XR_FWD6",
-                    "-i",
-                    &i,
-                    "-o",
-                    XR_IF,
-                    "-j",
-                    "REJECT",
-                    "--reject-with",
-                    "icmp6-adm-prohibited",
-                ]);
-            }
-            for out_if in outs6 {
-                ctx.ip6t_run(&[
-                    "-A",
-                    "XR_FWD6",
-                    "-i",
-                    &i,
-                    "-o",
-                    out_if,
-                    "-p",
-                    "tcp",
-                    "-j",
-                    "REJECT",
-                    "--reject-with",
-                    "tcp-reset",
-                ]);
-                ctx.ip6t_run(&[
-                    "-A",
-                    "XR_FWD6",
-                    "-i",
-                    &i,
-                    "-o",
-                    out_if,
-                    "-j",
-                    "REJECT",
-                    "--reject-with",
-                    "icmp6-adm-prohibited",
-                ]);
-            }
-        }
-    }
-    ctx.ip6t_run(&["-A", "XR_FWD6", "-o", XR_IF, "-j", "DROP"]);
-    ctx.ip6t_run(&["-A", "XR_FWD6", "-i", XR_IF, "-j", "DROP"]);
+    v6_rules_out(ctx, outs6);
+    v6_rules_ex(ctx, outs6, ex);
+    v6_rules_gw(ctx, gw, outs6);
+    ip6t_fwd(ctx, &["-o", XR_IF, "-j", "DROP"]);
+    ip6t_fwd(ctx, &["-i", XR_IF, "-j", "DROP"]);
     fwd6_first(ctx);
     v6_nft_sync(ctx, gw, outs6, ex);
 }
