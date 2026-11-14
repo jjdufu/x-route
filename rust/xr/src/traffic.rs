@@ -73,7 +73,7 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
     let mut bytes_vec = Vec::new();
     for line in out.stdout.lines().skip(2) {
         if let Some(tok) = line.split_whitespace().nth(1)
-            && tok.bytes().all(|b| b.is_ascii_digit())
+            && tok.bytes().all(|byte| byte.is_ascii_digit())
         {
             bytes_vec.push(tok.parse::<u64>().unwrap_or(0));
         }
@@ -82,8 +82,8 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
         return (0, 0);
     };
     let mut lan = 0_u64;
-    for &b in lan_slice {
-        lan = lan.saturating_add(b);
+    for &lan_bytes in lan_slice {
+        lan = lan.saturating_add(lan_bytes);
     }
     (lan, wan)
 }
@@ -100,9 +100,9 @@ pub fn acct_present6(ctx: &NetCtx<'_>) -> bool {
 
 #[must_use]
 pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
-    let (u_lan, u_wan) = acct_chain_bytes(ctx, false, "XR_ACCT_UP");
-    let (d_lan, d_wan) = acct_chain_bytes(ctx, false, "XR_ACCT_DN");
-    let (u6_lan, u6_wan, d6_lan, d6_wan) = if acct_present6(ctx) {
+    let (up_lan, up_inet) = acct_chain_bytes(ctx, false, "XR_ACCT_UP");
+    let (down_lan, down_inet) = acct_chain_bytes(ctx, false, "XR_ACCT_DN");
+    let (up_lan_v6, up_inet_v6, down_lan_v6, down_inet_v6) = if acct_present6(ctx) {
         let (ul, uw) = acct_chain_bytes(ctx, true, "XR_ACCT6_UP");
         let (dl, dw) = acct_chain_bytes(ctx, true, "XR_ACCT6_DN");
         (ul, uw, dl, dw)
@@ -110,10 +110,10 @@ pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
         (0, 0, 0, 0)
     };
     [
-        u_wan.saturating_add(u6_wan),
-        d_wan.saturating_add(d6_wan),
-        u_lan.saturating_add(u6_lan),
-        d_lan.saturating_add(d6_lan),
+        up_inet.saturating_add(up_inet_v6),
+        down_inet.saturating_add(down_inet_v6),
+        up_lan.saturating_add(up_lan_v6),
+        down_lan.saturating_add(down_lan_v6),
     ]
 }
 
@@ -139,18 +139,18 @@ fn acct_rules(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str, lan_list: &[String])
     if use_v6 {
         ctx.ip6t_run(&["-F", &up]);
         ctx.ip6t_run(&["-F", &dn]);
-        for c in lan_list {
-            ctx.ip6t_run(&["-A", &up, "-d", c, "-j", "RETURN"]);
-            ctx.ip6t_run(&["-A", &dn, "-s", c, "-j", "RETURN"]);
+        for lan_net in lan_list {
+            ctx.ip6t_run(&["-A", &up, "-d", lan_net, "-j", "RETURN"]);
+            ctx.ip6t_run(&["-A", &dn, "-s", lan_net, "-j", "RETURN"]);
         }
         ctx.ip6t_run(&["-A", &up, "-j", "RETURN"]);
         ctx.ip6t_run(&["-A", &dn, "-j", "RETURN"]);
     } else {
         ctx.ipt_run(&["-F", &up]);
         ctx.ipt_run(&["-F", &dn]);
-        for c in lan_list {
-            ctx.ipt_run(&["-A", &up, "-d", c, "-j", "RETURN"]);
-            ctx.ipt_run(&["-A", &dn, "-s", c, "-j", "RETURN"]);
+        for net in lan_list {
+            ctx.ipt_run(&["-A", &up, "-d", net, "-j", "RETURN"]);
+            ctx.ipt_run(&["-A", &dn, "-s", net, "-j", "RETURN"]);
         }
         ctx.ipt_run(&["-A", &up, "-j", "RETURN"]);
         ctx.ipt_run(&["-A", &dn, "-j", "RETURN"]);
@@ -269,11 +269,11 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
             .ip6t(&["-D", "OUTPUT", "-o", XR_IF, "-j", prefix])
             .success()
         {}
-        for c in [prefix, &up, &dn] {
-            ctx.ip6t_run(&["-F", c]);
+        for flush6 in [prefix, &up, &dn] {
+            ctx.ip6t_run(&["-F", flush6]);
         }
-        for c in [prefix, &up, &dn] {
-            ctx.ip6t_run(&["-X", c]);
+        for drop6 in [prefix, &up, &dn] {
+            ctx.ip6t_run(&["-X", drop6]);
         }
     } else {
         while ctx
@@ -284,11 +284,11 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
             .ipt(&["-D", "OUTPUT", "-o", XR_IF, "-j", prefix])
             .success()
         {}
-        for c in [prefix, &up, &dn] {
-            ctx.ipt_run(&["-F", c]);
+        for flush4 in [prefix, &up, &dn] {
+            ctx.ipt_run(&["-F", flush4]);
         }
-        for c in [prefix, &up, &dn] {
-            ctx.ipt_run(&["-X", c]);
+        for chain in [prefix, &up, &dn] {
+            ctx.ipt_run(&["-X", chain]);
         }
     }
 }
@@ -339,7 +339,7 @@ pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     let [wu, wd, lu, ld] = acct_total(ctx);
     let since = fs::read_to_string(ctx.env.acct_since_file())
         .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|text| text.trim().parse::<u64>().ok())
         .unwrap_or(0);
     TrafficSummary {
         wan: TrafficCounters { up: wu, down: wd },
