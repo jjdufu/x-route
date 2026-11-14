@@ -6,21 +6,21 @@ use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
 mod tests;
 
 #[must_use]
-pub fn is_uint(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 6 && s.bytes().all(|b| b.is_ascii_digit())
+pub fn is_uint(text: &str) -> bool {
+    !text.is_empty() && text.len() <= 6 && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[must_use]
-pub fn parse_uint(s: &str) -> Option<u32> {
-    if !is_uint(s) {
+pub fn parse_uint(text: &str) -> Option<u32> {
+    if !is_uint(text) {
         return None;
     }
-    s.parse::<u32>().ok()
+    text.parse::<u32>().ok()
 }
 
 #[must_use]
-pub fn in_range(s: &str, min: u32, max: u32) -> bool {
-    parse_uint(s).is_some_and(|v| v >= min && v <= max)
+pub fn in_range(text: &str, min: u32, max: u32) -> bool {
+    parse_uint(text).is_some_and(|value| value >= min && value <= max)
 }
 
 #[must_use]
@@ -96,35 +96,41 @@ pub const fn prefix_mask(plen: u8) -> Option<u32> {
 }
 
 #[must_use]
-pub fn mask2len(s: &str) -> Option<u8> {
-    if !valid_ip4(s) {
+pub fn mask2len(text: &str) -> Option<u8> {
+    if !valid_ip4(text) {
         return None;
     }
-    let m = ip2int(s)?;
-    (0_u8..=32_u8).find(|&p| prefix_mask(p) == Some(m))
+    let mask_val = ip2int(text)?;
+    (0_u8..=32_u8).find(|&plen| prefix_mask(plen) == Some(mask_val))
 }
 
-fn collect_v6_groups(s: &str) -> Option<Vec<String>> {
-    if s.is_empty() {
+fn collect_v6_groups(text: &str) -> Option<Vec<String>> {
+    if text.is_empty() {
         return Some(Vec::new());
     }
     let mut out = Vec::new();
-    for g in s.split(':') {
-        if g.is_empty() || g.len() > 4 || !g.bytes().all(|b| b.is_ascii_hexdigit()) {
+    for group in text.split(':') {
+        if group.is_empty()
+            || group.len() > 4
+            || !group.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
             return None;
         }
-        out.push(format!("{g:0>4}"));
+        out.push(format!("{group:0>4}"));
     }
     Some(out)
 }
 
 #[must_use]
-pub fn ip6_expand(s: &str) -> Option<String> {
-    if s.is_empty() {
+pub fn ip6_expand(text: &str) -> Option<String> {
+    if text.is_empty() {
         return None;
     }
-    let lower = s.to_ascii_lowercase();
-    if !lower.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') {
+    let lower = text.to_ascii_lowercase();
+    if !lower
+        .bytes()
+        .all(|byte| byte.is_ascii_hexdigit() || byte == b':')
+    {
         return None;
     }
     let parts: Vec<&str> = lower.split("::").collect();
@@ -151,14 +157,14 @@ pub fn ip6_expand(s: &str) -> Option<String> {
     }
     let miss = 8_usize.saturating_sub(used);
     let mut out = String::with_capacity(32);
-    for g in left {
-        out.push_str(&g);
+    for hex_group in left {
+        out.push_str(&hex_group);
     }
     for _ in 0..miss {
         out.push_str("0000");
     }
-    for g in right {
-        out.push_str(&g);
+    for group in right {
+        out.push_str(&group);
     }
     Some(out)
 }
@@ -182,14 +188,14 @@ pub fn ip6_mask(hex32: &str, plen: u8) -> Option<String> {
 
 #[must_use]
 pub fn ip6_format(hex32: &str) -> Option<String> {
-    if hex32.len() != 32 || !hex32.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if hex32.len() != 32 || !hex32.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     let mut groups = Vec::with_capacity(8);
     let bytes = hex32.as_bytes();
     for chunk in bytes.as_chunks::<4>().0 {
-        let g = std::str::from_utf8(chunk).ok()?;
-        groups.push(g);
+        let group = std::str::from_utf8(chunk).ok()?;
+        groups.push(group);
     }
     Some(groups.join(":"))
 }
@@ -260,15 +266,15 @@ pub fn cidr_private(raw: &str) -> bool {
     let Some(ip) = ip2int(addr) else {
         return false;
     };
-    let a = (ip >> 24_u32) & 0xFF;
-    let b = (ip >> 16_u32) & 0xFF;
-    if a == 10 {
+    let oct1 = (ip >> 24_u32) & 0xFF;
+    let oct2 = (ip >> 16_u32) & 0xFF;
+    if oct1 == 10 {
         plen >= 8
-    } else if a == 172 && (16..=31).contains(&b) {
+    } else if oct1 == 172 && (16..=31).contains(&oct2) {
         plen >= 12
-    } else if a == 192 && b == 168 {
+    } else if oct1 == 192 && oct2 == 168 {
         plen >= 16
-    } else if a == 100 && (64..=127).contains(&b) {
+    } else if oct1 == 100 && (64..=127).contains(&oct2) {
         plen >= 10
     } else {
         false
@@ -306,27 +312,31 @@ pub fn cidr_aligned(raw: &str) -> bool {
 }
 
 #[must_use]
-pub fn cidr_overlap(a: &str, b: &str) -> bool {
-    let (Some(ca), Some(cb)) = (norm_route(a), norm_route(b)) else {
+pub fn cidr_overlap(lhs: &str, rhs: &str) -> bool {
+    let (Some(ca), Some(cb)) = (norm_route(lhs), norm_route(rhs)) else {
         return false;
     };
-    let (Some((aa, pa_s)), Some((ab, pb_s))) = (ca.split_once('/'), cb.split_once('/')) else {
+    let (Some((lhs_addr, lhs_plen)), Some((rhs_addr, rhs_plen))) =
+        (ca.split_once('/'), cb.split_once('/'))
+    else {
         return false;
     };
     if ca.contains(':') != cb.contains(':') {
         return false;
     }
-    let (Ok(pa), Ok(pb)) = (pa_s.parse::<u8>(), pb_s.parse::<u8>()) else {
+    let (Ok(pa), Ok(pb)) = (lhs_plen.parse::<u8>(), rhs_plen.parse::<u8>()) else {
         return false;
     };
     let min_p = pa.min(pb);
     if ca.contains(':') {
-        let (Some(xa), Some(xb)) = (ip6_expand(aa), ip6_expand(ab)) else {
+        let (Some(xa), Some(xb)) = (ip6_expand(lhs_addr), ip6_expand(rhs_addr)) else {
             return false;
         };
         ip6_mask(&xa, min_p) == ip6_mask(&xb, min_p)
     } else {
-        let (Some(xa), Some(xb), Some(mask)) = (ip2int(aa), ip2int(ab), prefix_mask(min_p)) else {
+        let (Some(xa), Some(xb), Some(mask)) =
+            (ip2int(lhs_addr), ip2int(rhs_addr), prefix_mask(min_p))
+        else {
             return false;
         };
         (xa & mask) == (xb & mask)
@@ -357,11 +367,11 @@ pub fn mac_eui64(mac: &str) -> Option<String> {
         return None;
     }
     let mut bytes = [0_u8; 6];
-    for (dst, s) in bytes.iter_mut().zip(parts.iter()) {
-        if s.len() != 2 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+    for (dst, text) in bytes.iter_mut().zip(parts.iter()) {
+        if text.len() != 2 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return None;
         }
-        *dst = u8::from_str_radix(s, 16).ok()?;
+        *dst = u8::from_str_radix(text, 16).ok()?;
     }
     let [b0, b1, b2, b3, b4, b5] = bytes;
     let first = b0 ^ 0x02;
@@ -380,22 +390,25 @@ pub fn hs_mac(vm_mac: &str) -> Option<String> {
 #[must_use]
 pub fn v6_is_ll(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
-    ip6_expand(bare).is_some_and(|h| {
-        h.starts_with("fe8") || h.starts_with("fe9") || h.starts_with("fea") || h.starts_with("feb")
+    ip6_expand(bare).is_some_and(|hex| {
+        hex.starts_with("fe8")
+            || hex.starts_with("fe9")
+            || hex.starts_with("fea")
+            || hex.starts_with("feb")
     })
 }
 
 #[must_use]
 pub fn v6_is_ula(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
-    ip6_expand(bare).is_some_and(|h| h.starts_with("fc") || h.starts_with("fd"))
+    ip6_expand(bare).is_some_and(|hex| hex.starts_with("fc") || hex.starts_with("fd"))
 }
 
 #[must_use]
 pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
     let (addr, plen_s) = pfx.split_once('/')?;
     let plen: u8 = plen_s.parse().ok()?;
-    if plen > 64 || iid16.len() != 16 || !iid16.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if plen > 64 || iid16.len() != 16 || !iid16.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     let expanded = ip6_expand(addr)?;
@@ -406,9 +419,9 @@ pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn v6_addr_eq(a: &str, b: &str) -> bool {
-    let aa = a.split('/').next().unwrap_or(a);
-    let ba = b.split('/').next().unwrap_or(b);
+pub fn v6_addr_eq(lhs: &str, rhs: &str) -> bool {
+    let aa = lhs.split('/').next().unwrap_or(lhs);
+    let ba = rhs.split('/').next().unwrap_or(rhs);
     let (Some(ea), Some(eb)) = (ip6_expand(aa), ip6_expand(ba)) else {
         return false;
     };
@@ -434,7 +447,10 @@ pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
         let Some(cand) = v6_compose(pfx, &iid) else {
             continue;
         };
-        if !busy.iter().any(|b| !b.is_empty() && v6_addr_eq(&cand, b)) {
+        if !busy
+            .iter()
+            .any(|used| !used.is_empty() && v6_addr_eq(&cand, used))
+        {
             return Some(format!("{cand}/{plen}"));
         }
     }
@@ -487,8 +503,8 @@ pub fn hs_subnet_clash(
         HS_TAP.to_owned(),
         HS_BR.to_owned(),
     ];
-    if let Some(s) = skip_if.filter(|s| !s.is_empty()) {
-        skip.push(s.to_owned());
+    if let Some(skip_name) = skip_if.filter(|content| !content.is_empty()) {
+        skip.push(skip_name.to_owned());
     }
     if let Ok(out) = Command::new(&ip_bin)
         .args(["route", "show", "table", "local_network"])
@@ -517,7 +533,7 @@ pub fn hs_subnet_clash(
                 continue;
             };
             let dev = raw_dev.split('@').next().unwrap_or(raw_dev);
-            if skip.iter().any(|s| s == dev) {
+            if skip.iter().any(|raw| raw == dev) {
                 continue;
             }
             if cidr_overlap(subnet, addr_cidr) {
