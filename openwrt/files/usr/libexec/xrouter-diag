@@ -47,6 +47,10 @@ SED
   echo "## DHCP 租约"; cat /tmp/dhcp.leases 2>/dev/null; echo
   s ubus call dhcp ipv6leases
   s ps w
+  echo "## 监听端口"
+  netstat -ltn 2>/dev/null | awk 'NR>2{print $4}' | sort -u
+  ip -6 addr show dev br-lan 2>/dev/null | grep -E 'tentative|dadfailed' || echo "无 tentative/dadfailed 地址"
+  echo
   echo "## OpenVPN"
   cat /var/run/xrouter/guest/openvpn.status /var/run/xrouter/guest/openvpn.tunnels 2>/dev/null
   for d in /sys/class/net/tun*; do
@@ -71,6 +75,12 @@ SED
   fi
   s /usr/libexec/xrouter-ipv6 state
   [ -x /usr/libexec/xrouter-hotspot ] && s /usr/libexec/xrouter-hotspot status
-  echo "## nft（前 400 行）"; nft list ruleset 2>&1 | head -n 400; echo
+  echo "## nft 规则（terse，不含 set 元素）"; nft -t list ruleset 2>&1 | head -n 600; echo
+  echo "## nft set 元素数（近似）"
+  nft -t list sets 2>/dev/null | awk '/^table /{fam=$2; tbl=$3} /^\tset /{print fam, tbl, $2}' |
+    while read -r fam tbl name; do
+      printf '%s %s %s %s\n' "$fam" "$tbl" "$name" "$(nft list set "$fam" "$tbl" "$name" 2>/dev/null | tr ',' '\n' | grep -cE '[0-9a-f]+[.:][0-9a-f]')"
+    done
+  echo
   echo "## logread（最后 300 行）"; logread 2>/dev/null | tail -n 300
 } 2>&1 | redact

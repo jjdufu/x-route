@@ -207,4 +207,26 @@ echo "0" > "$T/ip6/state"
 CTL="$T/ip6/ctl" sh "$T/ip6/step.sh"
 chk '[ "$(cat "$T/ip6/ctl/guest/ipv6")" = 0 ] && [ -z "$(find "$T/ip6/ctl/guest/ipv6" -mtime +1000)" ]'
 
+# 9. xrouter-diag：nft 规则用 terse（不含 set 元素）并单列各 set 元素数；新增「监听端口」段（需求 4c）
+mkdir -p "$T/diagbin"
+cat > "$T/diagbin/nft" <<'EON'
+#!/bin/sh
+case "$*" in
+  "-t list ruleset") printf 'table inet fw4 {\n\tset oc_v4 {\n\t\ttype ipv4_addr\n\t}\n\tchain forward {\n\t\tjump xr_fwd\n\t}\n}\n' ;;
+  "-t list sets") printf 'table inet fw4 {\n\tset oc_v4 {\n\t\ttype ipv4_addr\n\t}\n}\n' ;;
+  "list set inet fw4 oc_v4") printf 'table inet fw4 {\n\tset oc_v4 {\n\t\ttype ipv4_addr\n\t\telements = { 1.1.1.1, 2.2.2.0/24,\n\t\t\t     3.3.3.3 }\n\t}\n}\n' ;;
+  *) exit 1 ;;
+esac
+EON
+cat > "$T/diagbin/netstat" <<'EON'
+#!/bin/sh
+printf '%s\n' "Active Internet connections" "Proto Recv-Q Send-Q Local Foreign State" "tcp 0 0 172.29.233.254:22 0.0.0.0:* LISTEN" "tcp 0 0 :::80 :::* LISTEN"
+EON
+chmod +x "$T/diagbin/"*
+PATH="$T/diagbin:$PATH" sh "$LX/xrouter-diag" > "$T/diag.out" 2>&1
+chk 'grep -q "^## nft 规则（terse" "$T/diag.out" && grep -q "jump xr_fwd" "$T/diag.out" && ! grep -q "elements" "$T/diag.out"'
+chk 'grep -qx "inet fw4 oc_v4 3" "$T/diag.out"'
+chk 'grep -qx "## 监听端口" "$T/diag.out" && grep -qx "172.29.233.254:22" "$T/diag.out" && grep -qx ":::80" "$T/diag.out" && grep -q "无 tentative/dadfailed 地址" "$T/diag.out"'
+chk '! grep -q "## nft（前 400 行）" "$T/diag.out"'
+
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi
