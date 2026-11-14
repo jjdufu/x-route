@@ -460,6 +460,21 @@ fn periodic(env: &Env, st: &mut DaemonState) {
         acct_snapshot(&ctx);
         debug_expire(env);
     }
+    if st.tick.is_multiple_of(TZ_REFRESH_TICKS) {
+        refresh_tz(env);
+    }
+}
+
+/// 时区重新探测的间隔拍数：每拍约 5 秒，720 拍约 1 小时。
+const TZ_REFRESH_TICKS: u64 = 720;
+
+/// 重新探测手机时区（跟上用户改时区或夏令时）；偏移有变化时写一行调试日志。
+fn refresh_tz(env: &Env) {
+    let before = log::tz_cached();
+    let after = log::tz_refresh();
+    if before != Some(after) {
+        log::dlog_env(env, "daemon", &format!("时区偏移更新为 {after}"));
+    }
 }
 
 /// 拍间休眠：最多 5 秒，每秒醒来一次；收到命令或 `TERM` 立即结束，有 `notify.force` 时刷新通知。

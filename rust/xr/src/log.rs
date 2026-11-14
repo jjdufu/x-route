@@ -159,7 +159,8 @@ pub(crate) fn tz_refresh() -> FixedOffset {
 }
 
 /// 缓存中的时区偏移；尚未探测时为 `None`。
-fn tz_cached() -> Option<FixedOffset> {
+#[must_use]
+pub(crate) fn tz_cached() -> Option<FixedOffset> {
     *TZ.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
