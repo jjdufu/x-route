@@ -56,24 +56,26 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
         env.xr_data.join("config/vpn"),
         env.run_dir().join("guest/host/vpn"),
     ] {
-        if let Ok(rd) = fs::read_dir(&dir) {
-            for ent in rd.flatten() {
-                let p = ent.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
-                    files.push(p);
-                }
+        let Ok(rd) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let p = ent.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
+                files.push(p);
             }
         }
     }
     for f in files {
-        if let Ok(content) = fs::read_to_string(f) {
-            for line in content.lines() {
-                let mut parts = line.split_whitespace();
-                if parts.next() == Some("remote") {
-                    if let Some(host) = parts.next() {
-                        if !host.is_empty() {
-                            hosts.insert(host.to_string());
-                        }
+        let Ok(content) = fs::read_to_string(f) else {
+            continue;
+        };
+        for line in content.lines() {
+            let mut parts = line.split_whitespace();
+            if parts.next() == Some("remote") {
+                if let Some(host) = parts.next() {
+                    if !host.is_empty() {
+                        hosts.insert(host.to_string());
                     }
                 }
             }

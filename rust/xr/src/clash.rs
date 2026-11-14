@@ -185,13 +185,14 @@ impl MuxState {
     }
 
     fn unregister_client(&self, client_id: u64) {
-        let orphaned_ws: Vec<String> = if let Ok(mut clients) = self.clients.lock() {
-            clients
-                .remove(&client_id)
-                .map_or_else(Vec::new, |c| c.ws_ids.into_iter().collect())
-        } else {
-            Vec::new()
-        };
+        let orphaned_ws: Vec<String> = self.clients.lock().map_or_else(
+            |_| Vec::new(),
+            |mut clients| {
+                clients
+                    .remove(&client_id)
+                    .map_or_else(Vec::new, |c| c.ws_ids.into_iter().collect())
+            },
+        );
         if let Ok(mut pending) = self.pending_reqs.lock() {
             pending.retain(|_, (cid, _)| *cid != client_id);
         }
@@ -324,11 +325,17 @@ impl MuxState {
                 };
                 let (owner_cid, mux_ws) = if let Some(m) = local_mapped {
                     (client_id, m)
-                } else if let Ok(mut by_key) = self.ws_by_key.lock() {
-                    let found = if op == "ws_close" {
-                        by_key.remove(&orig_ws)
-                    } else {
-                        by_key.get(&orig_ws).cloned()
+                } else {
+                    let lookup = match self.ws_by_key.lock() {
+                        Ok(mut by_key) => Some(if op == "ws_close" {
+                            by_key.remove(&orig_ws)
+                        } else {
+                            by_key.get(&orig_ws).cloned()
+                        }),
+                        Err(_) => None,
+                    };
+                    let Some(found) = lookup else {
+                        return;
                     };
                     if let Some((ocid, m)) = found {
                         external_ws_owner = Some((ocid, orig_ws.clone(), m.clone()));
@@ -342,8 +349,6 @@ impl MuxState {
                         }
                         return;
                     }
-                } else {
-                    return;
                 };
                 if op == "ws_close" {
                     if let Ok(mut by_key) = self.ws_by_key.lock() {
@@ -489,7 +494,8 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     let stop_ctl = Arc::clone(&stop);
     let ctl_thread = thread::spawn(move || {
         while !stop_ctl.load(Ordering::Relaxed) {
-            match ctl_listener.accept() {
+            let accepted = ctl_listener.accept();
+            match accepted {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
                     let Ok(reader_stream) = stream.try_clone() else {
@@ -507,9 +513,10 @@ pub fn run_clash_mux(env: &Env) -> i32 {
                             Ok(_) => s_ctl.handle_guest_line(&line),
                         }
                     }
+                    drop(br);
                     if let Ok(mut guard) = s_ctl.hvc_writer.lock() {
                         *guard = None;
-                    }
+                    };
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
@@ -524,7 +531,8 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     let rpc_thread = thread::spawn(move || {
         let mut next_cid = 1_u64;
         while !stop_rpc.load(Ordering::Relaxed) {
-            match rpc_listener.accept() {
+            let accepted = rpc_listener.accept();
+            match accepted {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(false);
                     let cid = next_cid;
