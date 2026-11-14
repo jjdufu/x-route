@@ -1,5 +1,5 @@
-pub mod disk;
-pub mod share;
+pub(crate) mod disk;
+pub(crate) mod share;
 
 use std::fs::{self, OpenOptions};
 use std::process::{Command, Stdio};
@@ -27,7 +27,7 @@ use crate::sys::spawn;
 use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
 
 #[must_use]
-pub fn running(env: &Env) -> bool {
+pub(crate) fn running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let trimmed = pid.trim();
     if !is_pid_running(env, trimmed) {
@@ -36,7 +36,7 @@ pub fn running(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
-pub fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
+pub(crate) fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
     log::err(env, "vm", log_msg);
     fsx::write_logged(env, env.run_dir().join("last_error"), format!("{ui_msg}\n"));
     let boot_log = env.boot_log();
@@ -48,7 +48,7 @@ pub fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
     }));
 }
 
-pub fn boot_progress(env: &Env, secs: u64) {
+pub(crate) fn boot_progress(env: &Env, secs: u64) {
     let sz = fs::metadata(env.console_log()).map_or(0, |meta| meta.len());
     let kb = sz.checked_div(1024_u64).unwrap_or(0_u64);
     blog(
@@ -68,7 +68,7 @@ pub(crate) fn reap_in_background(mut child: std::process::Child) {
     }));
 }
 
-pub fn fuse_arm(env: &Env) {
+pub(crate) fn fuse_arm(env: &Env) {
     let line = format!("{} {}\n", unix_now(), config::hash(env));
     fsx::write_logged(env, env.fuse_file(), line);
     if let Ok(fuse) = fs::File::open(env.fuse_file())
@@ -80,7 +80,7 @@ pub fn fuse_arm(env: &Env) {
 }
 
 #[must_use]
-pub fn ready_seen(env: &Env) -> bool {
+pub(crate) fn ready_seen(env: &Env) -> bool {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
         && ctl.lines().any(|line| line.starts_with("XR_READY"))
     {
@@ -96,7 +96,7 @@ pub fn ready_seen(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn ready_channel(env: &Env) -> &'static str {
+pub(crate) fn ready_channel(env: &Env) -> &'static str {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
         && ctl.lines().any(|line| line.starts_with("XR_READY"))
     {
@@ -112,7 +112,7 @@ pub fn ready_channel(env: &Env) -> &'static str {
 }
 
 #[must_use]
-pub fn run_net_hook(env: &Env, op: &str) -> i32 {
+pub(crate) fn run_net_hook(env: &Env, op: &str) -> i32 {
     let net_sh = env.moddir.join("scripts/net.sh");
     if net_sh.is_file() {
         let st = Command::new("sh")
@@ -127,7 +127,7 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
 }
 
 #[must_use]
-pub fn mono_now(env: &Env) -> Option<u64> {
+pub(crate) fn mono_now(env: &Env) -> Option<u64> {
     let custom = env.proc_base.join("uptime");
     let raw = if custom.is_file() {
         fs::read_to_string(custom).ok()?
@@ -139,7 +139,7 @@ pub fn mono_now(env: &Env) -> Option<u64> {
         .and_then(|text| text.trim().parse::<u64>().ok())
 }
 
-pub fn fuse_watch(env: &Env) {
+pub(crate) fn fuse_watch(env: &Env) {
     let cfg = Config::load(env);
     let ready_to = cfg.ready_timeout_sec();
     let mut waited = 0_u64;
@@ -215,7 +215,7 @@ pub fn fuse_watch(env: &Env) {
 }
 
 #[must_use]
-pub fn vpn_sync_host(env: &Env) -> Option<bool> {
+pub(crate) fn vpn_sync_host(env: &Env) -> Option<bool> {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
     let vpn_dir = env.vpn_dir();
@@ -274,7 +274,7 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
     Some(any)
 }
 
-pub fn vpn_boot_prepare(env: &Env) {
+pub(crate) fn vpn_boot_prepare(env: &Env) {
     let guest = env.run_dir().join("guest/guest");
     let host = env.run_dir().join("guest/host");
     for name in ["openvpn.ack", "openvpn.multi", "openvpn.connecting"] {
@@ -320,7 +320,7 @@ pub fn vpn_boot_prepare(env: &Env) {
 }
 
 #[must_use]
-pub fn start_exec(env: &Env) -> i32 {
+pub(crate) fn start_exec(env: &Env) -> i32 {
     let cfg = Config::load(env);
     if running(env) {
         log::info(env, "vm", "已在运行");
@@ -639,7 +639,7 @@ pub fn start_exec(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn stop_exec(env: &Env, in_watch: bool) -> i32 {
+pub(crate) fn stop_exec(env: &Env, in_watch: bool) -> i32 {
     let run = env.run_dir();
     fsx::write_logged(
         env,
@@ -703,19 +703,19 @@ pub fn stop_exec(env: &Env, in_watch: bool) -> i32 {
 }
 
 #[derive(Debug, Serialize)]
-pub struct StatusJson {
-    pub running: bool,
-    pub pid: Option<u64>,
-    pub state: String,
-    pub uptime_s: u64,
-    pub tripped: Option<String>,
-    pub last_good_match: bool,
-    pub ready_channel: Option<String>,
-    pub error: String,
+pub(crate) struct StatusJson {
+    pub(crate) running: bool,
+    pub(crate) pid: Option<u64>,
+    pub(crate) state: String,
+    pub(crate) uptime_s: u64,
+    pub(crate) tripped: Option<String>,
+    pub(crate) last_good_match: bool,
+    pub(crate) ready_channel: Option<String>,
+    pub(crate) error: String,
 }
 
 #[must_use]
-pub fn status(env: &Env) -> StatusJson {
+pub(crate) fn status(env: &Env) -> StatusJson {
     let run = env.run_dir();
     let running = running(env);
     let mut pid_num = None;
@@ -789,7 +789,7 @@ pub fn status(env: &Env) -> StatusJson {
 }
 
 #[must_use]
-pub fn status_json(env: &Env) -> String {
+pub(crate) fn status_json(env: &Env) -> String {
     serde_json::to_string(&status(env))
         .unwrap_or_else(|_| "{\"running\":false,\"state\":\"stopped\"}".to_owned())
 }

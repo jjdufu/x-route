@@ -10,7 +10,7 @@ use crate::sys::fsx;
 use crate::vm;
 
 #[must_use]
-pub fn expand(env: &Env, new_mb_str: &str) -> i32 {
+pub(crate) fn expand(env: &Env, new_mb_str: &str) -> i32 {
     if vm::running(env) {
         log::err(env, "vm", "请先停止 VM");
         return 1;
@@ -51,7 +51,7 @@ pub fn expand(env: &Env, new_mb_str: &str) -> i32 {
 }
 
 #[must_use]
-pub fn reset(env: &Env) -> i32 {
+pub(crate) fn reset(env: &Env) -> i32 {
     if vm::running(env) {
         log::err(env, "vm", "请先停止 VM");
         return 1;
