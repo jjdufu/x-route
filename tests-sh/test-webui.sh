@@ -21,7 +21,7 @@ const css = fs.readFileSync(W + "/src/style.css", "utf8");
 const L = await import(W + "/src/logic.js");
 const CE = await import(W + "/src/clash-embed.js");
 const { ICONS } = await import(W + "/src/icons.js");
-const cliMod = fs.readFileSync(root + "/rust/xr/src/cli/mod.rs", "utf8");
+const cliMod = fs.readFileSync(root + "/rust/xr/src/cli.rs", "utf8");
 const configRs = fs.readFileSync(root + "/rust/xr/src/config.rs", "utf8");
 
 // WebUI X 配置与依赖

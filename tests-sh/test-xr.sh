@@ -233,9 +233,9 @@ rm -f "$RUN/boot.log"
 rm -f "$RUN/bg.rc"; chk '$XR boot-tail -1 -1 | grep -q "^R-"'
 echo ready > "$RUN/state"; chk '[ "$(BT -1 -1 | cut -d"|" -f2)" = Sready ]'; rm -f "$RUN/state"
 # 快速路径：boot-tail 在 ensure_dirs 之前执行
-chk '[ "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli/mod.rs" | grep -n "cmd == \"boot-tail\"" | cut -d: -f1)" -lt "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli/mod.rs" | grep -n "env.ensure_dirs()" | head -1 | cut -d: -f1)" ]'
+chk '[ "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli.rs" | grep -n "cmd == \"boot-tail\"" | cut -d: -f1)" -lt "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli.rs" | grep -n "env.ensure_dirs()" | head -1 | cut -d: -f1)" ]'
 # xr set 不在前台跑规则重建（WebUI 点击路径上异步拉起 net.sh sync / internal net sync）
-chk 'sed -n "/^fn after_set(/,/^}/p" "$ROOT/rust/xr/src/cli/mod.rs" | grep -q "spawn"'
+chk 'sed -n "/^fn after_set(/,/^}/p" "$ROOT/rust/xr/src/cli.rs" | grep -q "spawn"'
 # 立即卸载：必须带 confirm；模块目录名与 id 不符时拒绝（开发树里不会删源码）；
 # 正常时立即返回并同步删除模块目录（不遗留 remove 标记触发管理器恢复按钮），脱离会话的后台进程跑 uninstall.sh 再清理数据
 out="$($XR uninstall-now)"; chk '[ $? -eq 2 ] && [ -d "$T/mod/scripts" ]'
