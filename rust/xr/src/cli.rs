@@ -1,6 +1,6 @@
-pub mod boot_tail;
-pub mod status;
-pub mod vpn_cfg;
+pub(crate) mod boot_tail;
+pub(crate) mod status;
+pub(crate) mod vpn_cfg;
 
 use std::fs;
 use std::process::{Command, Stdio};

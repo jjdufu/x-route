@@ -16,7 +16,7 @@ use crate::vm;
 use crate::vm::vpn_sync_host;
 
 #[must_use]
-pub fn vpn_slug(name: &str) -> String {
+pub(crate) fn vpn_slug(name: &str) -> String {
     let mut out = String::new();
     let mut last_us = false;
     for octet in name.bytes() {
@@ -45,7 +45,7 @@ pub fn vpn_slug(name: &str) -> String {
     }
 }
 
-pub fn vpn_migrate_legacy(env: &Env) {
+pub(crate) fn vpn_migrate_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     let legacy = env.xr_data.join("config/openvpn.ovpn");
     if !vpn_dir.is_dir() && fs::metadata(&legacy).is_ok_and(|meta| meta.len() > 0) {
@@ -77,7 +77,7 @@ pub fn vpn_migrate_legacy(env: &Env) {
     }
 }
 
-pub fn vpn_mirror_legacy(env: &Env) {
+pub(crate) fn vpn_mirror_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     if !vpn_dir.is_dir() {
         return;
@@ -136,7 +136,7 @@ pub fn vpn_mirror_legacy(env: &Env) {
     }
 }
 
-pub fn vpn_rejected(env: &Env) -> Vec<String> {
+pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
     if !vm::running(env) {
         return Vec::new();
     }
@@ -167,7 +167,7 @@ pub fn vpn_rejected(env: &Env) -> Vec<String> {
 }
 
 #[must_use]
-pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
+pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let vn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
         .unwrap_or_default()
         .trim()
@@ -243,7 +243,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
 }
 
 #[must_use]
-pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
+pub(crate) fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     vpn_migrate_legacy(env);
     let vpn_dir = env.vpn_dir();
     let mut out = Vec::new();
@@ -357,7 +357,7 @@ fn valid_profile_id(id: &str) -> bool {
 }
 
 #[must_use]
-pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
+pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
     let src_s = env.canon_share_path(path_arg);
     let media_s = env.media.to_string_lossy();
     if !src_s.starts_with(&format!("{media_s}/")) || src_s.contains("..") {
@@ -470,7 +470,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
 }
 
 #[must_use]
-pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
+pub(crate) fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     let want = match act {
         "enable" => true,
         "disable" => false,
@@ -638,7 +638,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
 }
 
 #[must_use]
-pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
+pub(crate) fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     vpn_migrate_legacy(env);
     if !valid_profile_id(did) {
         return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
@@ -670,7 +670,7 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
 }
 
 #[must_use]
-pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
+pub(crate) fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     if !vm::running(env) {
         return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
     }
@@ -719,7 +719,7 @@ pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
 }
 
 #[must_use]
-pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
+pub(crate) fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
     let raw = if path_arg.is_empty() {
         env.media.to_string_lossy().into_owned()
     } else {
