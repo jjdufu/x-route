@@ -139,6 +139,13 @@ pub(crate) fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
     }
 }
 
+/// 在 `acct.lock` 下读取累计总量，避免与 `acct_fold`/`acct_setup` 交错时重复计入。
+#[must_use]
+pub(crate) fn acct_total_locked(ctx: &NetCtx<'_>) -> [u64; 4] {
+    let _held = acct_lock(ctx);
+    acct_total(ctx)
+}
+
 /// 把当前读数折算进基线（并同步写快照），用于规则重建或拆除之前。
 fn acct_fold(ctx: &NetCtx<'_>) {
     let total = combine_quad_add(read_quad(&ctx.env.acct_base_file()), acct_live(ctx));

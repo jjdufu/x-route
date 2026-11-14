@@ -3,6 +3,7 @@
 /// 守护进程的保活工具：cgroup 迁移、常驻通知与异常退出清理。
 pub mod keepalive;
 /// 看门狗进程：定期检查守护进程与网关残留。
+pub(crate) mod stats;
 pub(crate) mod watchdog;
 
 use std::fs;
@@ -495,11 +496,19 @@ fn nap(env: &Env, st: &DaemonState) {
 #[must_use]
 pub(crate) fn main_loop(env: &Env) -> i32 {
     let mut st = daemon_init(env);
+    let server = stats::start(env);
+    let code = run_loop(env, &mut st);
+    stats::shutdown(env, server);
+    code
+}
+
+/// 主循环本体：处理 `TERM`、命令与关机，否则看护虚拟机、做周期任务并休眠；返回退出码。
+fn run_loop(env: &Env, st: &mut DaemonState) -> i32 {
     loop {
-        if let Some(code) = on_term(env, &st) {
+        if let Some(code) = on_term(env, st) {
             return code;
         }
-        if let Some(code) = on_command(env, &mut st) {
+        if let Some(code) = on_command(env, st) {
             return code;
         }
         if sys::shutting_down(env) {
@@ -508,8 +517,8 @@ pub(crate) fn main_loop(env: &Env) -> i32 {
             return 0;
         }
         cgroup_escape_tree(env, std::process::id());
-        watch_vm(env, &mut st);
-        periodic(env, &mut st);
-        nap(env, &st);
+        watch_vm(env, st);
+        periodic(env, st);
+        nap(env, st);
     }
 }

@@ -233,6 +233,12 @@ impl Env {
         self.xr_data.join("run")
     }
 
+    /// 实时速率服务的套接字 `<数据目录>/run/stats.sock`。
+    #[must_use]
+    pub(crate) fn stats_sock(&self) -> PathBuf {
+        self.run_dir().join("stats.sock")
+    }
+
     /// 日志目录 `<数据目录>/log`。
     #[must_use]
     pub fn log_dir(&self) -> PathBuf {

@@ -10,6 +10,7 @@ pub mod env;
 pub mod log;
 pub mod net;
 pub(crate) mod out;
+pub(crate) mod rate;
 pub mod sys;
 pub mod traffic;
 pub mod uninstall;
