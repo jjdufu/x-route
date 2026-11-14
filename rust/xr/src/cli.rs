@@ -15,8 +15,9 @@ use crate::cli::status::needs_restart;
 use crate::cli::vpn_cfg::{list_dir, traffic_split, vpn_delete, vpn_import, vpn_set};
 use crate::config;
 use crate::config::{Config, KEYS, set_kv, valid_kv};
-use crate::daemon::watchdog::watchdog_loop;
-use crate::daemon::{daemon_loop, ensure_daemon, ensure_watchdog, vm_start, vm_stop};
+use crate::daemon;
+use crate::daemon::watchdog;
+use crate::daemon::{ensure_watchdog, vm_start, vm_stop};
 use crate::diag::{diag_snap, diag_snap_bg, export_pack};
 use crate::env::Env;
 use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, note_ok, note_rc, unix_now};
@@ -186,7 +187,7 @@ fn boot_service(env: &Env) -> i32 {
         note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
     }
     let cfg = Config::load(env);
-    if !ensure_daemon(env) {
+    if !daemon::ensure(env) {
         log_err(env, "service", "守护进程未能启动");
     }
     if !ensure_watchdog(env) {
@@ -484,12 +485,12 @@ pub fn run(args: &[String]) -> i32 {
             Some("daemon") => {
                 let mut daemon_env = env;
                 daemon_env.in_daemon = true;
-                daemon_loop(&daemon_env)
+                daemon::main_loop(&daemon_env)
             }
             Some("watchdog") => {
                 let mut role_env = env;
                 role_env.in_watchdog = true;
-                watchdog_loop(&role_env)
+                watchdog::main_loop(&role_env)
             }
             Some("fuse-watch") => {
                 fuse_watch(&env);

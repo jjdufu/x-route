@@ -7,11 +7,11 @@ use rustix::process::Signal;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::flag;
 
+use crate::daemon;
 use crate::daemon::keepalive::{
     cgroup_escape, cgroup_escape_tree, emergency_teardown, stale_gateway, vm_exit_reason,
     vm_guest_reset_pending,
 };
-use crate::daemon::{daemon_pid, daemon_running, ensure_daemon};
 use crate::diag::diag_snap_bg;
 use crate::env::Env;
 use crate::log::log_err;
@@ -22,7 +22,7 @@ use crate::sys::send_signal_logged;
 use crate::sys::sys_shutting_down;
 
 #[must_use]
-pub fn watchdog_loop(env: &Env) -> i32 {
+pub fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
@@ -59,19 +59,19 @@ pub fn watchdog_loop(env: &Env) -> i32 {
             continue;
         }
         if stale_gateway(env) {
-            if daemon_running(env) && vm_guest_reset_pending(env) {
-                send_signal_logged(env, &daemon_pid(env), Signal::USR2);
+            if daemon::running(env) && vm_guest_reset_pending(env) {
+                send_signal_logged(env, &daemon::pid(env), Signal::USR2);
             } else {
                 let reason = vm_exit_reason(env);
                 emergency_teardown(env, &format!("{reason}（看门狗）"));
             }
         }
-        if daemon_running(env) {
+        if daemon::running(env) {
             cgroup_escape_tree(env, std::process::id());
         } else {
             log_info(env, "watchdog", "守护进程不在，重新拉起");
             diag_snap_bg(env, "看门狗重新拉起守护进程");
-            note_ok(env, "ensure_daemon", ensure_daemon(env));
+            note_ok(env, "ensure_daemon", daemon::ensure(env));
         }
         rotate_all_logs(env);
         thread::sleep(Duration::from_secs(env.watchdog_interval));

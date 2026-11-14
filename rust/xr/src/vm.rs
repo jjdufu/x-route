@@ -190,7 +190,7 @@ pub fn fuse_watch(env: &Env) {
     while st < stable_sec {
         if !vm_running(env) {
             if crate::daemon::keepalive::vm_guest_reset_pending(env) {
-                let dpid = crate::daemon::daemon_pid(env);
+                let dpid = crate::daemon::pid(env);
                 if is_pid_running(env, &dpid) {
                     send_signal_logged(env, &dpid, Signal::USR2);
                     return;

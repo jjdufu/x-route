@@ -79,7 +79,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
 }
 
 #[must_use]
-pub fn daemon_pid(env: &Env) -> String {
+pub fn pid(env: &Env) -> String {
     fs::read_to_string(env.run_dir().join("daemon.pid"))
         .unwrap_or_default()
         .trim()
@@ -87,8 +87,8 @@ pub fn daemon_pid(env: &Env) -> String {
 }
 
 #[must_use]
-pub fn daemon_running(env: &Env) -> bool {
-    let pid = daemon_pid(env);
+pub fn running(env: &Env) -> bool {
+    let pid = pid(env);
     if !is_pid_running(env, &pid) {
         return false;
     }
@@ -135,14 +135,14 @@ pub fn ensure_watchdog(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn ensure_daemon(env: &Env) -> bool {
+pub fn ensure(env: &Env) -> bool {
     if env.daemon_foreground {
         return true;
     }
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
-    if daemon_running(env) {
+    if running(env) {
         cgroup_escape_tree(env, std::process::id());
         note_ok(env, "ensure_watchdog", ensure_watchdog(env));
         return true;
@@ -155,7 +155,7 @@ pub fn ensure_daemon(env: &Env) -> bool {
         return false;
     }
     for _ in 0_i32..10_i32 {
-        if run.join("daemon.ready").is_file() && daemon_running(env) {
+        if run.join("daemon.ready").is_file() && running(env) {
             cgroup_escape_tree(env, std::process::id());
             note_ok(env, "ensure_watchdog", ensure_watchdog(env));
             return true;
@@ -167,17 +167,17 @@ pub fn ensure_daemon(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn daemon_send(env: &Env, cmd: &str) -> i32 {
+pub fn send(env: &Env, cmd: &str) -> i32 {
     if env.daemon_foreground {
         return 0;
     }
-    if !ensure_daemon(env) {
+    if !ensure(env) {
         return 1;
     }
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("daemon.res"));
     fsx::write_logged(env, run.join("daemon.cmd"), format!("{cmd}\n"));
-    let pid = daemon_pid(env);
+    let pid = pid(env);
     if !send_signal(&pid, Signal::USR1) {
         return 1;
     }
@@ -198,7 +198,7 @@ pub fn vm_start(env: &Env) -> i32 {
     if env.in_daemon || env.daemon_foreground {
         return vm_start_exec(env);
     }
-    daemon_send(env, "start")
+    send(env, "start")
 }
 
 #[must_use]
@@ -206,22 +206,22 @@ pub fn vm_stop(env: &Env) -> i32 {
     if env.in_daemon || env.daemon_foreground {
         return vm_stop_exec(env, false);
     }
-    if daemon_running(env) {
-        return daemon_send(env, "stop");
+    if running(env) {
+        return send(env, "stop");
     }
     vm_stop_exec(env, false)
 }
 
 fn clean_daemon_pid(env: &Env, self_pid: &str) {
     let run = env.run_dir();
-    if daemon_pid(env) == self_pid {
+    if pid(env) == self_pid {
         fsx::remove_logged(env, run.join("daemon.pid"));
         fsx::remove_logged(env, run.join("daemon.ready"));
     }
 }
 
 #[must_use]
-pub fn daemon_loop(env: &Env) -> i32 {
+pub fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
