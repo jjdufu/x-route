@@ -89,17 +89,17 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
 }
 
 #[must_use]
-pub fn acct_present(ctx: &NetCtx<'_>) -> bool {
+pub(crate) fn acct_present(ctx: &NetCtx<'_>) -> bool {
     ctx.ipt(&["-S", "XR_ACCT_UP"]).success()
 }
 
 #[must_use]
-pub fn acct_present6(ctx: &NetCtx<'_>) -> bool {
+pub(crate) fn acct_present6(ctx: &NetCtx<'_>) -> bool {
     ctx.ip6t(&["-S", "XR_ACCT6_UP"]).success()
 }
 
 #[must_use]
-pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
+pub(crate) fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
     let (up_lan, up_inet) = acct_chain_bytes(ctx, false, "XR_ACCT_UP");
     let (down_lan, down_inet) = acct_chain_bytes(ctx, false, "XR_ACCT_DN");
     let (up_lan_v6, up_inet_v6, down_lan_v6, down_inet_v6) = if acct_present6(ctx) {
@@ -118,7 +118,7 @@ pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
 }
 
 #[must_use]
-pub fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
+pub(crate) fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
     let base = read_quad(&ctx.env.acct_base_file());
     if acct_present(ctx) {
         combine_quad_add(base, acct_live(ctx))
@@ -214,7 +214,7 @@ fn acct_hooks_one(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     }
 }
 
-pub fn acct_hooks(ctx: &NetCtx<'_>) {
+pub(crate) fn acct_hooks(ctx: &NetCtx<'_>) {
     if acct_present(ctx) {
         acct_hooks_one(ctx, false, "XR_ACCT");
     }
@@ -223,7 +223,7 @@ pub fn acct_hooks(ctx: &NetCtx<'_>) {
     }
 }
 
-pub fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
+pub(crate) fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
     let l4 = acct_lan4(ctx);
     let l6 = if with_v6 { acct_lan6(ctx) } else { Vec::new() };
     let sig = format!("4:{}|6:{}", l4.join(" "), l6.join(" "));
@@ -293,7 +293,7 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     }
 }
 
-pub fn acct_teardown(ctx: &NetCtx<'_>) {
+pub(crate) fn acct_teardown(ctx: &NetCtx<'_>) {
     let _lock = acct_lock(ctx);
     if acct_present(ctx) {
         acct_fold(ctx);
@@ -303,7 +303,7 @@ pub fn acct_teardown(ctx: &NetCtx<'_>) {
     fsx::remove_logged(ctx.env, ctx.env.run_dir().join("acct.sig"));
 }
 
-pub fn acct_snapshot(ctx: &NetCtx<'_>) {
+pub(crate) fn acct_snapshot(ctx: &NetCtx<'_>) {
     if !acct_present(ctx) {
         return;
     }
@@ -315,7 +315,7 @@ pub fn acct_snapshot(ctx: &NetCtx<'_>) {
     }
 }
 
-pub fn acct_reset(ctx: &NetCtx<'_>) {
+pub(crate) fn acct_reset(ctx: &NetCtx<'_>) {
     let _lock = acct_lock(ctx);
     if acct_present(ctx) {
         ctx.ipt_run(&["-Z", "XR_ACCT_UP"]);
@@ -335,7 +335,7 @@ pub fn acct_reset(ctx: &NetCtx<'_>) {
 }
 
 #[must_use]
-pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
+pub(crate) fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     let [wu, wd, lu, ld] = acct_total(ctx);
     let since = fs::read_to_string(ctx.env.acct_since_file())
         .ok()
@@ -355,6 +355,6 @@ pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
 }
 
 #[must_use]
-pub fn acct_json(ctx: &NetCtx<'_>) -> String {
+pub(crate) fn acct_json(ctx: &NetCtx<'_>) -> String {
     serde_json::to_string(&acct_summary(ctx)).unwrap_or_else(|_| "{}".to_owned())
 }
