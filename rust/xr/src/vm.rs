@@ -28,11 +28,11 @@ use crate::vm::share::share_prepare;
 #[must_use]
 pub fn vm_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
-    let p = pid.trim();
-    if !is_pid_running(env, p) {
+    let trimmed = pid.trim();
+    if !is_pid_running(env, trimmed) {
         return false;
     }
-    proc_cmdline(env, p).is_none_or(|c| c.contains("crosvm"))
+    proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
 pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
@@ -48,7 +48,7 @@ pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
 }
 
 pub fn boot_progress(env: &Env, secs: u64) {
-    let sz = fs::metadata(env.console_log()).map_or(0, |m| m.len());
+    let sz = fs::metadata(env.console_log()).map_or(0, |meta| meta.len());
     let kb = sz / 1024;
     blog(
         env,
@@ -81,13 +81,13 @@ pub fn fuse_arm(env: &Env) {
 #[must_use]
 pub fn ready_seen(env: &Env) -> bool {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
-        && ctl.lines().any(|l| l.starts_with("XR_READY"))
+        && ctl.lines().any(|line| line.starts_with("XR_READY"))
     {
         return true;
     }
     if let Ok(con) = fs::read(env.console_log()) {
-        let s = String::from_utf8_lossy(&con);
-        if s.contains("XR_READY") {
+        let text = String::from_utf8_lossy(&con);
+        if text.contains("XR_READY") {
             return true;
         }
     }
@@ -97,13 +97,13 @@ pub fn ready_seen(env: &Env) -> bool {
 #[must_use]
 pub fn ready_channel(env: &Env) -> &'static str {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
-        && ctl.lines().any(|l| l.starts_with("XR_READY"))
+        && ctl.lines().any(|line| line.starts_with("XR_READY"))
     {
         return "hvc";
     }
     if let Ok(con) = fs::read(env.console_log()) {
-        let s = String::from_utf8_lossy(&con);
-        if s.contains("XR_READY") {
+        let text = String::from_utf8_lossy(&con);
+        if text.contains("XR_READY") {
             return "ttyS0";
         }
     }
@@ -120,7 +120,7 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
             .env("MODDIR", &env.moddir)
             .env("XR_DATA", &env.xr_data)
             .status();
-        return st.map_or(1, |s| s.code().unwrap_or(1_i32));
+        return st.map_or(1, |exit_status| exit_status.code().unwrap_or(1_i32));
     }
     run_net_cli(env, &[op.to_owned()])
 }
@@ -135,14 +135,14 @@ pub fn mono_now(env: &Env) -> Option<u64> {
     };
     raw.split('.')
         .next()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|text| text.trim().parse::<u64>().ok())
 }
 
 pub fn fuse_watch(env: &Env) {
     let cfg = Config::load(env);
     let ready_to = cfg.ready_timeout_sec();
-    let mut t = 0_u64;
-    while t < ready_to {
+    let mut waited = 0_u64;
+    while waited < ready_to {
         if !vm_running(env) {
             fsx::remove_logged(env, env.fuse_file());
             vm_fail(env, "就绪前 crosvm 已退出，详见 vmm.log", "启动中退出");
@@ -152,8 +152,8 @@ pub fn fuse_watch(env: &Env) {
             break;
         }
         thread::sleep(Duration::from_secs(1));
-        t = t.saturating_add(1);
-        boot_progress(env, t);
+        waited = waited.saturating_add(1);
+        boot_progress(env, waited);
     }
     if !ready_seen(env) {
         let msg = format!("{ready_to} 秒内未就绪，停止 VM");
@@ -177,14 +177,14 @@ pub fn fuse_watch(env: &Env) {
     }
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
+        .map(|raw| raw.trim().to_owned())
+        .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "off".to_owned());
     blog(env, "net", &format!("网络规则就绪，接管：{gw}"));
     diag_snap_bg(env, "服务就绪");
 
-    let cfg = Config::load(env);
-    let stable_sec = cfg.stable_sec();
+    let cfg_now = Config::load(env);
+    let stable_sec = cfg_now.stable_sec();
     let mut st = 0_u64;
     while st < stable_sec {
         if !vm_running(env) {
@@ -221,12 +221,12 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
     fsx::mkdirs_logged(env, &host_vpn);
     if let Ok(rd) = fs::read_dir(&host_vpn) {
         for ent in rd.flatten() {
-            let p = ent.path();
-            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+            let target = ent.path();
+            if let Some(stem) = target.file_stem().and_then(|stem_os| stem_os.to_str()) {
                 let ovpn = vpn_dir.join(format!("{stem}.ovpn"));
-                let keep = fs::metadata(&ovpn).is_ok_and(|m| m.len() > 0);
+                let keep = fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0);
                 if !keep {
-                    fsx::remove_logged(env, p);
+                    fsx::remove_logged(env, target);
                 }
             }
         }
@@ -234,24 +234,24 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
     let mut any = false;
     let mut first = None;
     if let Ok(rd) = fs::read_dir(&vpn_dir) {
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        let mut paths: Vec<_> = rd.flatten().map(|entry| entry.path()).collect();
         paths.sort();
-        for p in paths {
-            if p.extension().and_then(|s| s.to_str()) != Some("ovpn") {
+        for file_path in paths {
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
                 continue;
             }
-            if fs::metadata(&p).map_or(true, |m| m.len() == 0) {
+            if fs::metadata(&file_path).map_or(true, |meta| meta.len() == 0) {
                 continue;
             }
-            let Some(pid) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(pid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
                 continue;
             };
             if first.is_none() {
-                first = Some(p.clone());
+                first = Some(file_path.clone());
             }
-            fsx::copy_logged(env, &p, host_vpn.join(format!("{pid}.ovpn")));
+            fsx::copy_logged(env, &file_path, host_vpn.join(format!("{pid}.ovpn")));
             let en = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
-                .is_ok_and(|s| s.trim() == "1");
+                .is_ok_and(|text| text.trim() == "1");
             fsx::write_logged(
                 env,
                 host_vpn.join(format!("{pid}.enabled")),
@@ -259,12 +259,12 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
             );
             if en {
                 any = true;
-                fsx::copy_logged(env, &p, host_dir.join("openvpn.ovpn"));
+                fsx::copy_logged(env, &file_path, host_dir.join("openvpn.ovpn"));
             }
         }
     }
-    if !any && let Some(f) = first {
-        fsx::copy_logged(env, f, host_dir.join("openvpn.ovpn"));
+    if !any && let Some(first_file) = first {
+        fsx::copy_logged(env, first_file, host_dir.join("openvpn.ovpn"));
     }
     Some(any)
 }
@@ -272,8 +272,8 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
 pub fn vpn_boot_prepare(env: &Env) {
     let guest = env.run_dir().join("guest/guest");
     let host = env.run_dir().join("guest/host");
-    for f in ["openvpn.ack", "openvpn.multi", "openvpn.connecting"] {
-        fsx::remove_logged(env, guest.join(f));
+    for name in ["openvpn.ack", "openvpn.multi", "openvpn.connecting"] {
+        fsx::remove_logged(env, guest.join(name));
     }
     if env.vpn_dir().is_dir() {
         if let Some(any) = vpn_sync_host(env) {
@@ -284,9 +284,9 @@ pub fn vpn_boot_prepare(env: &Env) {
                 fsx::write_logged(env, host.join("openvpn.cmd"), "disable\n");
                 if let Ok(rd) = fs::read_dir(env.vpn_dir()) {
                     for ent in rd.flatten() {
-                        let p = ent.path();
-                        if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                            && fs::metadata(&p).is_ok_and(|m| m.len() > 0)
+                        let file_path = ent.path();
+                        if file_path.extension().and_then(|os_str| os_str.to_str()) == Some("ovpn")
+                            && fs::metadata(&file_path).is_ok_and(|meta| meta.len() > 0)
                         {
                             blog(env, "vpn", "OpenVPN 保持停止");
                             break;
@@ -304,7 +304,7 @@ pub fn vpn_boot_prepare(env: &Env) {
     fsx::mkdirs_logged(env, &host);
     fsx::copy_logged(env, &legacy, host.join("openvpn.ovpn"));
     let en = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
-        .map_or(true, |s| s.trim() != "0");
+        .map_or(true, |text| text.trim() != "0");
     if en {
         fsx::write_logged(env, host.join("openvpn.cmd"), "enable\n");
         blog(env, "vpn", "下发 OpenVPN 配置");
@@ -325,8 +325,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     if !env.boot_log().is_file() {
         fsx::write_logged(env, env.boot_log(), "");
     }
-    for f in ["teardown.last", "shutdown", "shutdown.noted", "stopping"] {
-        fsx::remove_logged(env, run.join(f));
+    for marker in ["teardown.last", "shutdown", "shutdown.noted", "stopping"] {
+        fsx::remove_logged(env, run.join(marker));
     }
     let cpus = cfg.vm_cpus();
     let mem = cfg.vm_mem_mb();
@@ -351,8 +351,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     if !ce_ready() {
         log_info(env, "vm", "警告：手机未解锁（CE 不可用）");
     }
-    let img_mb = fs::metadata(&image_path).map_or(0, |m| m.len() / 1_048_576);
-    let rfs_mb = fs::metadata(&rootfs).map_or(0, |m| m.len() / 1_048_576);
+    let img_mb = fs::metadata(&image_path).map_or(0, |img_meta| img_meta.len() / 1_048_576);
+    let rfs_mb = fs::metadata(&rootfs).map_or(0, |meta| meta.len() / 1_048_576);
     blog(
         env,
         "vm",
@@ -364,7 +364,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     fsx::mkdirs_logged(env, &host_dir);
     fsx::mkdirs_logged(env, &guest_dir);
     fsx::chmod_logged(env, run.join("guest"), 0o700);
-    for f in [
+    for file_name in [
         "host/ipv6.cmd",
         "guest/ipv6",
         "host/diag.cmd",
@@ -379,7 +379,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         "guest/openvpn.addr",
         "guest/openvpn.routes",
     ] {
-        fsx::remove_logged(env, run.join("guest").join(f));
+        fsx::remove_logged(env, run.join("guest").join(file_name));
     }
 
     let mut net_args: Vec<String> = Vec::new();
@@ -396,8 +396,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         }
         let up_if = fs::read_to_string(run.join("net.up_if"))
             .ok()
-            .map(|s| s.trim().to_owned())
-            .filter(|s| !s.is_empty())
+            .map(|raw| raw.trim().to_owned())
+            .filter(|text| !text.is_empty())
             .unwrap_or_else(|| "无".to_owned());
         let mode = fs::read_to_string(run.join("net.mode"))
             .unwrap_or_default()
@@ -532,8 +532,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     ]);
 
     let vmm_log = env.vmm_log();
-    if let Some(p) = vmm_log.parent() {
-        fsx::mkdirs_logged(env, p);
+    if let Some(file_path) = vmm_log.parent() {
+        fsx::mkdirs_logged(env, file_path);
     }
     let out_f = OpenOptions::new().create(true).append(true).open(&vmm_log);
     if let Ok(mut mf) = OpenOptions::new().create(true).append(true).open(&vmm_log)
@@ -557,8 +557,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
                 .stderr(Stdio::null())
                 .spawn()
         },
-        |f| {
-            let out_std = Stdio::from(f);
+        |log_file| {
+            let out_std = Stdio::from(log_file);
             let err_std = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -639,9 +639,9 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     );
     fsx::remove_logged(env, env.fuse_file());
     if !in_watch && let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
-        let wp = wp.trim();
-        if !wp.is_empty() {
-            send_signal_logged(env, wp, Signal::TERM);
+        let wp_trimmed = wp.trim();
+        if !wp_trimmed.is_empty() {
+            send_signal_logged(env, wp_trimmed, Signal::TERM);
         }
     }
     let pid = fs::read_to_string(run.join("crosvm.pid"))
@@ -673,7 +673,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         }
     }
     crate::clash::stop_clash_mux(env);
-    for p in [
+    for path in [
         run.join("crosvm.pid"),
         run.join("crosvm.sock"),
         run.join("state"),
@@ -684,7 +684,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         env.fuse_file(),
         env.boot_log(),
     ] {
-        fsx::remove_logged(env, p);
+        fsx::remove_logged(env, path);
     }
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
     wakelock_off(env);
@@ -712,12 +712,12 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     let mut pid_num = None;
     let mut uptime_s = 0_u64;
     let state = if running {
-        let s = fs::read_to_string(run.join("state")).unwrap_or_default();
-        let t = s.trim();
-        if t.is_empty() {
+        let state_text = fs::read_to_string(run.join("state")).unwrap_or_default();
+        let trimmed = state_text.trim();
+        if trimmed.is_empty() {
             "booting".to_owned()
         } else {
-            t.to_owned()
+            trimmed.to_owned()
         }
     } else {
         "stopped".to_owned()
@@ -727,20 +727,20 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
             .unwrap_or_default()
             .trim()
             .to_owned();
-        if let Ok(p) = pid_s.parse::<u64>() {
-            pid_num = Some(p);
+        if let Ok(pid_text) = pid_s.parse::<u64>() {
+            pid_num = Some(pid_text);
         }
         if matches!(state.as_str(), "ready" | "stable") {
             let ready_at = fs::read_to_string(run.join("ready_at"))
                 .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok());
+                .and_then(|uptime_text| uptime_text.trim().parse::<u64>().ok());
             if let (Some(r0), Some(now)) = (ready_at, mono_now(env)) {
                 uptime_s = now.saturating_sub(r0);
             } else if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat"))
                 && let (Some(st), Some(now)) = (
                     stat.split_whitespace()
                         .nth(21)
-                        .and_then(|s| s.parse::<u64>().ok()),
+                        .and_then(|content| content.parse::<u64>().ok()),
                     mono_now(env),
                 )
             {
@@ -750,9 +750,10 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     }
     let tripped = fs::read_to_string(env.tripped_file())
         .ok()
-        .map(|s| s.trim().to_owned())
+        .map(|raw| raw.trim().to_owned())
         .filter(|_| env.tripped_file().is_file());
-    let lg = fs::read_to_string(env.last_good_file()).is_ok_and(|s| s.trim() == config_hash(env));
+    let lg =
+        fs::read_to_string(env.last_good_file()).is_ok_and(|text| text.trim() == config_hash(env));
     let ch = match ready_channel(env) {
         "null" => None,
         other => Some(other.to_owned()),
