@@ -10,20 +10,20 @@ use crate::log::{FAILURES, dlog, dlog_env, note_failure};
 
 #[derive(Debug, Clone)]
 pub struct Output {
-    pub code: i32,
-    pub stdout: String,
-    pub stderr: String,
+    pub(crate) code: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 impl Output {
     #[must_use]
-    pub const fn success(&self) -> bool {
+    pub(crate) const fn success(&self) -> bool {
         self.code == 0
     }
 }
 
 #[must_use]
-pub fn is_mutating_args(args: &[&str]) -> bool {
+pub(crate) fn is_mutating_args(args: &[&str]) -> bool {
     args.iter().any(|arg| {
         matches!(
             *arg,
@@ -153,11 +153,6 @@ pub(crate) fn note_exec_result(res: &Output) {
     }
 }
 
-/// 执行命令，只关心成败：非 0 退出或无法执行时计数，调用方不会得到结果。
-pub fn xr_run(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) {
-    note_exec_result(&run_xr(env, cfg, prog, args, pass_stderr));
-}
-
 /// 处理不经 [`xr_exec`] 直接运行并等待的命令结果：非 0 退出或无法执行时计数，
 /// 无法执行时（调试开关打开）写调试日志。调用方继续执行。
 pub(crate) fn note_status(env: &Env, what: &str, res: std::io::Result<ExitStatus>) {
@@ -188,9 +183,4 @@ pub(crate) fn note_spawn(env: &Env, what: &str, res: std::io::Result<Child>) {
             dlog_env(env, "cmd", &format!("{what} 无法启动：{err}"));
         }
     }
-}
-
-#[must_use]
-pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> Output {
-    run_xr(env, cfg, prog, args, false)
 }

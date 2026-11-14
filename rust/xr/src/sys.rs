@@ -1,6 +1,6 @@
 pub mod exec;
 pub(crate) mod fsx;
-pub mod spawn;
+pub(crate) mod spawn;
 #[cfg(test)]
 mod tests;
 
@@ -11,68 +11,38 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use rustix::fs::{FlockOperation, flock};
 use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 
 use crate::env::Env;
 use crate::log;
 use crate::log::{FAILURES, note_failure};
 
-/// 基于 `flock(LOCK_EX)` 的进程间排他锁，文件句柄释放即解锁。
-#[derive(Debug)]
-pub struct FileLock {
-    /// 持有锁的文件句柄。
-    _file: File,
-}
-
-impl FileLock {
-    /// 打开（必要时创建）`lock_path` 并阻塞等待排他锁。
-    ///
-    /// # Errors
-    ///
-    /// 锁文件无法打开或 `flock` 失败时返回 I/O 错误。
-    pub fn acquire(env: &Env, lock_path: &Path) -> std::io::Result<Self> {
-        if let Some(parent) = lock_path.parent() {
-            fsx::mkdirs_logged(env, parent);
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(lock_path)?;
-        flock(&file, FlockOperation::LockExclusive)
-            .map_err(|err| std::io::Error::from_raw_os_error(err.raw_os_error()))?;
-        Ok(Self { _file: file })
-    }
-}
-
 /// 进程间互斥锁：以 `create_new`（`O_CREAT|O_EXCL`）原子创建的锁文件表示"已占用"，Drop 时删除。
 ///
 /// 取代原来的 mkdir 目录锁（D11-B）：路径已存在（文件或旧版本留下的目录）即视为被占用，
 /// 互斥、stale 判定与超时接管的语义与目录锁相同。
 #[derive(Debug)]
-pub struct PathLock {
+pub(crate) struct PathLock {
     /// 锁文件路径。
     path: PathBuf,
 }
 
 /// 获取 [`PathLock`] 时的等待参数。
 #[derive(Debug, Clone, Copy)]
-pub struct LockWait {
+pub(crate) struct LockWait {
     /// 最多等待的轮数；用完后强制接管。
-    pub max_iters: u32,
+    pub(crate) max_iters: u32,
     /// 每轮间隔（毫秒）。
-    pub sleep_ms: u64,
+    pub(crate) sleep_ms: u64,
     /// 是否按锁内记录的 pid 判断持有者已退出（已退出则立即清理并重试）。
-    pub check_pid: bool,
+    pub(crate) check_pid: bool,
 }
 
 impl PathLock {
     /// 获取锁：路径已被占用时按 `wait` 等待；持有者已退出（`check_pid`）时清理后重试；
     /// 等满 `max_iters` 轮后强制接管。总会返回（与原目录锁一致，不报错）。
     #[must_use]
-    pub fn acquire(env: &Env, path: PathBuf, wait: LockWait) -> Self {
+    pub(crate) fn acquire(env: &Env, path: PathBuf, wait: LockWait) -> Self {
         if let Some(parent) = path.parent() {
             fsx::mkdirs_logged(env, parent);
         }
@@ -163,12 +133,12 @@ impl Drop for PathLock {
 }
 
 #[must_use]
-pub fn is_zombie_stat(stat_content: &str) -> bool {
+pub(crate) fn is_zombie_stat(stat_content: &str) -> bool {
     stat_content.contains(") Z ") || stat_content.contains(") X ") || stat_content.contains(") x ")
 }
 
 #[must_use]
-pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
+pub(crate) fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() || !trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
         return false;
@@ -206,7 +176,7 @@ pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
 }
 
 #[must_use]
-pub fn send_signal(pid_str: &str, sig: Signal) -> bool {
+pub(crate) fn send_signal(pid_str: &str, sig: Signal) -> bool {
     let Ok(raw_pid) = pid_str.trim().parse::<i32>() else {
         return false;
     };
@@ -231,7 +201,7 @@ pub(crate) fn send_signal_logged(env: &Env, pid_str: &str, sig: Signal) {
 }
 
 #[must_use]
-pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
+pub(crate) fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() {
         return None;
@@ -248,43 +218,7 @@ pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
 }
 
 #[must_use]
-pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
-    let trimmed = pid_str.trim();
-    let stat_path = env.proc_base.join(trimmed).join("stat");
-    let Ok(stat_s) = fs::read_to_string(&stat_path)
-        .or_else(|_| fs::read_to_string(format!("/proc/{trimmed}/stat")))
-    else {
-        return 0;
-    };
-    let Some((_, after_comm)) = stat_s.rsplit_once(") ") else {
-        return 0;
-    };
-    let Some(start_ticks) = after_comm
-        .split_whitespace()
-        .nth(19)
-        .and_then(|content| content.parse::<u64>().ok())
-    else {
-        return 0;
-    };
-    let Ok(up_s) =
-        fs::read_to_string(&env.proc_uptime).or_else(|_| fs::read_to_string("/proc/uptime"))
-    else {
-        return 0;
-    };
-    let Some(now_secs) = up_s
-        .split_whitespace()
-        .next()
-        .and_then(|raw| raw.split('.').next())
-        .and_then(|text| text.parse::<u64>().ok())
-    else {
-        return 0;
-    };
-    let started_secs = start_ticks.checked_div(100_u64).unwrap_or(0_u64);
-    now_secs.saturating_sub(started_secs)
-}
-
-#[must_use]
-pub fn getprop(name: &str) -> String {
+pub(crate) fn getprop(name: &str) -> String {
     Command::new("getprop")
         .arg(name)
         .output()
@@ -293,18 +227,18 @@ pub fn getprop(name: &str) -> String {
 }
 
 #[must_use]
-pub fn ce_ready() -> bool {
+pub(crate) fn ce_ready() -> bool {
     getprop("sys.user.0.ce_available") == "true"
 }
 
-pub fn wait_boot_completed() {
+pub(crate) fn wait_boot_completed() {
     while getprop("sys.boot_completed") != "1" {
         thread::sleep(Duration::from_secs(2));
     }
 }
 
 #[must_use]
-pub fn shutting_down(env: &Env) -> bool {
+pub(crate) fn shutting_down(env: &Env) -> bool {
     let marker = env.run_dir().join("shutdown");
     if marker.is_file() {
         return true;
@@ -317,7 +251,7 @@ pub fn shutting_down(env: &Env) -> bool {
     false
 }
 
-pub fn shutdown_note(env: &Env, module: &str) {
+pub(crate) fn shutdown_note(env: &Env, module: &str) {
     let noted = env.run_dir().join("shutdown.noted");
     if noted.is_file() {
         return;
@@ -328,11 +262,11 @@ pub fn shutdown_note(env: &Env, module: &str) {
     log::info(env, module_name, "系统关机，服务随之停止");
 }
 
-pub fn wakelock_on(env: &Env) {
+pub(crate) fn wakelock_on(env: &Env) {
     wakelock_write(env, Path::new("/sys/power/wake_lock"));
 }
 
-pub fn wakelock_off(env: &Env) {
+pub(crate) fn wakelock_off(env: &Env) {
     wakelock_write(env, Path::new("/sys/power/wake_unlock"));
 }
 
@@ -373,7 +307,7 @@ fn write_existing_logged(env: &Env, path: &Path, text: &str) {
 }
 
 #[must_use]
-pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
+pub(crate) fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     let cg_file = env.proc_base.join(pid_str.trim()).join("cgroup");
     let content = fs::read_to_string(cg_file).ok()?;
     for line in content.lines() {
@@ -424,14 +358,6 @@ pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
     true
 }
 
-/// 与 [`cgroup_escape`] 相同，但不关心进程是否在运行（不在运行时什么都不做）。
-fn escape_if_running(env: &Env, pid_str: &str) {
-    let trimmed = pid_str.trim();
-    if !trimmed.is_empty() && is_pid_running(env, trimmed) {
-        escape_pid(env, trimmed);
-    }
-}
-
 /// 把已确认在运行的进程移出应用 cgroup，并调低其 OOM 优先级。
 fn escape_pid(env: &Env, trimmed: &str) {
     let line = format!("{trimmed}\n");
@@ -458,26 +384,4 @@ fn escape_pid(env: &Env, trimmed: &str) {
     }
     let oom_path = env.proc_base.join(trimmed).join("oom_score_adj");
     write_existing_logged(env, &oom_path, "-1000\n");
-}
-
-pub fn cgroup_escape_tree(env: &Env, self_pid: Option<&str>) {
-    let own = std::process::id().to_string();
-    let target = self_pid.filter(|text| !text.is_empty()).unwrap_or(&own);
-    escape_if_running(env, target);
-    let run = env.run_dir();
-    for name in [
-        "crosvm.pid",
-        "net_watch.pid",
-        "fuse_watch.pid",
-        "watchdog.pid",
-        "daemon.pid",
-        "notifier.pid",
-    ] {
-        if let Ok(pid_text) = fs::read_to_string(run.join(name)) {
-            let trimmed = pid_text.trim();
-            if !trimmed.is_empty() {
-                escape_if_running(env, trimmed);
-            }
-        }
-    }
 }
