@@ -1,7 +1,5 @@
 use std::collections::BTreeSet;
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -10,8 +8,9 @@ use serde_json::{Value, json};
 
 use crate::cidr::norm_route;
 use crate::env::Env;
-use crate::log::{log_info, unix_now};
+use crate::log::{dlog_env, log_info, unix_now};
 use crate::net::vpn_routes::is_default_route;
+use crate::sys::fsx;
 use crate::vm::{vm_running, vpn_sync_host};
 
 pub fn vpn_slug(name: &str) -> String {
@@ -45,7 +44,7 @@ pub fn vpn_migrate_legacy(env: &Env) {
     let vpn_dir = env.vpn_dir();
     let legacy = env.xr_data.join("config/openvpn.ovpn");
     if !vpn_dir.is_dir() && fs::metadata(&legacy).is_ok_and(|m| m.len() > 0) {
-        let _ = fs::create_dir_all(&vpn_dir);
+        fsx::mkdirs_logged(env, &vpn_dir);
         let mn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
             .unwrap_or_default()
             .trim()
@@ -57,15 +56,19 @@ pub fn vpn_migrate_legacy(env: &Env) {
         };
         let mid = vpn_slug(&disp);
         let dst_ovpn = vpn_dir.join(format!("{mid}.ovpn"));
-        let _ = fs::copy(&legacy, &dst_ovpn);
+        fsx::copy_logged(env, &legacy, &dst_ovpn);
         #[cfg(unix)]
         {
-            let _ = fs::set_permissions(&dst_ovpn, fs::Permissions::from_mode(0o600));
+            fsx::chmod_logged(env, &dst_ovpn, 0o600);
         }
-        let _ = fs::write(vpn_dir.join(format!("{mid}.name")), format!("{disp}\n"));
+        fsx::write_logged(
+            env,
+            vpn_dir.join(format!("{mid}.name")),
+            format!("{disp}\n"),
+        );
         let men = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
             .map_or("1\n", |s| if s.trim() == "0" { "0\n" } else { "1\n" });
-        let _ = fs::write(vpn_dir.join(format!("{mid}.enabled")), men);
+        fsx::write_logged(env, vpn_dir.join(format!("{mid}.enabled")), men);
     }
 }
 
@@ -103,23 +106,28 @@ pub fn vpn_mirror_legacy(env: &Env) {
     let pick = en_id.clone().or(first_id);
     let cfg_dir = env.xr_data.join("config");
     if let Some(pid) = pick {
-        let _ = fs::create_dir_all(&cfg_dir);
+        fsx::mkdirs_logged(env, &cfg_dir);
         let dst = cfg_dir.join("openvpn.ovpn");
-        let _ = fs::copy(vpn_dir.join(format!("{pid}.ovpn")), &dst);
+        fsx::copy_logged(env, vpn_dir.join(format!("{pid}.ovpn")), &dst);
         #[cfg(unix)]
         {
-            let _ = fs::set_permissions(&dst, fs::Permissions::from_mode(0o600));
+            fsx::chmod_logged(env, &dst, 0o600);
         }
         let nm = fs::read_to_string(vpn_dir.join(format!("{pid}.name"))).unwrap_or(pid.clone());
-        let _ = fs::write(cfg_dir.join("openvpn.name"), format!("{}\n", nm.trim()));
-        let _ = fs::write(
+        fsx::write_logged(
+            env,
+            cfg_dir.join("openvpn.name"),
+            format!("{}\n", nm.trim()),
+        );
+        fsx::write_logged(
+            env,
             cfg_dir.join("openvpn.enabled"),
             if en_id.is_some() { "1\n" } else { "0\n" },
         );
     } else {
-        let _ = fs::remove_file(cfg_dir.join("openvpn.ovpn"));
-        let _ = fs::remove_file(cfg_dir.join("openvpn.name"));
-        let _ = fs::remove_file(cfg_dir.join("openvpn.enabled"));
+        fsx::remove_logged(env, cfg_dir.join("openvpn.ovpn"));
+        fsx::remove_logged(env, cfg_dir.join("openvpn.name"));
+        fsx::remove_logged(env, cfg_dir.join("openvpn.enabled"));
     }
 }
 
@@ -364,8 +372,8 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
 
     vpn_migrate_legacy(env);
     let vpn_dir = env.vpn_dir();
-    let _ = fs::create_dir_all(env.xr_data.join("config"));
-    let _ = fs::create_dir_all(&vpn_dir);
+    fsx::mkdirs_logged(env, env.xr_data.join("config"));
+    fsx::mkdirs_logged(env, &vpn_dir);
 
     let raw_bn = src
         .file_stem()
@@ -408,29 +416,33 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     }
 
     let dst_ovpn = vpn_dir.join(format!("{id}.ovpn"));
-    let _ = fs::copy(src, &dst_ovpn);
+    fsx::copy_logged(env, src, &dst_ovpn);
     #[cfg(unix)]
     {
-        let _ = fs::set_permissions(&dst_ovpn, fs::Permissions::from_mode(0o600));
+        fsx::chmod_logged(env, &dst_ovpn, 0o600);
     }
-    let _ = fs::write(vpn_dir.join(format!("{id}.name")), format!("{bn}\n"));
+    fsx::write_logged(env, vpn_dir.join(format!("{id}.name")), format!("{bn}\n"));
     let en = if enable_flag == "0" {
         fs::read_to_string(vpn_dir.join(format!("{id}.enabled"))).is_ok_and(|s| s.trim() == "1")
     } else {
         true
     };
-    let _ = fs::write(
+    fsx::write_logged(
+        env,
         vpn_dir.join(format!("{id}.enabled")),
         if en { "1\n" } else { "0\n" },
     );
     vpn_mirror_legacy(env);
 
     if vm_running(env) {
-        let _ = vpn_sync_host(env);
+        if vpn_sync_host(env).is_none() {
+            // 刚写入的配置目录不存在（创建失败）：客机侧本轮不更新，只记调试日志
+            dlog_env(env, "vpn", "导入后同步客机配置：配置目录不存在");
+        }
         if en {
             let host = env.run_dir().join("guest/host");
-            let _ = fs::copy(src, host.join("openvpn.ovpn"));
-            let _ = fs::write(host.join("openvpn.cmd"), vpn_next_cmd(env, "enable"));
+            fsx::copy_logged(env, src, host.join("openvpn.ovpn"));
+            fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, "enable"));
         }
     }
     log_info(env, "xr", "已导入 OpenVPN 配置");
@@ -470,7 +482,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             if want {
                 return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_string());
             }
-            let _ = fs::write(vpn_dir.join(format!("{tid}.enabled")), "0\n");
+            fsx::write_logged(env, vpn_dir.join(format!("{tid}.enabled")), "0\n");
             vpn_mirror_legacy(env);
             return (0, "{\"ok\":true}".to_string());
         }
@@ -481,13 +493,14 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                     let p = ent.path();
                     if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
                         if let Some(oid) = p.file_stem().and_then(|s| s.to_str()) {
-                            let _ = fs::write(vpn_dir.join(format!("{oid}.enabled")), "0\n");
+                            fsx::write_logged(env, vpn_dir.join(format!("{oid}.enabled")), "0\n");
                         }
                     }
                 }
             }
         }
-        let _ = fs::write(
+        fsx::write_logged(
+            env,
             vpn_dir.join(format!("{tid}.enabled")),
             if want { "1\n" } else { "0\n" },
         );
@@ -495,11 +508,11 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         let any = vpn_sync_host(env).unwrap_or(false);
         let host = env.run_dir().join("guest/host");
         if want {
-            let _ = fs::copy(&ovpn, host.join("openvpn.ovpn"));
+            fsx::copy_logged(env, &ovpn, host.join("openvpn.ovpn"));
         }
         let cmd_act = if any { "enable" } else { "disable" };
         let cmd_line = vpn_next_cmd(env, cmd_act);
-        let _ = fs::write(host.join("openvpn.cmd"), &cmd_line);
+        fsx::write_logged(env, host.join("openvpn.cmd"), &cmd_line);
         let cmd_trim = cmd_line.trim();
         let guest = env.run_dir().join("guest/guest");
         for _ in 0..env.vpn_wait {
@@ -533,8 +546,9 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     if !legacy.is_file() {
         return (1, "{\"ok\":false,\"error\":\"未导入配置\"}".to_string());
     }
-    let _ = fs::create_dir_all(env.xr_data.join("config"));
-    let _ = fs::write(
+    fsx::mkdirs_logged(env, env.xr_data.join("config"));
+    fsx::write_logged(
+        env,
         env.xr_data.join("config/openvpn.enabled"),
         if want { "1\n" } else { "0\n" },
     );
@@ -553,7 +567,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                             first_id = Some(vid.to_string());
                         }
                         if !want {
-                            let _ = fs::write(vpn_dir.join(format!("{vid}.enabled")), "0\n");
+                            fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
                         } else if fs::read_to_string(vpn_dir.join(format!("{vid}.enabled")))
                             .is_ok_and(|s| s.trim() == "1")
                         {
@@ -564,7 +578,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             }
             if want && !has_en {
                 if let Some(fid) = first_id {
-                    let _ = fs::write(vpn_dir.join(format!("{fid}.enabled")), "1\n");
+                    fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
                 }
             }
         }
@@ -576,14 +590,15 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         return (0, "{\"ok\":true}".to_string());
     }
     let host = env.run_dir().join("guest/host");
-    let _ = fs::create_dir_all(&host);
-    if vpn_dir.is_dir() {
-        let _ = vpn_sync_host(env);
+    fsx::mkdirs_logged(env, &host);
+    if vpn_dir.is_dir() && vpn_sync_host(env).is_none() {
+        // 检查与同步之间目录被删除：客机侧本轮不更新，只记调试日志
+        dlog_env(env, "vpn", "切换单配置时同步客机配置：配置目录不存在");
     }
     if want {
-        let _ = fs::copy(&legacy, host.join("openvpn.ovpn"));
+        fsx::copy_logged(env, &legacy, host.join("openvpn.ovpn"));
     }
-    let _ = fs::write(host.join("openvpn.cmd"), vpn_next_cmd(env, act));
+    fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, act));
     let guest = env.run_dir().join("guest/guest");
     for _ in 0..env.vpn_wait {
         let vst = fs::read_to_string(guest.join("openvpn.status"))
@@ -614,19 +629,19 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     }
     let was_en =
         fs::read_to_string(vpn_dir.join(format!("{did}.enabled"))).is_ok_and(|s| s.trim() == "1");
-    let _ = fs::remove_file(&ovpn);
-    let _ = fs::remove_file(vpn_dir.join(format!("{did}.name")));
-    let _ = fs::remove_file(vpn_dir.join(format!("{did}.enabled")));
+    fsx::remove_logged(env, &ovpn);
+    fsx::remove_logged(env, vpn_dir.join(format!("{did}.name")));
+    fsx::remove_logged(env, vpn_dir.join(format!("{did}.enabled")));
     vpn_mirror_legacy(env);
     if vm_running(env) {
         let any = vpn_sync_host(env).unwrap_or(false);
         if was_en || !any {
             let host = env.run_dir().join("guest/host");
             if !any {
-                let _ = fs::remove_file(host.join("openvpn.ovpn"));
+                fsx::remove_logged(env, host.join("openvpn.ovpn"));
             }
             let act = if any { "enable" } else { "disable" };
-            let _ = fs::write(host.join("openvpn.cmd"), vpn_next_cmd(env, act));
+            fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, act));
         }
     }
     log_info(env, "xr", "已删除 OpenVPN 配置");
@@ -638,9 +653,9 @@ pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
         return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_string());
     }
     let host = env.run_dir().join("guest/host");
-    let _ = fs::create_dir_all(&host);
+    fsx::mkdirs_logged(env, &host);
     let ts = format!("{}{}", unix_now(), std::process::id());
-    let _ = fs::write(host.join("acct.cmd"), format!("snap {ts}\n"));
+    fsx::write_logged(env, host.join("acct.cmd"), format!("snap {ts}\n"));
     let acct_file = env.run_dir().join("guest/guest/acct");
     let expected = format!("ts={ts}");
     for _ in 0..wait_secs.saturating_mul(5) {
