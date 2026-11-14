@@ -1,6 +1,9 @@
 #!/bin/sh
 # 假 ip：记录调用；查询类命令从 $MOCK 下的文件读取
 echo "ip $*" >> "$MOCK/calls"
+# IP_NOISE=1：删除到不存在时像真 ip 一样报错；ADDR_ADD_FAIL=1：给 xr0 加地址失败（模拟真实失败）
+if [ -n "${IP_NOISE:-}" ]; then case "$*" in *"rule del"*) echo "RTNETLINK answers: No such file or directory" >&2; exit 2 ;; esac; fi
+if [ -n "${ADDR_ADD_FAIL:-}" ]; then case "$*" in "addr add "*" dev xr0") echo "RTNETLINK answers: File exists" >&2; exit 2 ;; esac; fi
 case "$*" in
   rule|"rule show") cat "$MOCK/iprule" 2>/dev/null ;;
   "rule del"*) exit 1 ;;

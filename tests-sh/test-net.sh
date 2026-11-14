@@ -240,6 +240,12 @@ chk 'grep -q "\[cmd\] rc=0 ip addr add 172.29.233.1/24 dev xr0" "$XR_DATA/log/de
 chk 'grep -q "\[net\] 同步：上游=rmnet_data2" "$XR_DATA/log/debug.log" && grep -q "接管=block（模式=global" "$XR_DATA/log/debug.log"'
 chk 'grep -q "IPv6 拦截：" "$XR_DATA/log/debug.log" && grep -q "\[sysctl\] rc=" "$XR_DATA/log/debug.log"'
 $NET down
+# 预期内的幂等失败（删除到不存在、重复建链）不写 debug.log；真正的失败照常写（需求 4c）
+: > "$XR_DATA/log/debug.log"; rst; IP_NOISE=1 $NET up 2>/dev/null; IP_NOISE=1 $NET up 2>/dev/null; IP_NOISE=1 $NET down 2>/dev/null
+chk 'grep -q "^ip rule del" "$MOCK/calls" && grep -q "^iptables -N XR_ACCT" "$MOCK/calls"'
+chk '! grep -q "No such file or directory" "$XR_DATA/log/debug.log" && ! grep -q "Chain already exists" "$XR_DATA/log/debug.log"'
+: > "$XR_DATA/log/debug.log"; rst; IP_NOISE=1 ADDR_ADD_FAIL=1 $NET up 2>/dev/null; $NET down
+chk 'grep -q "rc=2 ip addr add 172.29.233.1/24 dev xr0 | stderr: RTNETLINK answers: File exists" "$XR_DATA/log/debug.log"'
 # 没有 ip6 nat 表的机型：只探测一次，之后既不去删 XR_NAT6 挂钩，调试日志里也不出现相关错误
 : > "$XR_DATA/log/debug.log"; rst; NAT6_FAIL=1 $NET up; NAT6_FAIL=1 $NET sync; NAT6_FAIL=1 $NET down
 chk '! grep -q "XR_NAT6" "$XR_DATA/log/debug.log" && [ "$(grep -c "^ip6tables .*-t nat" "$MOCK/calls")" -le 1 ]'

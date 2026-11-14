@@ -11,7 +11,7 @@ case "$t:$*" in
 esac
 # 流量统计链（XR_ACCT*）与 INPUT/OUTPUT 钩子：通用实现，计数从 $MOCK/cnt.<链> 逐行读取（缺省 0）
 case "$t:$*" in
-  "filter:-N XR_ACCT"*) [ -n "${ACCT_FAIL:-}" ] && exit 1; [ -f "$MOCK/chain.$2" ] && exit 1; : > "$MOCK/chain.$2"; exit 0 ;;
+  "filter:-N XR_ACCT"*) [ -n "${ACCT_FAIL:-}" ] && exit 1; [ -f "$MOCK/chain.$2" ] && { [ -n "${IP_NOISE:-}" ] && echo "iptables: Chain already exists." >&2; exit 1; }; : > "$MOCK/chain.$2"; exit 0 ;;
   "filter:-S XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; echo "-N $2"; sed "s/^/-A $2 /" "$MOCK/chain.$2"; exit 0 ;;
   "filter:-F XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; : > "$MOCK/chain.$2"; rm -f "$MOCK/cnt.$2"; exit 0 ;;
   "filter:-X XR_ACCT"*) [ -f "$MOCK/chain.$2" ] || exit 1; rm -f "$MOCK/chain.$2" "$MOCK/cnt.$2"; exit 0 ;;

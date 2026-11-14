@@ -10,6 +10,9 @@ use crate::config::Config;
 use crate::env::Env;
 use crate::log::{FAILURES, dlog, dlog_env, note_failure};
 
+#[cfg(test)]
+mod tests;
+
 /// 一次外部命令的结果。
 #[derive(Debug, Clone)]
 pub struct Output {
@@ -114,9 +117,28 @@ fn exec_failed(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> Output {
     }
 }
 
+/// 调试日志里可忽略的预期失败：删除到不存在为止（`del`/`delete`/`-D`/`-X` 且错误为"不存在"类），或新建已存在的链（`-N` 且 `Chain already exists.`）。
+#[must_use]
+pub(crate) fn expected_noise(args: &[&str], code: i32, stderr: &str) -> bool {
+    if code == 0_i32 {
+        return false;
+    }
+    let deleting = args
+        .iter()
+        .any(|arg| matches!(*arg, "del" | "delete" | "-D" | "-X"));
+    let new_chain = args.contains(&"-N");
+    let text = stderr.trim();
+    let gone = text.ends_with("No such file or directory")
+        || text.ends_with("No such process")
+        || text.contains("does a matching rule exist")
+        || text.contains("No chain/target/match by that name")
+        || text.starts_with("Cannot find device");
+    (deleting && gone) || (new_chain && text.ends_with("Chain already exists."))
+}
+
 /// 执行外部命令并收集输出，标准输入接空。
 ///
-/// 修改类命令在开机日志存在时先记一行；调试开关打开时，失败、有错误输出或修改类的命令记入调试日志（只读命令的 141 除外）。`pass_stderr` 为 true 时把标准错误转发到本进程的标准错误。无法执行时返回退出码 127。
+/// 修改类命令在开机日志存在时先记一行；调试开关打开时，失败、有错误输出或修改类的命令记入调试日志（只读命令的 141 与 `expected_noise` 判定的预期失败除外）。`pass_stderr` 为 true 时把标准错误转发到本进程的标准错误。无法执行时返回退出码 127。
 #[must_use]
 pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) -> Output {
     let mutating = is_mutating_args(args);
@@ -140,7 +162,10 @@ pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: 
             .collect();
         let de_trimmed = de.trim();
         let sigpipe_readonly = code == 141_i32 && de_trimmed.is_empty() && !mutating;
-        if !sigpipe_readonly && (code != 0_i32 || !de_trimmed.is_empty() || mutating) {
+        if !sigpipe_readonly
+            && (code != 0_i32 || !de_trimmed.is_empty() || mutating)
+            && !expected_noise(args, code, de_trimmed)
+        {
             let cmd_str = format_cmd_for_log(env, prog, args);
             if de_trimmed.is_empty() {
                 dlog(env, cfg, "cmd", &format!("rc={code} {cmd_str}"));
