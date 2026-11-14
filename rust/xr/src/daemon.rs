@@ -378,6 +378,8 @@ pub fn main_loop(env: &Env) -> i32 {
                         log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
                     }
                 }
+            } else {
+                // 虚拟机在运行但尚未 ready：本轮不检查 fuse 看门进程
             }
         }
 

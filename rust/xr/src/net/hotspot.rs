@@ -507,6 +507,8 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
                 "当前系统盘不支持热点接管（请重置系统盘或使用新版完整包），热点保持由安卓分配",
             );
             fsx::touch_logged(ctx.env, run.join("net.hs_old"));
+        } else {
+            // 客体不支持且已提示过一次：不重复记日志，want 保持 None
         }
     }
     let have = fs::read_to_string(run.join("net.hs_if"))

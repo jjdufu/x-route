@@ -26,6 +26,8 @@ pub fn vpn_slug(name: &str) -> String {
         } else if !last_us && !out.is_empty() {
             out.push('_');
             last_us = true;
+        } else {
+            // 连续的非法字符只保留一个下划线；开头的非法字符直接丢弃
         }
         if out.len() >= 32 {
             break;
@@ -548,6 +550,8 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                 }
             } else if !has_tun && !has_conn && (is_multi || vst == "down" || vst.is_empty()) {
                 return (0, "{\"ok\":true}".to_owned());
+            } else {
+                // 状态尚未到达目标：继续轮询
             }
             thread::sleep(Duration::from_secs(1));
         }
@@ -585,6 +589,8 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                     .is_ok_and(|text| text.trim() == "1")
                 {
                     has_en = true;
+                } else {
+                    // 要开启但该配置未启用：先不改，循环结束后再决定是否启用第一个配置
                 }
             }
         }
@@ -623,6 +629,8 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             }
         } else if vst == "down" || vst.is_empty() {
             return (0, "{\"ok\":true}".to_owned());
+        } else {
+            // 状态尚未到达目标：继续轮询
         }
         thread::sleep(Duration::from_secs(1));
     }
@@ -749,6 +757,8 @@ pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
                     })
             {
                 items.push(format!("f/{name}"));
+            } else {
+                // 其他文件不列出
             }
         }
     }

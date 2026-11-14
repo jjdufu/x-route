@@ -645,6 +645,8 @@ pub fn run_clash_mux(env: &Env) -> i32 {
             && !env.fuse_file().is_file()
         {
             break;
+        } else {
+            // 虚拟机还没起来且仍在 10 秒宽限期内，或 fuse 文件还在：继续等待
         }
         thread::sleep(Duration::from_millis(300));
     }

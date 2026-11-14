@@ -127,6 +127,8 @@ pub fn json(env: &Env) -> String {
         vcfg = true;
         ven = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
             .map_or(true, |text| text.trim() != "0");
+    } else {
+        // 没有任何 OpenVPN 配置：vcfg、ven 保持 false
     }
 
     json!({

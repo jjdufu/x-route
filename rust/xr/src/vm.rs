@@ -754,6 +754,8 @@ pub fn status(env: &Env) -> StatusJson {
                 )
             {
                 uptime_s = now.saturating_sub(st.checked_div(100_u64).unwrap_or(0_u64));
+            } else {
+                // 取不到就绪时刻也读不到进程启动时间：uptime_s 保持 0
             }
         }
     }
