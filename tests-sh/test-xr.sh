@@ -255,8 +255,10 @@ except Exception:
     print("-")')"
   if [ -s "$T/d.err" ]; then e=stderr; else e=quiet; fi
   echo "$name -> $rc -> $ok -> $e" >> "$T/dispatch.cur"
+  # 完整 stdout 金样（tests-sh/golden/cli-stdout.txt）：临时目录归一为 TMP，日期时间归一为 T，6 位以上数字（时间戳、文件名时间）归一为 N
+  { echo "== $name"; sed -E "s#$T#TMP#g; s/[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}/T/g; s/[0-9]{6,}/N/g" "$T/d.out"; } >> "$T/stdout.cur"
 }
-: > "$T/dispatch.cur"
+: > "$T/dispatch.cur"; : > "$T/stdout.cur"
 D "(none)"
 D bogus bogus
 D running running
@@ -300,6 +302,30 @@ D "internal diag-snap" internal diag-snap
 D "internal uninstall-worker(no args)" internal uninstall-worker
 if [ -n "${XR_GOLDEN_RECORD:-}" ]; then mkdir -p "$ROOT/tests-sh/golden"; cp "$T/dispatch.cur" "$ROOT/tests-sh/golden/cli-dispatch.txt"
 else chk 'diff -u "$ROOT/tests-sh/golden/cli-dispatch.txt" "$T/dispatch.cur"'; fi
+# 04f：完整 stdout 金样再补几条有实际输出的调用（VM 已停、无 clash 通道）
+D "ls vpn dir" ls /storage/emulated/0/Download/vpn ovpn
+D "ls storage root" ls /storage/emulated/0
+D "clash-call ping" clash-call '{"op":"ping"}'
+D "clash-call bad json" clash-call '{'
+D "clash-call array" clash-call '[1]'
+D "clash-stream bad args" clash-stream "" x
+D "clash-stream no channel" clash-stream w1 /logs
+D "clash-ws-send no channel" clash-ws-send w1 text hi
+D "clash-ws-close no channel" clash-ws-close w1
+D "boot-tail" boot-tail -1 -1
+D "vpn-delete no_such" vpn-delete no_such
+D "vpn-import bad path" vpn-import /data/adb/x.ovpn
+D "internal net status" internal net status
+D "internal net bogus" internal net bogus
+D "traffic json" traffic json
+if [ -n "${XR_GOLDEN_RECORD:-}" ]; then cp "$T/stdout.cur" "$ROOT/tests-sh/golden/cli-stdout.txt"
+else chk 'diff -u "$ROOT/tests-sh/golden/cli-stdout.txt" "$T/stdout.cur"'; fi
+# stdout 写失败（D5-B）：写到 /dev/full 得到 ENOSPC，命令以 141 结束，stderr 不含 panic 文本
+$XR status-json >/dev/full 2>"$T/full.err"; rc=$?
+chk '[ "$rc" -eq 141 ] && ! grep -qi panic "$T/full.err"'
+$XR get >/dev/full 2>"$T/full.err"; rc=$?
+chk '[ "$rc" -eq 141 ] && ! grep -qi panic "$T/full.err"'
+
 # 立即卸载：必须带 confirm；模块目录名与 id 不符时拒绝（开发树里不会删源码）；
 # 正常时立即返回并同步删除模块目录（不遗留 remove 标记触发管理器恢复按钮），脱离会话的后台进程跑 uninstall.sh 再清理数据
 out="$($XR uninstall-now)"; chk '[ $? -eq 2 ] && [ -d "$T/mod/scripts" ]'

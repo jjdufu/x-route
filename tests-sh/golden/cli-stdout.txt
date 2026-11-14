@@ -1,0 +1,149 @@
+== (none)
+usage: xr <subcommand>
+== bogus
+usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm
+== running
+== stop
+== status-json
+{"clash":{"installed":false,"port":9090,"running":false},"config":{"AUTOSTART":"0","AUTOSTART_DELAY_SEC":"60","READY_TIMEOUT_SEC":"6","STABLE_SEC":"5","VM_CPUS":"2","VM_DISK_RW":"1","VM_DISK_SIZE_MB":"1024","VM_MEM_MB":"768","VM_NET":"1","VM_SHARE":"0","VM_SHARE_MODE":"ro","VM_SHARE_PATH":"/data/media/0","VM_SWIOTLB_MB":"64","VM_WAKELOCK":"1","XR_CLASH_UI":"0","XR_DEBUG":"0","XR_DEBUG_HOURS":"24","XR_DNS":"223.5.5.5 119.29.29.29","XR_EXPOSE":"all","XR_HOTSPOT_BRIDGE":"1","XR_HOTSPOT_SUBNET":"172.28.222.254/24","XR_MODE":"global","XR_NET_PREFIX":"172.29.233","XR_NOTIFY_TRAFFIC":"total","XR_VM_MAC":"52:54:00:1d:e9:fe"},"ipv6":null,"net":{"expose":"lan","expose_if":["wlan1"],"host_ip":"172.29.233.1","mode":"ndc","up_if":"wlan0","vm_ip":"172.29.233.254"},"share":{"ce_ready":true,"enabled":false,"mode":"off","path":"/data/media/0","rw_supported":false},"vm":{"error":"","last_good_match":true,"pid":null,"ready_channel":"hvc","running":false,"state":"stopped","tripped":null,"uptime_s":0},"vpn":{"addr":"","configured":true,"enabled":false,"profiles":[{"addr":"","dev":"","enabled":false,"id":"home","mtu":0,"name":"home","routes":[],"status":"down"}],"routes_active":["10.8.0.0/24"],"routes_rejected":[],"status":"down","tunnels":[{"addr":"","dev":"","mtu":0,"name":"home","routes":[],"status":"down"}]}}
+== status-line
+已停止 / - / 172.29.233.254 / 管理访问=all / VPN网段=1
+== get
+XR_NET_PREFIX=172.29.233
+XR_VM_MAC=52:54:00:1d:e9:fe
+XR_DNS=223.5.5.5 119.29.29.29
+XR_EXPOSE=all
+XR_MODE=global
+VM_CPUS=2
+VM_MEM_MB=768
+VM_SWIOTLB_MB=64
+VM_NET=1
+VM_DISK_RW=1
+VM_DISK_SIZE_MB=1024
+VM_WAKELOCK=1
+VM_SHARE=0
+VM_SHARE_MODE=ro
+VM_SHARE_PATH=/data/media/0
+AUTOSTART=0
+AUTOSTART_DELAY_SEC=60
+READY_TIMEOUT_SEC=6
+STABLE_SEC=5
+XR_NOTIFY_TRAFFIC=total
+XR_DEBUG=0
+XR_DEBUG_HOURS=24
+XR_HOTSPOT_BRIDGE=1
+XR_HOTSPOT_SUBNET=172.28.222.254/24
+XR_CLASH_UI=0
+== set(no args)
+{"ok":false,"error":"用法：xr set KEY VALUE"}
+== set VM_MEM_MB
+{"ok":true,"restart":false}
+== traffic
+{"wan":{"up":0,"down":0},"lan":{"up":0,"down":0},"total":{"up":0,"down":0},"since":0,"counting":false,"ipv6":false}
+== traffic-reset
+{"ok":true}
+== traffic-split
+{"ok":false,"error":"服务未运行"}
+== ipv6(no arg)
+{"ok":false,"error":"用法：xr ipv6 on|off"}
+== ack-trip
+== expand(no arg)
+usage: xr expand MB
+== sync
+== vpn-enable(no id)
+{"ok":false,"error":"服务未运行"}
+== vpn-disable(no id)
+{"ok":true}
+== vpn-delete no_such
+{"ok":false,"error":"配置不存在"}
+== vpn-import(no arg)
+{"ok":false,"error":"路径无效"}
+== ls(no arg)
+d/Download
+d/Music
+== project
+== luci
+== log-export
+{"ok":true,"path":"TMP/dl/xrouter-logs-N-N.zip"}
+== diag-export
+{"ok":true,"path":"TMP/dl/xrouter-diag-N-N.zip"}
+== uninstall-now(no confirm)
+{"ok":false,"error":"需要确认"}
+== clash-ping
+{"ok":false,"error":"clash channel unavailable"}
+== clash-call(empty)
+{"ok":false,"status":400,"error":"invalid json"}
+== clash-ws-close(empty)
+== internal(none)
+== internal bogus
+== internal dump-config-keys
+XR_NET_PREFIX
+XR_VM_MAC
+XR_DNS
+XR_EXPOSE
+XR_MODE
+VM_CPUS
+VM_MEM_MB
+VM_SWIOTLB_MB
+VM_NET
+VM_DISK_RW
+VM_DISK_SIZE_MB
+VM_WAKELOCK
+VM_SHARE
+VM_SHARE_MODE
+VM_SHARE_PATH
+AUTOSTART
+AUTOSTART_DELAY_SEC
+READY_TIMEOUT_SEC
+STABLE_SEC
+XR_NOTIFY_TRAFFIC
+XR_DEBUG
+XR_DEBUG_HOURS
+XR_HOTSPOT_BRIDGE
+XR_HOTSPOT_SUBNET
+XR_CLASH_UI
+== internal config-hash
+30dcae93ffc5e4e2
+== internal valid-kv ok
+== internal valid-kv bad
+== internal set-kv(no args)
+== internal vm(none)
+== internal vm status
+{"running":false,"pid":null,"state":"stopped","uptime_s":0,"tripped":null,"last_good_match":true,"ready_channel":"hvc","error":""}
+== internal traffic
+{"wan":{"up":0,"down":0},"lan":{"up":0,"down":0},"total":{"up":0,"down":0},"since":N,"counting":false,"ipv6":false}
+== internal diag-snap
+== internal uninstall-worker(no args)
+== ls vpn dir
+f/bin.conf
+f/home.ovpn
+f/office-hk.ovpn
+f/公司内网.ovpn
+== ls storage root
+d/Download
+d/Music
+== clash-call ping
+{"ok":false,"status":503,"error":"clash channel unavailable"}
+== clash-call bad json
+{"ok":false,"status":400,"error":"invalid json"}
+== clash-call array
+{"ok":false,"status":400,"error":"json object required"}
+== clash-stream bad args
+{"op":"ws_close","ok":false,"error":"invalid args"}
+== clash-stream no channel
+{"op":"ws_close","ws_id":"w1","code":1006,"reason":"channel unavailable"}
+== clash-ws-send no channel
+{"ok":false,"error":"clash channel unavailable"}
+== clash-ws-close no channel
+{"ok":true}
+== boot-tail
+R-Sstopped010000== vpn-delete no_such
+{"ok":false,"error":"配置不存在"}
+== vpn-import bad path
+{"ok":false,"error":"路径无效"}
+== internal net status
+{"mode":"down","up_if":"","expose":"all","expose_if":[],"vm_ip":"172.29.233.254","host_ip":"172.29.233.1","gw":"off","hotspot":"","hotspot_net":""}
+== internal net bogus
+usage: net.sh up|down|watch|sync|status
+== traffic json
+{"wan":{"up":0,"down":0},"lan":{"up":0,"down":0},"total":{"up":0,"down":0},"since":N,"counting":false,"ipv6":false}
