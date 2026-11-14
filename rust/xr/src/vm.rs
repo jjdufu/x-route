@@ -320,6 +320,34 @@ pub(crate) fn vpn_sync_host(env: &Env) -> Option<bool> {
     Some(any)
 }
 
+/// `config/vpn/` 里至少有一份非空 `.ovpn` 配置时返回 true。
+fn has_profile(env: &Env) -> bool {
+    let Ok(rd) = fs::read_dir(env.vpn_dir()) else {
+        return false;
+    };
+    rd.flatten().any(|ent| {
+        let file_path = ent.path();
+        file_path.extension().and_then(|os_str| os_str.to_str()) == Some("ovpn")
+            && fs::metadata(&file_path).is_ok_and(|meta| meta.len() > 0)
+    })
+}
+
+/// 开机前按 `config/vpn/` 同步配置给客机，有启用的配置下发 `enable`，否则下发 `disable`（有配置时记"保持停止"）。
+fn boot_profiles(env: &Env, host: &Path) {
+    let Some(any) = vpn_sync_host(env) else {
+        return;
+    };
+    if any {
+        fsx::write_logged(env, host.join("openvpn.cmd"), "enable\n");
+        blog(env, "vpn", "下发 OpenVPN 配置");
+    } else {
+        fsx::write_logged(env, host.join("openvpn.cmd"), "disable\n");
+        if has_profile(env) {
+            blog(env, "vpn", "OpenVPN 保持停止");
+        }
+    }
+}
+
 /// 开机前准备 `VPN`：清掉客机上次的应答文件，按配置下发 `openvpn.cmd`（`enable`/`disable`）；兼容旧版单文件 `config/openvpn.ovpn`。
 pub(crate) fn vpn_boot_prepare(env: &Env) {
     let guest = env.run_dir().join("guest/guest");
@@ -328,25 +356,7 @@ pub(crate) fn vpn_boot_prepare(env: &Env) {
         fsx::remove_logged(env, guest.join(name));
     }
     if env.vpn_dir().is_dir() {
-        if let Some(any) = vpn_sync_host(env) {
-            if any {
-                fsx::write_logged(env, host.join("openvpn.cmd"), "enable\n");
-                blog(env, "vpn", "下发 OpenVPN 配置");
-            } else {
-                fsx::write_logged(env, host.join("openvpn.cmd"), "disable\n");
-                if let Ok(rd) = fs::read_dir(env.vpn_dir()) {
-                    for ent in rd.flatten() {
-                        let file_path = ent.path();
-                        if file_path.extension().and_then(|os_str| os_str.to_str()) == Some("ovpn")
-                            && fs::metadata(&file_path).is_ok_and(|meta| meta.len() > 0)
-                        {
-                            blog(env, "vpn", "OpenVPN 保持停止");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        boot_profiles(env, &host);
         return;
     }
     let legacy = env.xr_data.join("config/openvpn.ovpn");
