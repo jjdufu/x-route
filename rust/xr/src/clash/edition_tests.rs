@@ -49,60 +49,79 @@ fn unregister_client_releases_locks() -> Result<(), Failure> {
     let state = MuxState::new();
     let (tx, _rx) = mpsc::channel::<String>();
     state.register_client(7, tx);
-    {
-        let mut clients = state.clients.lock().map_err(|_poison| "clients 中毒")?;
-        let handle = clients.get_mut(&7).ok_or("未注册")?;
-        let inserted = handle.ws_ids.insert("w1".to_string());
-        ensure(inserted, "ws id 插入失败")?;
-    }
-    {
-        let mut active = state.active_ws.lock().map_err(|_poison| "active 中毒")?;
-        let prev = active.insert("w1".to_string(), (7, "s1".to_string()));
-        ensure(prev.is_none(), "active 已有值")?;
-    }
-    {
-        let mut pending = state
-            .pending_reqs
-            .lock()
-            .map_err(|_poison| "pending 中毒")?;
-        let prev = pending.insert("r1".to_string(), (7, Value::from(1)));
-        ensure(prev.is_none(), "pending 已有值")?;
-    }
+    let inserted = state
+        .clients
+        .lock()
+        .map_err(|_poison| "clients 中毒")?
+        .get_mut(&7)
+        .is_some_and(|handle| handle.ws_ids.insert("w1".to_owned()));
+    ensure(inserted, "ws id 插入失败")?;
+    let prev_active = state
+        .active_ws
+        .lock()
+        .map_err(|_poison| "active 中毒")?
+        .insert("w1".to_owned(), (7, "s1".to_owned()));
+    ensure(prev_active.is_none(), "active 已有值")?;
+    let prev_pending = state
+        .pending_reqs
+        .lock()
+        .map_err(|_poison| "pending 中毒")?
+        .insert("r1".to_owned(), (7, Value::from(1_i32)));
+    ensure(prev_pending.is_none(), "pending 已有值")?;
     state.unregister_client(7);
-    let clients = state.clients.try_lock().map_err(|_lock| "clients 仍被锁")?;
-    ensure(!clients.contains_key(&7), "clients 仍含 7")?;
-    let active = state
+    let has_client = state
+        .clients
+        .try_lock()
+        .map_err(|_lock| "clients 仍被锁")?
+        .contains_key(&7);
+    ensure(!has_client, "clients 仍含 7")?;
+    let has_active = state
         .active_ws
         .try_lock()
-        .map_err(|_lock| "active 仍被锁")?;
-    ensure(!active.contains_key("w1"), "active 仍含 w1")?;
-    let pending = state
+        .map_err(|_lock| "active 仍被锁")?
+        .contains_key("w1");
+    ensure(!has_active, "active 仍含 w1")?;
+    let pending_clean = state
         .pending_reqs
         .try_lock()
-        .map_err(|_lock| "pending 仍被锁")?;
-    ensure(
-        pending.values().all(|(cid, _)| *cid != 7),
-        "pending 仍有 cid=7",
-    )
+        .map_err(|_lock| "pending 仍被锁")?
+        .values()
+        .all(|(cid, _)| *cid != 7);
+    ensure(pending_clean, "pending 仍有 cid=7")
 }
 
-/// 外部客户端按 key 关闭 ws（clash.rs:327）后返回原主人信息，`ws_by_key` 不残留锁；key 不存在时按原样应答。
+/// 建一个接了客机侧 socketpair 的 `MuxState`，注册客户端 1、2，返回客机读端与两个客户端的接收端。
+///
+/// # Errors
+///
+/// socketpair 失败或锁中毒时返回错误。
+fn wired_state() -> Result<WiredState, Failure> {
+    let (guest_end, mux_end) = TestStream::pair().map_err(|_io_err| "socketpair 失败")?;
+    let state = MuxState::new();
+    *state.hvc_writer.lock().map_err(|_poison| "hvc 中毒")? = Some(mux_end);
+    let (tx_a, rx_a) = mpsc::channel::<String>();
+    let (tx_b, rx_b) = mpsc::channel::<String>();
+    state.register_client(1, tx_a);
+    state.register_client(2, tx_b);
+    Ok((state, BufReader::new(guest_end), rx_a, rx_b))
+}
+
+/// `wired_state` 的返回值：状态、客机读端、客户端 1 与 2 的接收端。
+type WiredState = (
+    MuxState,
+    BufReader<TestStream>,
+    mpsc::Receiver<String>,
+    mpsc::Receiver<String>,
+);
+
+/// 外部客户端按 key 关闭 ws（clash.rs:327）后通知原主人，`ws_by_key` 不残留锁。
 ///
 /// # Errors
 ///
 /// 任一断言不成立时返回错误。
 #[test]
 fn ws_close_by_external_key_returns_owner() -> Result<(), Failure> {
-    let (guest_end, mux_end) = TestStream::pair().map_err(|_io_err| "socketpair 失败")?;
-    let state = MuxState::new();
-    {
-        let mut guard = state.hvc_writer.lock().map_err(|_poison| "hvc 中毒")?;
-        *guard = Some(mux_end);
-    }
-    let (tx_a, rx_a) = mpsc::channel::<String>();
-    let (tx_b, rx_b) = mpsc::channel::<String>();
-    state.register_client(1, tx_a);
-    state.register_client(2, tx_b);
+    let (state, mut br, rx_a, rx_b) = wired_state()?;
     let mut map_a = HashMap::new();
     let mut map_b = HashMap::new();
     state.handle_client_line(
@@ -110,14 +129,12 @@ fn ws_close_by_external_key_returns_owner() -> Result<(), Failure> {
         &mut map_a,
         "{\"id\":\"o\",\"op\":\"ws_open\",\"ws_id\":\"k1\"}",
     );
-    let mut br = BufReader::new(guest_end);
     let opened = read_guest(&mut br)?;
     let mux_ws = opened
         .get("ws_id")
         .and_then(Value::as_str)
         .ok_or("无 mux ws")?
-        .to_string();
-
+        .to_owned();
     state.handle_client_line(
         2,
         &mut map_b,
@@ -129,21 +146,30 @@ fn ws_close_by_external_key_returns_owner() -> Result<(), Failure> {
         "客机侧 ws_id 不对",
     )?;
     let reply = recv_json(&rx_b)?;
-    ensure(reply.get("id") == Some(&Value::from(9)), "应答 id 不对")?;
+    ensure(reply.get("id") == Some(&Value::from(9_i32)), "应答 id 不对")?;
     ensure(reply.get("ok") == Some(&Value::from(true)), "应答 ok 不对")?;
     let owner_note = recv_json(&rx_a)?;
     ensure(
         owner_note.get("op") == Some(&Value::from("ws_close")),
         "原主人未收到关闭",
     )?;
-    {
-        let by_key = state
-            .ws_by_key
-            .try_lock()
-            .map_err(|_lock| "ws_by_key 仍被锁")?;
-        ensure(!by_key.contains_key("k1"), "ws_by_key 仍含 k1")?;
-    }
+    let has_key = state
+        .ws_by_key
+        .try_lock()
+        .map_err(|_lock| "ws_by_key 仍被锁")?
+        .contains_key("k1");
+    ensure(!has_key, "ws_by_key 仍含 k1")
+}
 
+/// key 不存在时：`ws_close` 回 `ok:true`，`ws_send` 回 `ok:false`，与改动前一致。
+///
+/// # Errors
+///
+/// 任一断言不成立时返回错误。
+#[test]
+fn ws_ctl_missing_key_replies_as_before() -> Result<(), Failure> {
+    let (state, _br, _rx_a, rx_b) = wired_state()?;
+    let mut map_b = HashMap::new();
     state.handle_client_line(
         2,
         &mut map_b,
@@ -258,16 +284,17 @@ fn ctl_reconnect_clears_writer() -> Result<(), Failure> {
     });
     ensure(got_503, "断开后 hvc_writer 未清空")?;
     // 重连：请求再次被转发
-    let ctl2 = TestStream::connect(&ctl_path).map_err(|_io_err| "重连 ctl 失败")?;
-    ctl2.set_read_timeout(timeout)
+    let ctl_again = TestStream::connect(&ctl_path).map_err(|_io_err| "重连 ctl 失败")?;
+    ctl_again
+        .set_read_timeout(timeout)
         .map_err(|_io_err| "设超时失败")?;
-    let mut ctl2_reader = BufReader::new(ctl2);
+    let mut again_reader = BufReader::new(ctl_again);
     let forwarded_again = poll_until(40, || {
         rpc.write_all(b"{\"id\":3,\"op\":\"ping\"}\n").is_ok()
-            && read_guest(&mut ctl2_reader).is_ok()
+            && read_guest(&mut again_reader).is_ok()
     });
     ensure(forwarded_again, "重连后请求未转发")?;
-    drop(ctl2_reader);
+    drop(again_reader);
     drop(rpc_reader);
     drop(rpc);
     stop_mux(&env, mux)

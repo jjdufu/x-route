@@ -516,7 +516,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
                     drop(br);
                     if let Ok(mut guard) = s_ctl.hvc_writer.lock() {
                         *guard = None;
-                    };
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
