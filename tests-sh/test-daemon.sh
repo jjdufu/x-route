@@ -122,6 +122,33 @@ chk '[ "$(cat "$RUN/daemon.res")" = 0 ]'
 w=0; while is_pid_running "$dpid" && [ "$w" -lt 10 ]; do sleep 1; w=$((w+1)); done
 chk '[ ! -f "$RUN/daemon.pid" ] && ! is_pid_running "$dpid" && ! $XR running'
 chk 'grep -q -- "-nvxL XR_ACCT_UP" "$MOCK/calls"'
+chk '[ ! -e "$RUN/stats.sock" ]'   # 退出时删除自己的速率套接字
+
+# 4d. 实时速率（需求 7）：守护进程只在收到请求时采样计数链、在内存中算速率；
+#     首次为 null，2 秒后按增量出速率（不写任何文件）；守护进程不在时 status-json 降级 source=none，1 秒内返回
+J() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+printf '%s\n' "-d 10.0.0.0/8 -j RETURN" "-j RETURN" > "$MOCK/chain.XR_ACCT_UP"
+printf '%s\n' "-s 10.0.0.0/8 -j RETURN" "-j RETURN" > "$MOCK/chain.XR_ACCT_DN"
+printf '%s\n' 1000 5000 > "$MOCK/cnt.XR_ACCT_UP"; printf '%s\n' 2000 9000 > "$MOCK/cnt.XR_ACCT_DN"
+chk '$XR start'
+dpid="$(cat "$RUN/daemon.pid")"
+w=0; while [ ! -S "$RUN/stats.sock" ] && [ "$w" -lt 10 ]; do sleep 1; w=$((w+1)); done
+chk '[ -S "$RUN/stats.sock" ] && [ "$(stat -c %a "$RUN/stats.sock")" = 600 ]'
+ls -l --time-style=+%s "$XR_DATA/config" > "$T/cfg.before" 2>/dev/null
+s1="$($XR status-json)"
+chk 'echo "$s1" | J "d[\"traffic\"][\"source\"]==\"daemon\" and d[\"traffic\"][\"counting\"] is True and d[\"traffic\"][\"rate\"] is None and d[\"traffic\"][\"total\"][\"total\"]==dict(up=6000,down=11000)" | grep -qx True'
+sleep 2
+printf '%s\n' 1000 9000 > "$MOCK/cnt.XR_ACCT_UP"
+s2="$($XR status-json)"
+chk 'echo "$s2" | J "1800<=d[\"traffic\"][\"rate\"][\"total\"][\"up\"]<=2200 and d[\"traffic\"][\"rate\"][\"lan\"][\"up\"]==0 and d[\"traffic\"][\"rate\"][\"total\"][\"down\"]==0" | grep -qx True'
+ls -l --time-style=+%s "$XR_DATA/config" > "$T/cfg.after" 2>/dev/null
+chk 'cmp -s "$T/cfg.before" "$T/cfg.after"'   # 速率查询不写 config 目录下任何文件
+$XR stop >/dev/null 2>&1
+kill "$dpid"; w=0; while is_pid_running "$dpid" && [ "$w" -lt 10 ]; do sleep 1; w=$((w+1)); done
+chk '! is_pid_running "$dpid" && [ ! -e "$RUN/stats.sock" ]'
+out="$(python3 -c 'import subprocess,sys,time; t=time.time(); r=subprocess.run(sys.argv[1:],capture_output=True,text=True); print(r.returncode, int((time.time()-t)*1000)); print(r.stdout)' sh "$T/mod/scripts/xr" status-json)"
+chk 'echo "$out" | head -n 1 | { read -r rc ms; [ "$rc" = 0 ] && [ "$ms" -le 1000 ]; }'
+chk 'echo "$out" | tail -n 1 | J "d[\"traffic\"][\"source\"]==\"none\" and d[\"traffic\"][\"rate\"] is None" | grep -qx True'
 unset XR_SYSBIN
 
 # 5. 卸载结束守护进程并取消通知（mock 中 cmd 可能不存在）
