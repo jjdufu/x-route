@@ -1,3 +1,5 @@
+//! 守护进程的保活工具：把相关进程移出应用 cgroup、常驻通知的启动与更新、`crosvm` 异常退出的识别与紧急清理。
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -23,6 +25,9 @@ use crate::traffic::acct_total;
 use crate::vm;
 use crate::vm::run_net_hook;
 
+/// 把进程移到系统 cgroup（v2 根或 `system`，失败时 v1 `uid_0`），写入各后台 cpuset/stune 组，并把 OOM 分数设为 -1000。
+///
+/// 进程不在运行时返回 false。
 #[must_use]
 pub(crate) fn cgroup_escape(env: &Env, pid: &str) -> bool {
     let trimmed = pid.trim();
@@ -59,6 +64,7 @@ pub(crate) fn cgroup_escape(env: &Env, pid: &str) -> bool {
     true
 }
 
+/// 对本进程和 `run/` 下记录的各后台进程（`crosvm`、对账循环、看守、看门狗、守护进程、通知器）执行 [`cgroup_escape`]，失败只写调试日志。
 pub(crate) fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     note_ok(
         env,
@@ -83,6 +89,7 @@ pub(crate) fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     }
 }
 
+/// 读取进程所在 cgroup 路径：优先 cgroup v2 的 `0::` 行，否则取 v1 行的路径段。
 #[must_use]
 pub(crate) fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     let content = fs::read_to_string(env.proc_base.join(pid.trim()).join("cgroup")).ok()?;
@@ -98,6 +105,7 @@ pub(crate) fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     None
 }
 
+/// `crosvm` 在运行时返回 true；读不到命令行时还会用 `proc_base` 下的进程目录与存活检查兜底确认。
 #[must_use]
 pub(crate) fn xr_vm_alive(env: &Env) -> bool {
     if vm::running(env) {
@@ -114,6 +122,7 @@ pub(crate) fn xr_vm_alive(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_some_and(|cmdline| cmdline.contains("crosvm"))
 }
 
+/// 正在执行停止（`run/stopping` 中记录的进程仍在运行）时返回 true。
 #[must_use]
 pub(crate) fn vm_stopping(env: &Env) -> bool {
     let st = env.run_dir().join("stopping");
@@ -124,6 +133,7 @@ pub(crate) fn vm_stopping(env: &Env) -> bool {
     is_pid_running(env, sp.trim())
 }
 
+/// 常驻通知显示的状态文字：`stable` 为"运行中"、`ready` 为"已就绪"，其余为"启动中"。
 #[must_use]
 pub(crate) fn notify_state(env: &Env) -> &'static str {
     let text = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
@@ -134,6 +144,7 @@ pub(crate) fn notify_state(env: &Env) -> &'static str {
     }
 }
 
+/// 发给通知器的一行内容：`状态 口径 出网上行 出网下行 局域网上行 局域网下行`。
 #[must_use]
 pub(crate) fn notify_payload(env: &Env, cfg: &Config) -> String {
     let mode = cfg.notify_traffic();
@@ -142,6 +153,7 @@ pub(crate) fn notify_payload(env: &Env, cfg: &Config) -> String {
     format!("{} {mode} {wu} {wd} {lu} {ld}", notify_state(env))
 }
 
+/// 屏幕是否点亮：`dumpsys power` 的 `mWakefulness` 为 `Asleep` 或 `Dozing` 时为灭屏；测试可用 `XR_SCREEN` 覆盖。
 pub(crate) fn screen_on(env: &Env) -> bool {
     if let Some(raw) = &env.screen_override {
         return raw == "on";
@@ -163,6 +175,7 @@ pub(crate) fn screen_on(env: &Env) -> bool {
     true
 }
 
+/// 通知器进程在运行（`run/notifier.pid` 存在且命令行含 `xrnotify`）时返回 true。
 #[must_use]
 pub(crate) fn notifier_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("notifier.pid")).unwrap_or_default();
@@ -173,6 +186,7 @@ pub(crate) fn notifier_running(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_some_and(|cmdline| cmdline.contains("xrnotify"))
 }
 
+/// 用 `app_process` 同步运行一次通知器（`com.xrouter.notify.Main <mode> <run目录>`），失败只计数。
 fn notifier_exec(env: &Env, mode: &str) {
     let cp = format!("-Djava.class.path={}", env.notifier_jar.display());
     let status = Command::new(&env.app_process)
@@ -191,6 +205,7 @@ fn notifier_exec(env: &Env, mode: &str) {
     note_status(env, "xrnotify", status);
 }
 
+/// 通知器未运行时在后台启动它（清掉旧的请求与回执，输出写 `run/notifier.log`），已在运行或启动成功返回 true。
 pub(crate) fn notifier_start(env: &Env) -> bool {
     if notifier_running(env) {
         return true;
@@ -230,6 +245,7 @@ pub(crate) fn notifier_start(env: &Env) -> bool {
     true
 }
 
+/// 原子写入一条通知请求 `run/notify.req`，成功返回 true。
 fn notifier_req(env: &Env, payload: &str) -> bool {
     let run = env.run_dir();
     let tmp = run.join("notify.req.tmp");
@@ -237,6 +253,7 @@ fn notifier_req(env: &Env, payload: &str) -> bool {
     fs::write(&tmp, format!("{payload}\n")).is_ok() && fs::rename(&tmp, &dst).is_ok()
 }
 
+/// 在 `XR_NOTIFY_WAIT` 次（每次 200 毫秒）内等待回执等于 `expected`；回执以 `err ` 开头或超时返回 false。
 fn notifier_wait(env: &Env, expected: &str) -> bool {
     let ack = env.run_dir().join("notify.ack");
     for _ in 0..env.notify_wait {
@@ -254,6 +271,7 @@ fn notifier_wait(env: &Env, expected: &str) -> bool {
     false
 }
 
+/// 启动通知器（必要时）并发送一条通知内容，收到对应 `ok` 回执时返回 true。
 #[must_use]
 pub(crate) fn notifier_post(env: &Env, payload: &str) -> bool {
     if !notifier_start(env) || !notifier_req(env, payload) {
@@ -262,6 +280,7 @@ pub(crate) fn notifier_post(env: &Env, payload: &str) -> bool {
     notifier_wait(env, &format!("ok {payload}"))
 }
 
+/// 撤销常驻通知：通知器在运行时发 `cancel` 并结束它，未确认撤销时再同步执行一次 `cancel`。
 pub(crate) fn notify_cancel(env: &Env) {
     let run = env.run_dir();
     let mut done = false;
@@ -288,6 +307,7 @@ pub(crate) fn notify_cancel(env: &Env) {
     }
 }
 
+/// 更新常驻通知：虚拟机不在时撤销；在运行时按间隔、内容是否变化和亮屏状态决定是否重发，首次发送失败记一次 ERROR。
 pub(crate) fn notify_update(env: &Env) {
     let run = env.run_dir();
     if !xr_vm_alive(env) {
@@ -353,8 +373,10 @@ pub(crate) fn notify_update(env: &Env) {
     }
 }
 
+/// `vmm.log` 中每次启动 `crosvm` 前写入的分隔行前缀。
 pub const VMM_RUN_MARKER: &str = "=== xr crosvm start ";
 
+/// `vmm.log` 中最近一次启动之后的部分（找不到分隔行时为全文）。
 #[must_use]
 pub fn vmm_last_run_slice(vmm: &str) -> &str {
     if let Some(idx) = vmm.rfind(VMM_RUN_MARKER) {
@@ -367,12 +389,14 @@ pub fn vmm_last_run_slice(vmm: &str) -> &str {
     vmm
 }
 
+/// 最近一次运行的 `vmm.log` 含客机重启请求（`vcpu requested reset` 或 `system reset event`）时返回 true。
 #[must_use]
 pub fn vmm_has_guest_reset(vmm: &str) -> bool {
     let cur = vmm_last_run_slice(vmm);
     cur.contains("vcpu requested reset") || cur.contains("system reset event")
 }
 
+/// 客机自行重启导致 `crosvm` 退出、需要重新拉起时返回 true：不在停止或关机中、`crosvm` 已不在、上次状态为就绪且日志含重启请求。
 #[must_use]
 pub fn vm_guest_reset_pending(env: &Env) -> bool {
     if vm_stopping(env) || xr_vm_alive(env) || sys::shutting_down(env) {
@@ -385,6 +409,7 @@ pub fn vm_guest_reset_pending(env: &Env) -> bool {
     fs::read_to_string(env.vmm_log()).is_ok_and(|text| vmm_has_guest_reset(&text))
 }
 
+/// `crosvm` 的退出原因：仍在运行时说明仍在运行，否则取最近一次运行的 `vmm.log` 最后 8 行。
 #[must_use]
 pub fn vm_exit_reason(env: &Env) -> String {
     let pid_text = fs::read_to_string(env.run_dir().join("crosvm.pid"))
@@ -412,10 +437,14 @@ pub fn vm_exit_reason(env: &Env) -> String {
     "crosvm 已退出，日志未记录退出原因".to_owned()
 }
 
+/// 紧急撤销手机侧网络（执行 `net down`），返回码非 0 时写调试日志。
 pub(crate) fn routes_emergency_down(env: &Env) {
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
 }
 
+/// `crosvm` 异常退出后的紧急清理：关机中只做必要清理；否则停止分流、撤销网络、清理运行状态，并记 ERROR"异常退出"。
+///
+/// 停止流程未完成（`run/stopping` 残留且进程已不在）时补全清理。
 pub(crate) fn emergency_teardown(env: &Env, why: &str) {
     let run = env.run_dir();
     if sys::shutting_down(env) {
@@ -483,6 +512,7 @@ pub(crate) fn emergency_teardown(env: &Env, why: &str) {
     notify_cancel(env);
 }
 
+/// 网关规则残留需要撤销时返回 true：`net.gw` 存在且不在停止中，并且 `xr0` 无载波或虚拟机已不在。
 #[must_use]
 pub(crate) fn stale_gateway(env: &Env) -> bool {
     let run = env.run_dir();

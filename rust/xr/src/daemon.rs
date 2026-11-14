@@ -1,4 +1,8 @@
+//! 常驻守护进程：串行执行 `start`/`stop` 等命令、发现客机自行重启后重新拉起，并由看门狗互相保活。
+
+/// 守护进程的保活工具：cgroup 迁移、常驻通知与异常退出清理。
 pub mod keepalive;
+/// 看门狗进程：定期检查守护进程与网关残留。
 pub(crate) mod watchdog;
 
 use std::fs;
@@ -32,6 +36,9 @@ use crate::traffic::acct_snapshot;
 use crate::vm;
 use crate::vm::run_net_hook;
 
+/// 客机自行重启导致 `crosvm` 退出时清理并重新启动虚拟机，已处理返回 true。
+///
+/// 2 分钟内已连续 3 次时记 ERROR 并不再自动拉起。
 fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
     if !vm_guest_reset_pending(env) {
         return false;
@@ -81,6 +88,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
     true
 }
 
+/// `run/daemon.pid` 中记录的守护进程号（去掉空白），没有时为空串。
 #[must_use]
 pub(crate) fn pid(env: &Env) -> String {
     fs::read_to_string(env.run_dir().join("daemon.pid"))
@@ -89,6 +97,7 @@ pub(crate) fn pid(env: &Env) -> String {
         .to_owned()
 }
 
+/// 守护进程在运行时返回 true（能读到命令行时还要求含 `daemon` 或 `xr`）。
 #[must_use]
 pub(crate) fn running(env: &Env) -> bool {
     let pid = pid(env);
@@ -101,6 +110,7 @@ pub(crate) fn running(env: &Env) -> bool {
     true
 }
 
+/// 确保看门狗在运行（守护进程与前台模式下无需看门狗）；需要时后台启动并最多等 8 秒，失败记 ERROR 返回 false。
 #[must_use]
 pub(crate) fn ensure_watchdog(env: &Env) -> bool {
     if env.role.is_watchdog() || env.daemon_mode.is_foreground() {
@@ -137,6 +147,7 @@ pub(crate) fn ensure_watchdog(env: &Env) -> bool {
     false
 }
 
+/// 确保守护进程在运行；需要时后台启动并最多等 10 秒就绪，同时迁移 cgroup 并拉起看门狗，失败记 ERROR 返回 false。
 #[must_use]
 pub(crate) fn ensure(env: &Env) -> bool {
     if env.daemon_mode.is_foreground() {
@@ -169,6 +180,9 @@ pub(crate) fn ensure(env: &Env) -> bool {
     false
 }
 
+/// 把命令写入 `run/daemon.cmd`，用 `SIGUSR1` 通知守护进程，最多等 30 秒读取 `run/daemon.res` 作为退出码（取不到为 1）。
+///
+/// 前台模式下直接返回 0。
 #[must_use]
 pub(crate) fn send(env: &Env, cmd: &str) -> i32 {
     if env.daemon_mode.is_foreground() {
@@ -196,6 +210,7 @@ pub(crate) fn send(env: &Env, cmd: &str) -> i32 {
         .unwrap_or(1)
 }
 
+/// `xr start`：在守护进程内或前台模式下直接启动，否则交给守护进程执行。
 #[must_use]
 pub(crate) fn vm_start(env: &Env) -> i32 {
     if env.role.is_daemon() || env.daemon_mode.is_foreground() {
@@ -204,6 +219,7 @@ pub(crate) fn vm_start(env: &Env) -> i32 {
     send(env, "start")
 }
 
+/// `xr stop`：在守护进程内或前台模式下直接停止；守护进程在运行时交给它执行，否则直接停止。
 #[must_use]
 pub(crate) fn vm_stop(env: &Env) -> i32 {
     if env.role.is_daemon() || env.daemon_mode.is_foreground() {
@@ -215,6 +231,7 @@ pub(crate) fn vm_stop(env: &Env) -> i32 {
     vm::stop_exec(env, false)
 }
 
+/// 守护进程号仍是自己时删除 `daemon.pid` 与 `daemon.ready`。
 fn clean_daemon_pid(env: &Env, self_pid: &str) {
     let run = env.run_dir();
     if pid(env) == self_pid {
@@ -223,6 +240,7 @@ fn clean_daemon_pid(env: &Env, self_pid: &str) {
     }
 }
 
+/// 守护进程主循环：响应 `SIGUSR1` 命令（`start`、`stop`、`ping`、`quit`）、`SIGUSR2` 客机重启与 `SIGTERM` 退出，并周期更新常驻通知；返回进程退出码。
 #[must_use]
 pub(crate) fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {

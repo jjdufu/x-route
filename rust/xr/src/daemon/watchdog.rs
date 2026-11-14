@@ -1,3 +1,5 @@
+//! 看门狗：与守护进程互相保活，并在网关规则残留时触发客机重启处理或紧急清理。
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -21,6 +23,7 @@ use crate::sys;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 
+/// 看门狗主循环：每隔 `XR_WATCHDOG_INTERVAL` 秒检查网关残留与守护进程，守护进程不在时重新拉起（模块被禁用时只等待）；收到 `TERM`/`INT` 或系统关机时返回 0。
 #[must_use]
 pub(crate) fn main_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
