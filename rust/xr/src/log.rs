@@ -242,7 +242,7 @@ pub fn debug_arm(env: &Env) {
     if cfg.debug_on() && cfg.debug_hours() != 0 {
         let secs = cfg.debug_hours().saturating_mul(3600);
         let until = unix_now().saturating_add(secs);
-        fsx::mkdirs_logged(env, &env.config_dir());
+        fsx::mkdirs_logged(env, env.config_dir());
         fsx::write_logged(env, &until_file, format!("{until}\n").as_bytes());
     } else {
         fsx::remove_logged(env, &until_file);
@@ -288,10 +288,10 @@ pub fn boot_clean_run(env: &Env) -> bool {
         log_err(env, "service", "run/ 下存在挂载点，跳过开机清理");
         return false;
     }
-    fsx::mkdirs_logged(env, &env.log_dir());
+    fsx::mkdirs_logged(env, env.log_dir());
     let con = env.console_log();
     if fs::metadata(&con).is_ok_and(|m| m.is_file() && m.len() > 0) {
-        fsx::rename_logged(env, &con, &env.log_dir().join("console.prev.log"));
+        fsx::rename_logged(env, &con, env.log_dir().join("console.prev.log"));
     }
     if let Ok(entries) = fs::read_dir(&run) {
         for entry in entries.flatten() {

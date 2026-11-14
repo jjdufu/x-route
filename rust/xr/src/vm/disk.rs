@@ -83,7 +83,7 @@ pub fn disk_reset(env: &Env) -> i32 {
         log_err(env, "vm", "重置失败");
         return 1;
     }
-    fsx::remove_logged(env, &env.last_good_file());
+    fsx::remove_logged(env, env.last_good_file());
     log_info(env, "vm", "系统盘已重置");
     0
 }

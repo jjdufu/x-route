@@ -300,7 +300,7 @@ pub fn acct_teardown(ctx: &NetCtx<'_>) {
     }
     acct_drop(ctx, false, "XR_ACCT");
     acct_drop(ctx, true, "XR_ACCT6");
-    fsx::remove_logged(ctx.env, &ctx.env.run_dir().join("acct.sig"));
+    fsx::remove_logged(ctx.env, ctx.env.run_dir().join("acct.sig"));
 }
 
 pub fn acct_snapshot(ctx: &NetCtx<'_>) {
@@ -329,7 +329,7 @@ pub fn acct_reset(ctx: &NetCtx<'_>) {
     write_quad(ctx.env, &ctx.env.acct_snap_file(), [0; 4]);
     fsx::write_logged(
         ctx.env,
-        &ctx.env.acct_since_file(),
+        ctx.env.acct_since_file(),
         format!("{}\n", unix_now()).as_bytes(),
     );
 }

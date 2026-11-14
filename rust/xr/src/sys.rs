@@ -301,7 +301,7 @@ pub fn sys_shutting_down(env: &Env) -> bool {
         return true;
     }
     if !getprop("sys.powerctl").is_empty() || !getprop("sys.shutdown.requested").is_empty() {
-        fsx::mkdirs_logged(env, &env.run_dir());
+        fsx::mkdirs_logged(env, env.run_dir());
         fsx::touch_logged(env, &marker);
         return true;
     }
@@ -313,7 +313,7 @@ pub fn shutdown_note(env: &Env, module: &str) {
     if noted.is_file() {
         return;
     }
-    fsx::mkdirs_logged(env, &env.run_dir());
+    fsx::mkdirs_logged(env, env.run_dir());
     fsx::touch_logged(env, &noted);
     let m = if module.is_empty() { "daemon" } else { module };
     log_info(env, m, "系统关机，服务随之停止");
