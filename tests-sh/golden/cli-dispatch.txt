@@ -1,0 +1,41 @@
+(none) -> 2 -> - -> quiet
+bogus -> 2 -> - -> quiet
+running -> 1 -> - -> quiet
+stop -> 0 -> - -> quiet
+status-json -> 0 -> - -> quiet
+status-line -> 0 -> - -> quiet
+get -> 0 -> - -> quiet
+set(no args) -> 2 -> False -> quiet
+set VM_MEM_MB -> 0 -> True -> quiet
+traffic -> 0 -> - -> quiet
+traffic-reset -> 0 -> True -> quiet
+traffic-split -> 1 -> False -> quiet
+ipv6(no arg) -> 2 -> False -> quiet
+ack-trip -> 0 -> - -> quiet
+expand(no arg) -> 2 -> - -> quiet
+sync -> 1 -> - -> quiet
+vpn-enable(no id) -> 1 -> False -> quiet
+vpn-disable(no id) -> 0 -> True -> quiet
+vpn-delete no_such -> 1 -> False -> quiet
+vpn-import(no arg) -> 1 -> False -> quiet
+ls(no arg) -> 0 -> - -> quiet
+project -> 1 -> - -> quiet
+luci -> 1 -> - -> quiet
+log-export -> 0 -> True -> quiet
+diag-export -> 0 -> True -> quiet
+uninstall-now(no confirm) -> 2 -> False -> quiet
+clash-ping -> 1 -> False -> quiet
+clash-call(empty) -> 2 -> False -> quiet
+clash-ws-close(empty) -> 2 -> - -> quiet
+internal(none) -> 2 -> - -> quiet
+internal bogus -> 2 -> - -> quiet
+internal dump-config-keys -> 0 -> - -> quiet
+internal config-hash -> 0 -> - -> quiet
+internal valid-kv ok -> 0 -> - -> quiet
+internal valid-kv bad -> 1 -> - -> quiet
+internal set-kv(no args) -> 2 -> - -> quiet
+internal vm(none) -> 2 -> - -> quiet
+internal vm status -> 0 -> - -> quiet
+internal traffic -> 0 -> - -> quiet
+internal diag-snap -> 0 -> - -> quiet
+internal uninstall-worker(no args) -> 2 -> - -> quiet

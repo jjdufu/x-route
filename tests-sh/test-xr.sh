@@ -194,6 +194,12 @@ zl() { python3 -c "import zipfile,sys; print(\"\n\".join(zipfile.ZipFile(sys.arg
 chk 'zl "$dg" | grep -q "/debug.log$" && zl "$dg" | grep -q "/phone.txt$" && zl "$dg" | grep -q "/module.log$"'
 chk '[ -z "$(find "$T/dl" -name "*.gz")" ]'   # 全部导出都是 zip
 $XR stop; chk '! $XR running'
+# vpn_set：VM 未运行时按配置 ID 启用被拒绝、停用只改持久开关
+chk '! $XR running && [ -f "$XR_DATA/config/vpn/home.ovpn" ]'
+out="$($XR vpn-enable home)"; chk '[ $? -eq 1 ] && echo "$out" | grep -q "服务未运行"'
+chk '$XR vpn-disable home | grep -qx "{\"ok\":true}" && [ "$(cat "$XR_DATA/config/vpn/home.enabled")" = 0 ]'
+out="$($XR vpn-enable no_such)"; chk '[ $? -eq 1 ] && echo "$out" | grep -q "配置不存在"'
+out="$($XR vpn-enable "a/b")"; chk '[ $? -eq 1 ] && echo "$out" | grep -q "配置无效"'
 echo up > "$RUN/guest/guest/openvpn.status"; echo "10.8.0.5" > "$RUN/guest/guest/openvpn.addr"; rm -f "$RUN/routes.active"
 printf 'installed=1\nrunning=1\nport=9093\n' > "$RUN/guest/guest/openclash.status"
 chk '$XR status-json | J "d[\"vpn\"][\"status\"]==\"down\" and d[\"vpn\"][\"addr\"]==\"\" and d[\"vpn\"][\"routes_rejected\"]==[] and d[\"clash\"]=={\"installed\":False,\"running\":False,\"port\":9090}" | grep -qx True'
@@ -236,6 +242,64 @@ echo ready > "$RUN/state"; chk '[ "$(BT -1 -1 | cut -d"|" -f2)" = Sready ]'; rm 
 chk '[ "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli.rs" | grep -n "cmd == \"boot-tail\"" | cut -d: -f1)" -lt "$(sed -n "/^pub fn run_cli(/,\$p" "$ROOT/rust/xr/src/cli.rs" | grep -n "env.ensure_dirs()" | head -1 | cut -d: -f1)" ]'
 # xr set 不在前台跑规则重建（WebUI 点击路径上异步拉起 net.sh sync / internal net sync）
 chk 'sed -n "/^fn after_set(/,/^}/p" "$ROOT/rust/xr/src/cli.rs" | grep -q "spawn"'
+# CLI 分发金样（tests-sh/golden/cli-dispatch.txt）：每个顶层子命令用最小参数调用一次（VM 已停），
+# 记录"子命令 -> 退出码 -> stdout 末行 JSON 的 ok -> stderr 是否为空"；XR_GOLDEN_RECORD=1 时改为录制
+D() {
+  name="$1"; shift
+  timeout 15 $XR "$@" </dev/null >"$T/d.out" 2>"$T/d.err"; rc=$?
+  ok="$(tail -n 1 "$T/d.out" | python3 -c 'import json,sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get("ok", "-") if isinstance(d, dict) else "-")
+except Exception:
+    print("-")')"
+  if [ -s "$T/d.err" ]; then e=stderr; else e=quiet; fi
+  echo "$name -> $rc -> $ok -> $e" >> "$T/dispatch.cur"
+}
+: > "$T/dispatch.cur"
+D "(none)"
+D bogus bogus
+D running running
+D stop stop
+D status-json status-json
+D status-line status-line
+D get get
+D "set(no args)" set
+D "set VM_MEM_MB" set VM_MEM_MB 768
+D traffic traffic
+D traffic-reset traffic-reset
+D traffic-split traffic-split
+D "ipv6(no arg)" ipv6
+D ack-trip ack-trip
+D "expand(no arg)" expand
+D sync sync
+D "vpn-enable(no id)" vpn-enable
+D "vpn-disable(no id)" vpn-disable
+D "vpn-delete no_such" vpn-delete no_such
+D "vpn-import(no arg)" vpn-import
+D "ls(no arg)" ls
+D project project
+D luci luci
+D log-export log-export
+D diag-export diag-export
+D "uninstall-now(no confirm)" uninstall-now
+D clash-ping clash-ping
+D "clash-call(empty)" clash-call
+D "clash-ws-close(empty)" clash-ws-close
+D "internal(none)" internal
+D "internal bogus" internal bogus
+D "internal dump-config-keys" internal dump-config-keys
+D "internal config-hash" internal config-hash
+D "internal valid-kv ok" internal valid-kv VM_MEM_MB 768
+D "internal valid-kv bad" internal valid-kv VM_MEM_MB 99999
+D "internal set-kv(no args)" internal set-kv
+D "internal vm(none)" internal vm
+D "internal vm status" internal vm status
+D "internal traffic" internal traffic
+D "internal diag-snap" internal diag-snap
+D "internal uninstall-worker(no args)" internal uninstall-worker
+if [ -n "${XR_GOLDEN_RECORD:-}" ]; then mkdir -p "$ROOT/tests-sh/golden"; cp "$T/dispatch.cur" "$ROOT/tests-sh/golden/cli-dispatch.txt"
+else chk 'diff -u "$ROOT/tests-sh/golden/cli-dispatch.txt" "$T/dispatch.cur"'; fi
 # 立即卸载：必须带 confirm；模块目录名与 id 不符时拒绝（开发树里不会删源码）；
 # 正常时立即返回并同步删除模块目录（不遗留 remove 标记触发管理器恢复按钮），脱离会话的后台进程跑 uninstall.sh 再清理数据
 out="$($XR uninstall-now)"; chk '[ $? -eq 2 ] && [ -d "$T/mod/scripts" ]'
