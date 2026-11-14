@@ -947,54 +947,45 @@ pub(crate) fn sync(env: &Env) {
     sync_all_unlocked(env);
 }
 
-/// `xr net up`：创建并配置 `xr0`，打开转发，建立 `XR_FWD`/`XR_NAT` 等链并做首次对账；返回进程退出码（失败为 1）。
-#[must_use]
-pub(crate) fn up(env: &Env) -> i32 {
-    if env.ensure_dirs().is_err() {
-        return 1;
-    }
-    let cfg = Config::load(env);
-    let ctx = NetCtx::new(env, &cfg);
-    let run = env.run_dir();
-
+/// 创建并配置 `xr0`（`tap`，地址、关闭 `RA` 与反向路径过滤、`IPv6` 地址）并尝试建立热点口；成功返回 `xr0` 的 `IPv4` 地址，创建 `xr0` 失败时返回 `None`。
+fn setup_xr0(ctx: &NetCtx<'_>) -> Option<String> {
+    let (env, cfg) = (ctx.env, ctx.cfg);
     if !ctx.ip(&["link", "show", XR_IF]).success()
         && !ctx.ip(&["tuntap", "add", XR_IF, "mode", "tap"]).success()
     {
         log::err(env, "net", &format!("创建 {XR_IF} 失败"));
-        return 1;
+        return None;
     }
     ctx.ip_run(&["addr", "flush", "dev", XR_IF]);
     let ip4_cidr = format!("{}.1/24", cfg.net_prefix());
     ctx.ip_run(&["addr", "add", &ip4_cidr, "dev", XR_IF]);
-    ctx.sysw_run(
-        &env.proc_dir
-            .join(format!("sys/net/ipv6/conf/{XR_IF}/disable_ipv6")),
-        "0",
-    );
-    ctx.sysw_run(
-        &env.proc_dir
-            .join(format!("sys/net/ipv6/conf/{XR_IF}/accept_ra")),
-        "0",
-    );
-    ctx.sysw_run(
-        &env.proc_dir
-            .join(format!("sys/net/ipv4/conf/{XR_IF}/rp_filter")),
-        "0",
-    );
+    for (knob, val) in [
+        (format!("sys/net/ipv6/conf/{XR_IF}/disable_ipv6"), "0"),
+        (format!("sys/net/ipv6/conf/{XR_IF}/accept_ra"), "0"),
+        (format!("sys/net/ipv4/conf/{XR_IF}/rp_filter"), "0"),
+    ] {
+        ctx.sysw_run(&env.proc_dir.join(knob), val);
+    }
     ctx.ip_run(&["link", "set", XR_IF, "up"]);
     let ip6_cidr = format!("{XR_NET6}::1/64");
     ctx.ip6_run(&["addr", "add", &ip6_cidr, "dev", XR_IF, "nodad"]);
-    if !hs_tap_up(&ctx) {
+    if !hs_tap_up(ctx) {
         // 创建失败已由 hs_tap_up 写入 module.log；xr0 照常继续，热点接管稍后由 sync 重试
         dlog(
             env,
-            &cfg,
+            cfg,
             "net",
             &format!("{HS_TAP} 未就绪，继续启动 {XR_IF}"),
         );
     }
+    Some(ip4_cidr)
+}
 
-    let net4 = format!("{}.0/24", cfg.net_prefix());
+/// 把虚拟机网段登记为本地网络（`ndc` 可用时登记，否则改用 `table 97`）、加 4800 优先级规则并打开 `IPv4` 转发（保存原值）。
+fn register_local(ctx: &NetCtx<'_>) {
+    let env = ctx.env;
+    let run = env.run_dir();
+    let net4 = format!("{}.0/24", ctx.cfg.net_prefix());
     let net6 = format!("{XR_NET6}::/64");
     if ctx.ndc_ok(&["network", "interface", "add", "local", XR_IF])
         && ctx.ndc_ok(&["network", "route", "add", "local", XR_IF, &net4])
@@ -1020,16 +1011,21 @@ pub(crate) fn up(env: &Env) -> i32 {
         fsx::write_logged(env, run.join("ip_forward.orig"), orig);
         ctx.sysw_run(&fwd_path, "1");
     }
+}
 
+/// 建立 `XR_FWD`、`XR_NAT` 并挂到系统链首；`IPv6` 转发优先用 `ip6tables` 的 `XR_FWD6`，不可用时改用 nft，再挂 `IPv6` `NAT`。
+fn create_chains(ctx: &NetCtx<'_>) {
+    let env = ctx.env;
+    let run = env.run_dir();
     ctx.ipt_run(&["-N", "XR_FWD"]);
     ctx.ipt_run(&["-t", "nat", "-N", "XR_NAT"]);
-    fwd_first(&ctx);
-    nat_first(&ctx);
+    fwd_first(ctx);
+    nat_first(ctx);
     fsx::remove_logged(env, run.join("net.nat6"));
 
     if ctx.ip6t(&["-N", "XR_FWD6"]).success() || ctx.ip6t(&["-S", "XR_FWD6"]).success() {
         fsx::touch_logged(env, run.join("net.fwd6"));
-        fwd6_first(&ctx);
+        fwd6_first(ctx);
     } else if v6_nft_setup(env) {
         log::info(env, "net", "ip6tables filter 不可用，IPv6 转发改用 nft");
     } else {
@@ -1039,7 +1035,24 @@ pub(crate) fn up(env: &Env) -> i32 {
             "ip6tables filter 与 nft 均不可用，IPv6 仅靠路由表拦截旁路",
         );
     }
-    nat6_first(&ctx);
+    nat6_first(ctx);
+}
+
+/// `xr net up`：创建并配置 `xr0`，打开转发，建立 `XR_FWD`/`XR_NAT` 等链并做首次对账；返回进程退出码（失败为 1）。
+#[must_use]
+pub(crate) fn up(env: &Env) -> i32 {
+    if env.ensure_dirs().is_err() {
+        return 1;
+    }
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    let run = env.run_dir();
+
+    let Some(ip4_cidr) = setup_xr0(&ctx) else {
+        return 1;
+    };
+    register_local(&ctx);
+    create_chains(&ctx);
     fsx::remove_logged(env, run.join("net.up_if"));
 
     {
