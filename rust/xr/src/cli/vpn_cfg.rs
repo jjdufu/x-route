@@ -28,7 +28,7 @@ pub fn vpn_slug(name: &str) -> String {
             break;
         }
     }
-    let trimmed = out.trim_matches('_').to_string();
+    let trimmed = out.trim_matches('_').to_owned();
     if trimmed.is_empty() {
         let mut h = 0_u32;
         for b in name.as_bytes() {
@@ -48,9 +48,9 @@ pub fn vpn_migrate_legacy(env: &Env) {
         let mn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .to_owned();
         let disp = if mn.is_empty() {
-            "OpenVPN".to_string()
+            "OpenVPN".to_owned()
         } else {
             mn
         };
@@ -93,13 +93,13 @@ pub fn vpn_mirror_legacy(env: &Env) {
                 continue;
             };
             if first_id.is_none() {
-                first_id = Some(pid.to_string());
+                first_id = Some(pid.to_owned());
             }
             if en_id.is_none()
                 && fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
                     .is_ok_and(|s| s.trim() == "1")
             {
-                en_id = Some(pid.to_string());
+                en_id = Some(pid.to_owned());
             }
         }
     }
@@ -155,7 +155,7 @@ pub fn vpn_rejected(env: &Env) -> Vec<String> {
                     out.push(nc);
                 }
             }
-            None => out.push(tok.to_string()),
+            None => out.push(tok.to_owned()),
         }
     }
     out
@@ -165,7 +165,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let vn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let mut out = Vec::new();
     let tun_file = env.run_dir().join("guest/guest/openvpn.tunnels");
     let alive = vm_running(env);
@@ -192,11 +192,11 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
                     let nf = env.vpn_dir().join(format!("{raw_nm}.name"));
                     if nf.is_file() {
                         fs::read_to_string(nf)
-                            .unwrap_or_else(|_| raw_nm.to_string())
+                            .unwrap_or_else(|_| raw_nm.to_owned())
                             .trim()
-                            .to_string()
+                            .to_owned()
                     } else {
-                        raw_nm.to_string()
+                        raw_nm.to_owned()
                     }
                 };
                 let routes: Vec<&str> = rt
@@ -266,16 +266,16 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
             let pnm_raw = fs::read_to_string(vpn_dir.join(format!("{pid}.name")))
                 .unwrap_or_default()
                 .trim()
-                .to_string();
+                .to_owned();
             let pnm = if pnm_raw.is_empty() {
-                pid.to_string()
+                pid.to_owned()
             } else {
                 pnm_raw
             };
             let pen = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
                 .is_ok_and(|s| s.trim() == "1");
 
-            let mut pst = "down".to_string();
+            let mut pst = "down".to_owned();
             let mut pdev = String::new();
             let mut pad = String::new();
             let mut pmt = 0_u64;
@@ -298,11 +298,11 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
                         .unwrap_or(0);
                     let tr = parts.next().unwrap_or("");
                     if tn == pid || (tn == "xrouter" && pen && !multi) {
-                        pst = "up".to_string();
-                        pdev = td.to_string();
-                        pad = ta.to_string();
+                        "up".clone_into(&mut pst);
+                        td.clone_into(&mut pdev);
+                        ta.clone_into(&mut pad);
                         pmt = tm;
-                        prt = tr.to_string();
+                        tr.clone_into(&mut prt);
                         break;
                     }
                 }
@@ -310,7 +310,7 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
                     && (conn_raw.lines().any(|l| l.trim() == pid)
                         || (pen && !multi && matches!(summary_st, "up" | "connecting")))
                 {
-                    pst = "connecting".to_string();
+                    "connecting".clone_into(&mut pst);
                 }
             }
             let routes: Vec<&str> = prt
@@ -350,24 +350,24 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     let src_s = env.canon_share_path(path_arg);
     let media_s = env.media.to_string_lossy();
     if !src_s.starts_with(&format!("{media_s}/")) || src_s.contains("..") {
-        return (1, "{\"ok\":false,\"error\":\"路径无效\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"路径无效\"}".to_owned());
     }
     let src = Path::new(&src_s);
     if !src.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_owned());
     }
     let sz = fs::metadata(src).map_or(0, |m| m.len());
     if !(8..=262_144).contains(&sz) {
-        return (1, "{\"ok\":false,\"error\":\"文件大小不符\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"文件大小不符\"}".to_owned());
     }
     let Ok(bytes) = fs::read(src) else {
-        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_owned());
     };
     if bytes
         .iter()
         .any(|&b| !b.is_ascii_graphic() && !b.is_ascii_whitespace())
     {
-        return (1, "{\"ok\":false,\"error\":\"不是文本配置\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"不是文本配置\"}".to_owned());
     }
 
     vpn_migrate_legacy(env);
@@ -381,7 +381,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
         .unwrap_or("OpenVPN")
         .replace(['"', '\\'], "");
     let bn = if raw_bn.is_empty() {
-        "OpenVPN".to_string()
+        "OpenVPN".to_owned()
     } else {
         raw_bn
     };
@@ -395,9 +395,9 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
                     let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
                         .unwrap_or_default()
                         .trim()
-                        .to_string();
+                        .to_owned();
                     if enm == bn {
-                        id = eid.to_string();
+                        eid.clone_into(&mut id);
                         break;
                     }
                 }
@@ -464,7 +464,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         _ => {
             return (
                 2,
-                "{\"ok\":false,\"error\":\"用法：xr vpn-enable|vpn-disable [ID]\"}".to_string(),
+                "{\"ok\":false,\"error\":\"用法：xr vpn-enable|vpn-disable [ID]\"}".to_owned(),
             );
         }
     };
@@ -472,19 +472,19 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     if !tid.is_empty() {
         vpn_migrate_legacy(env);
         if !valid_profile_id(tid) {
-            return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_string());
+            return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
         }
         let ovpn = vpn_dir.join(format!("{tid}.ovpn"));
         if !fs::metadata(&ovpn).is_ok_and(|m| m.len() > 0) {
-            return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_string());
+            return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
         }
         if !vm_running(env) {
             if want {
-                return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_string());
+                return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
             }
             fsx::write_logged(env, vpn_dir.join(format!("{tid}.enabled")), "0\n");
             vpn_mirror_legacy(env);
-            return (0, "{\"ok\":true}".to_string());
+            return (0, "{\"ok\":true}".to_owned());
         }
         let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
         if want && !multi {
@@ -518,12 +518,12 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         for _ in 0..env.vpn_wait {
             let ack = fs::read_to_string(guest.join("openvpn.ack")).unwrap_or_default();
             if ack.trim() == cmd_trim {
-                return (0, "{\"ok\":true}".to_string());
+                return (0, "{\"ok\":true}".to_owned());
             }
             let vst = fs::read_to_string(guest.join("openvpn.status"))
                 .unwrap_or_default()
                 .trim()
-                .to_string();
+                .to_owned();
             let tun = fs::read_to_string(guest.join("openvpn.tunnels")).unwrap_or_default();
             let conn = fs::read_to_string(guest.join("openvpn.connecting")).unwrap_or_default();
             let has_tun = tun.contains(&format!("|{tid}|"));
@@ -532,19 +532,19 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             if want {
                 if has_tun || has_conn || (!is_multi && matches!(vst.as_str(), "up" | "connecting"))
                 {
-                    return (0, "{\"ok\":true}".to_string());
+                    return (0, "{\"ok\":true}".to_owned());
                 }
             } else if !has_tun && !has_conn && (is_multi || vst == "down" || vst.is_empty()) {
-                return (0, "{\"ok\":true}".to_string());
+                return (0, "{\"ok\":true}".to_owned());
             }
             thread::sleep(Duration::from_secs(1));
         }
-        return (1, "{\"ok\":false,\"error\":\"未响应\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned());
     }
 
     let legacy = env.xr_data.join("config/openvpn.ovpn");
     if !legacy.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"未导入配置\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"未导入配置\"}".to_owned());
     }
     fsx::mkdirs_logged(env, env.xr_data.join("config"));
     fsx::write_logged(
@@ -564,7 +564,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
                 {
                     if let Some(vid) = p.file_stem().and_then(|s| s.to_str()) {
                         if first_id.is_none() {
-                            first_id = Some(vid.to_string());
+                            first_id = Some(vid.to_owned());
                         }
                         if !want {
                             fsx::write_logged(env, vpn_dir.join(format!("{vid}.enabled")), "0\n");
@@ -585,9 +585,9 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     }
     if !vm_running(env) {
         if want {
-            return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_string());
+            return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
         }
-        return (0, "{\"ok\":true}".to_string());
+        return (0, "{\"ok\":true}".to_owned());
     }
     let host = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host);
@@ -604,28 +604,28 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         let vst = fs::read_to_string(guest.join("openvpn.status"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .to_owned();
         if want {
             if matches!(vst.as_str(), "up" | "connecting") {
-                return (0, "{\"ok\":true}".to_string());
+                return (0, "{\"ok\":true}".to_owned());
             }
         } else if vst == "down" || vst.is_empty() {
-            return (0, "{\"ok\":true}".to_string());
+            return (0, "{\"ok\":true}".to_owned());
         }
         thread::sleep(Duration::from_secs(1));
     }
-    (1, "{\"ok\":false,\"error\":\"未响应\"}".to_string())
+    (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned())
 }
 
 pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     vpn_migrate_legacy(env);
     if !valid_profile_id(did) {
-        return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"配置无效\"}".to_owned());
     }
     let vpn_dir = env.vpn_dir();
     let ovpn = vpn_dir.join(format!("{did}.ovpn"));
     if !ovpn.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
     }
     let was_en =
         fs::read_to_string(vpn_dir.join(format!("{did}.enabled"))).is_ok_and(|s| s.trim() == "1");
@@ -645,12 +645,12 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
         }
     }
     log_info(env, "xr", "已删除 OpenVPN 配置");
-    (0, "{\"ok\":true}".to_string())
+    (0, "{\"ok\":true}".to_owned())
 }
 
 pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     if !vm_running(env) {
-        return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
     }
     let host = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host);
@@ -693,14 +693,14 @@ pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
         }
         thread::sleep(Duration::from_millis(200));
     }
-    (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_string())
+    (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
 }
 
 pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
     let raw = if path_arg.is_empty() {
         env.media.to_string_lossy().into_owned()
     } else {
-        path_arg.to_string()
+        path_arg.to_owned()
     };
     let p_str = env.canon_share_path(&raw);
     let media_s = env.media.to_string_lossy();

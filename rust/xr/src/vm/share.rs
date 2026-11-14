@@ -12,7 +12,7 @@ pub struct ShareSpec {
 
 pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
     let mut res = ShareSpec {
-        mode: "off".to_string(),
+        mode: "off".to_owned(),
         spec: String::new(),
         wrap: Vec::new(),
     };
@@ -46,7 +46,7 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
             return res;
         }
         res.spec = format!("{base}:{}", env.rw_map_opt);
-        res.mode = "rw".to_string();
+        "rw".clone_into(&mut res.mode);
     } else {
         let bb = env.bb.to_string_lossy();
         let script = format!(
@@ -56,12 +56,12 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
         fsx::write_logged(env, &ro_path, script.as_bytes());
         fsx::chmod_logged(env, &ro_path, 0o700);
         res.spec = base;
-        res.mode = "ro".to_string();
+        "ro".clone_into(&mut res.mode);
         res.wrap = vec![
             bb.into_owned(),
-            "unshare".to_string(),
-            "-m".to_string(),
-            "sh".to_string(),
+            "unshare".to_owned(),
+            "-m".to_owned(),
+            "sh".to_owned(),
             ro_path.to_string_lossy().into_owned(),
         ];
     }

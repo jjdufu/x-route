@@ -53,7 +53,7 @@ pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     for line in out.stdout.lines() {
         if let Some((_, rhs)) = line.split_once("fwmark 0x0/0xffff iif lo lookup ") {
             if let Some(iface) = rhs.split_whitespace().next() {
-                return iface.to_string();
+                return iface.to_owned();
             }
         }
     }
@@ -65,7 +65,7 @@ pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
         return Vec::new();
     }
     let mut set = BTreeSet::new();
-    set.extend(iter::once(up.to_string()));
+    set.extend(iter::once(up.to_owned()));
     let out = ctx.ip(&["-4", "route", "show", "table", up]);
     for line in out.stdout.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
@@ -73,7 +73,7 @@ pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
             for (idx, tok) in tokens.iter().enumerate() {
                 if *tok == "dev" {
                     if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                        set.extend(iter::once((*dev).to_string()));
+                        set.extend(iter::once((*dev).to_owned()));
                     }
                 }
             }
@@ -88,7 +88,7 @@ pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     }
     let mut set = BTreeSet::new();
     if !up.starts_with("v4-") {
-        set.extend(iter::once(up.to_string()));
+        set.extend(iter::once(up.to_owned()));
     }
     let out = ctx.ip6(&["route", "show", "table", up]);
     for line in out.stdout.lines() {
@@ -98,7 +98,7 @@ pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
                 if *tok == "dev" {
                     if let Some(dev) = tokens.get(idx.saturating_add(1)) {
                         if !dev.starts_with("v4-") {
-                            set.extend(iter::once((*dev).to_string()));
+                            set.extend(iter::once((*dev).to_owned()));
                         }
                     }
                 }
@@ -121,7 +121,7 @@ pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
                 set.extend(iter::once(i));
             }
             if !up.is_empty() {
-                set.extend(iter::once(up.to_string()));
+                set.extend(iter::once(up.to_owned()));
             }
         }
         _ => {}
@@ -168,7 +168,7 @@ pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
 }
 
 pub fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
-    let mut targets = vec![XR_IF.to_string()];
+    let mut targets = vec![XR_IF.to_owned()];
     targets.extend_from_slice(outs);
     for use_v6 in [false, true] {
         let run_t = |args: &[&str]| {
@@ -235,7 +235,7 @@ pub fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     let cur = fs::read_to_string(ctx.env.sysnet.join(XR_IF).join("mtu"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if cur != mt_s && ctx.ip(&["link", "set", XR_IF, "mtu", &mt_s]).success() {
         let cur_disp = if cur.is_empty() { "?" } else { &cur };
         let up_disp = if up.is_empty() { "无" } else { up };
@@ -355,13 +355,12 @@ fn gw_want(ctx: &NetCtx<'_>) -> &'static str {
 
 fn gw_reason(ctx: &NetCtx<'_>) -> String {
     let vm_st = if vm_alive(ctx.env) {
-        fs::read_to_string(ctx.env.run_dir().join("state"))
-            .unwrap_or_else(|_| "booting".to_string())
+        fs::read_to_string(ctx.env.run_dir().join("state")).unwrap_or_else(|_| "booting".to_owned())
     } else {
-        "未运行".to_string()
+        "未运行".to_owned()
     };
     let g_v6 = fs::read_to_string(ctx.env.run_dir().join("guest/guest/ipv6"))
-        .unwrap_or_else(|_| "未上报".to_string());
+        .unwrap_or_else(|_| "未上报".to_owned());
     let nd = if ctx.env.run_dir().join("net.v6proxy").is_file() {
         "已安装"
     } else {
@@ -564,7 +563,7 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
         .unwrap_or_default()
         .lines()
         .filter(|l| l.contains(':'))
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
     for i in ex {
         ctx.ip6t_run(&[
@@ -694,12 +693,12 @@ fn sync_all_unlocked(env: &Env) {
         };
         let new_disp = if up.is_empty() { "无" } else { &up };
         let outs_disp = if outs.is_empty() {
-            "无".to_string()
+            "无".to_owned()
         } else {
             outs.join(" ")
         };
         let outs6_disp = if outs6.is_empty() {
-            "无".to_string()
+            "无".to_owned()
         } else {
             outs6.join(" ")
         };
@@ -789,7 +788,7 @@ fn sync_all_unlocked(env: &Env) {
         .unwrap_or_default()
         .lines()
         .filter(|l| !l.contains(':'))
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
     for i in &ex {
         ctx.ipt_run(&[
@@ -831,17 +830,17 @@ fn sync_all_unlocked(env: &Env) {
             "同步：上游={} 出口={} IPv6出口={} 暴露={} 热点={} 接管={gw}（{}）",
             if up.is_empty() { "无" } else { &up },
             if outs.is_empty() {
-                "无".to_string()
+                "无".to_owned()
             } else {
                 outs.join(" ")
             },
             if outs6.is_empty() {
-                "无".to_string()
+                "无".to_owned()
             } else {
                 outs6.join(" ")
             },
             if ex.is_empty() {
-                "无".to_string()
+                "无".to_owned()
             } else {
                 ex.join(" ")
             },
@@ -1022,7 +1021,7 @@ pub fn net_watch(env: &Env) -> i32 {
             format!("{} ", outs6.join(" "))
         };
 
-        let have_gw = fs::read_to_string(run.join("net.gw")).unwrap_or_else(|_| "off".to_string());
+        let have_gw = fs::read_to_string(run.join("net.gw")).unwrap_or_else(|_| "off".to_owned());
         let have_gw = have_gw.trim();
         let want_gw = gw_want(&ctx);
         let ck = routes_file_cksum(&ctx);
@@ -1262,36 +1261,36 @@ pub fn net_status(env: &Env) -> NetStatusJson {
     let run = env.run_dir();
     let mode = fs::read_to_string(run.join("net.mode"))
         .ok()
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "down".to_string());
+        .unwrap_or_else(|| "down".to_owned());
     let up_if = fs::read_to_string(run.join("net.up_if"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let expose_if = fs::read_to_string(run.join("net.expose_if"))
         .unwrap_or_default()
         .split_whitespace()
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "off".to_string());
+        .unwrap_or_else(|| "off".to_owned());
     let hotspot = fs::read_to_string(run.join("net.hs_if"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let hotspot_net = fs::read_to_string(run.join("net.hs_gw"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
 
     NetStatusJson {
         mode,
         up_if,
-        expose: cfg.expose().to_string(),
+        expose: cfg.expose().to_owned(),
         expose_if,
         vm_ip: format!("{}.254", cfg.net_prefix()),
         host_ip: format!("{}.1", cfg.net_prefix()),
@@ -1302,7 +1301,7 @@ pub fn net_status(env: &Env) -> NetStatusJson {
 }
 
 pub fn net_status_json(env: &Env) -> String {
-    serde_json::to_string(&net_status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_string())
+    serde_json::to_string(&net_status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
 }
 
 pub fn run_net_cli(env: &Env, args: &[String]) -> i32 {

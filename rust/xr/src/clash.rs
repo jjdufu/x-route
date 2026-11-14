@@ -230,16 +230,16 @@ impl MuxState {
         };
         let mut target_client: Option<u64> = None;
 
-        if let Some(mux_id) = obj.get("id").and_then(Value::as_str).map(str::to_string) {
+        if let Some(mux_id) = obj.get("id").and_then(Value::as_str).map(str::to_owned) {
             if let Ok(mut pending) = self.pending_reqs.lock() {
                 if let Some((cid, orig_id)) = pending.remove(&mux_id) {
                     target_client = Some(cid);
-                    let _mux_id: Option<Value> = obj.insert("id".to_string(), orig_id);
+                    let _mux_id: Option<Value> = obj.insert("id".to_owned(), orig_id);
                 }
             }
         }
 
-        if let Some(mux_ws) = obj.get("ws_id").and_then(Value::as_str).map(str::to_string) {
+        if let Some(mux_ws) = obj.get("ws_id").and_then(Value::as_str).map(str::to_owned) {
             let is_close = obj.get("op").and_then(Value::as_str) == Some("ws_close");
             if let Ok(mut active) = self.active_ws.lock() {
                 let found = if is_close {
@@ -262,7 +262,7 @@ impl MuxState {
                         target_client = Some(cid);
                     }
                     let _mux_ws_id: Option<Value> =
-                        obj.insert("ws_id".to_string(), Value::String(orig_ws));
+                        obj.insert("ws_id".to_owned(), Value::String(orig_ws));
                 }
             }
         }
@@ -290,7 +290,7 @@ impl MuxState {
             .get("op")
             .and_then(Value::as_str)
             .unwrap_or("")
-            .to_string();
+            .to_owned();
         let orig_id = obj.get("id").cloned();
 
         let mut external_ws_owner: Option<(u64, String, String)> = None;
@@ -301,7 +301,7 @@ impl MuxState {
                     .get("ws_id")
                     .and_then(Value::as_str)
                     .unwrap_or("")
-                    .to_string();
+                    .to_owned();
                 if orig_ws.is_empty() {
                     return;
                 }
@@ -322,14 +322,14 @@ impl MuxState {
                     }
                 }
                 let _orig_ws_id: Option<Value> =
-                    obj.insert("ws_id".to_string(), Value::String(mux_ws));
+                    obj.insert("ws_id".to_owned(), Value::String(mux_ws));
             }
             "ws_send" | "ws_close" => {
                 let orig_ws = obj
                     .get("ws_id")
                     .and_then(Value::as_str)
                     .unwrap_or("")
-                    .to_string();
+                    .to_owned();
                 let local_mapped = if op == "ws_close" {
                     ws_map.remove(&orig_ws)
                 } else {
@@ -383,7 +383,7 @@ impl MuxState {
                     }
                 }
                 let _orig_ws_id: Option<Value> =
-                    obj.insert("ws_id".to_string(), Value::String(mux_ws));
+                    obj.insert("ws_id".to_owned(), Value::String(mux_ws));
             }
             _ => {}
         }
@@ -399,7 +399,7 @@ impl MuxState {
                     pending.insert(mid.clone(), (client_id, oid.clone()));
             }
             let _orig_req_id: Option<Value> =
-                obj.insert("id".to_string(), Value::String(mid.clone()));
+                obj.insert("id".to_owned(), Value::String(mid.clone()));
             Some(mid)
         } else {
             None
@@ -427,12 +427,12 @@ impl MuxState {
             if let Some(oid) = orig_id {
                 let mut err = Map::new();
                 err.extend([
-                    ("id".to_string(), oid),
-                    ("ok".to_string(), Value::Bool(false)),
-                    ("status".to_string(), Value::from(503)),
+                    ("id".to_owned(), oid),
+                    ("ok".to_owned(), Value::Bool(false)),
+                    ("status".to_owned(), Value::from(503)),
                     (
-                        "error".to_string(),
-                        Value::String("hvc1 channel not connected".to_string()),
+                        "error".to_owned(),
+                        Value::String("hvc1 channel not connected".to_owned()),
                     ),
                 ]);
                 self.send_to_client(client_id, Value::Object(err).to_string());
@@ -765,8 +765,7 @@ pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
         );
     };
     if !obj.contains_key("id") {
-        let _absent_id: Option<Value> =
-            obj.insert("id".to_string(), Value::String("c1".to_string()));
+        let _absent_id: Option<Value> = obj.insert("id".to_owned(), Value::String("c1".to_owned()));
     }
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {

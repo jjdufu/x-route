@@ -82,7 +82,7 @@ pub fn daemon_pid(env: &Env) -> String {
     fs::read_to_string(env.run_dir().join("daemon.pid"))
         .unwrap_or_default()
         .trim()
-        .to_string()
+        .to_owned()
 }
 
 pub fn daemon_running(env: &Env) -> bool {
@@ -104,7 +104,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
     let wp = fs::read_to_string(run.join("watchdog.pid"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if is_pid_running(env, &wp) {
         if let Some(cmd) = proc_cmdline(env, &wp) {
             if cmd.contains("watchdog") || cmd.contains("xr") {
@@ -121,7 +121,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         let p = fs::read_to_string(run.join("watchdog.pid"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .to_owned();
         if is_pid_running(env, &p) {
             note_ok(env, "cgroup_escape", cgroup_escape(env, &p));
             return true;
@@ -280,7 +280,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
             let cmd = fs::read_to_string(run.join("daemon.cmd"))
                 .unwrap_or_default()
                 .trim()
-                .to_string();
+                .to_owned();
             fsx::write_logged(env, run.join("daemon.cmd"), "");
             if !cmd.is_empty() {
                 let rc = match cmd.as_str() {
@@ -334,13 +334,13 @@ pub fn daemon_loop(env: &Env) -> i32 {
                 let fw_pid = fs::read_to_string(run.join("fuse_watch.pid"))
                     .unwrap_or_default()
                     .trim()
-                    .to_string();
+                    .to_owned();
                 if !is_pid_running(env, &fw_pid) {
                     let cfg = Config::load(env);
                     let cp = fs::read_to_string(run.join("crosvm.pid"))
                         .unwrap_or_default()
                         .trim()
-                        .to_string();
+                        .to_owned();
                     let since = fs::read_to_string(run.join("ready_at"))
                         .ok()
                         .and_then(|s| s.trim().parse::<u64>().ok())

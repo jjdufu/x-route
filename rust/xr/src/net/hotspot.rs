@@ -67,7 +67,7 @@ pub fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     let mut cands = Vec::new();
     if let Ok(prev) = fs::read_to_string(ctx.env.run_dir().join("net.hs_if")) {
         for tok in prev.split_whitespace() {
-            cands.push(tok.to_string());
+            cands.push(tok.to_owned());
         }
     }
     cands.extend(tether_ifaces(ctx));
@@ -112,7 +112,7 @@ pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     let mut parts = cmd.split_whitespace();
     let expect = match (parts.next(), parts.next()) {
         (Some(p1), Some(p2)) => format!("{p1} {p2}"),
-        (Some(p1), None) => p1.to_string(),
+        (Some(p1), None) => p1.to_owned(),
         _ => String::new(),
     };
     let guest_file = env.run_dir().join("guest/guest/hotspot");
@@ -192,13 +192,13 @@ pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
                 );
                 fsx::write_logged(ctx.env, &clash_file, format!("{expected}\n"));
             }
-            return android_cidr.to_string();
+            return android_cidr.to_owned();
         }
         fsx::remove_logged(ctx.env, &clash_file);
-        return hf.to_string();
+        return hf.to_owned();
     }
     fsx::remove_logged(ctx.env, &clash_file);
-    android_cidr.to_string()
+    android_cidr.to_owned()
 }
 
 pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
@@ -227,7 +227,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         .next()
         .and_then(|l| l.split_whitespace().nth(3))
         .unwrap_or("")
-        .to_string();
+        .to_owned();
     if cidr.is_empty() {
         dlog(
             ctx.env,
@@ -250,7 +250,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         .next()
         .and_then(|l| l.split_whitespace().nth(3))
         .unwrap_or("")
-        .to_string();
+        .to_owned();
     let neigh_out = ctx.ip(&["-4", "neigh", "show", "dev", iface]);
     let clients: Vec<String> = neigh_out
         .stdout
@@ -258,7 +258,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         .filter(|l| !l.contains("FAILED") && !l.contains("INCOMPLETE"))
         .filter_map(|l| l.split_whitespace().next())
         .filter(|ip| !ip.is_empty() && ip.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
     let cl_str = clients.join(" ");
     let alias_note = if alias.is_empty() {
@@ -281,7 +281,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     let run = ctx.env.run_dir();
     if !hs_guest_cmd(ctx.env, &cmd, 15) {
         let resp = fs::read_to_string(run.join("guest/guest/hotspot"))
-            .unwrap_or_else(|_| "无响应".to_string());
+            .unwrap_or_else(|_| "无响应".to_owned());
         log_err(
             ctx.env,
             "hotspot",
@@ -404,11 +404,11 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
     let iface = fs::read_to_string(run.join("net.hs_if"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let cidr = fs::read_to_string(run.join("net.hs_cidr"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if iface.is_empty() && !ctx.env.sysnet.join(HS_BR).is_dir() {
         fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
         return;
@@ -503,10 +503,10 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
     let have = fs::read_to_string(run.join("net.hs_if"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let Some(want_if) = want else {
         if !have.is_empty() || ctx.env.sysnet.join(HS_BR).is_dir() {
-            let st = fs::read_to_string(run.join("state")).unwrap_or_else(|_| "未运行".to_string());
+            let st = fs::read_to_string(run.join("state")).unwrap_or_else(|_| "未运行".to_owned());
             let tethers = tether_ifaces(ctx).join(" ");
             dlog(
                 ctx.env,
@@ -530,15 +530,15 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
         .next()
         .and_then(|l| l.split_whitespace().nth(3))
         .unwrap_or("")
-        .to_string();
+        .to_owned();
     let hc = fs::read_to_string(run.join("net.hs_cidr"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let hg = fs::read_to_string(run.join("net.hs_gw"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if cidr.is_empty() && want_if == have {
         cidr.clone_from(&hc);
     }

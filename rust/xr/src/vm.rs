@@ -118,7 +118,7 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
             .status();
         return st.map_or(1, |s| s.code().unwrap_or(1));
     }
-    run_net_cli(env, &[op.to_string()])
+    run_net_cli(env, &[op.to_owned()])
 }
 
 pub fn mono_now(env: &Env) -> Option<u64> {
@@ -172,9 +172,9 @@ pub fn fuse_watch(env: &Env) {
     }
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "off".to_string());
+        .unwrap_or_else(|| "off".to_owned());
     blog(env, "net", &format!("网络规则就绪，接管：{gw}"));
     diag_snap_bg(env, "服务就绪");
 
@@ -391,23 +391,23 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         }
         let up_if = fs::read_to_string(run.join("net.up_if"))
             .ok()
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "无".to_string());
+            .unwrap_or_else(|| "无".to_owned());
         let mode = fs::read_to_string(run.join("net.mode"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .to_owned();
         blog(
             env,
             "net",
             &format!("手机侧网络就绪：上游 {up_if} · 模式 {mode}"),
         );
-        net_args.push("--net".to_string());
+        net_args.push("--net".to_owned());
         net_args.push(format!("tap-name=xr0,mac={}", cfg.vm_mac()));
         if env.sysnet.join("xr1").is_dir() {
-            let mac1 = hs_mac(cfg.vm_mac()).unwrap_or_else(|| "52:54:00:1d:e9:ff".to_string());
-            net_args.push("--net".to_string());
+            let mac1 = hs_mac(cfg.vm_mac()).unwrap_or_else(|| "52:54:00:1d:e9:ff".to_owned());
+            net_args.push("--net".to_owned());
             net_args.push(format!("tap-name=xr1,mac={mac1}"));
         }
     }
@@ -460,7 +460,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         &format!(
             "启动参数：cpus={cpus} mem={mem} swiotlb={swiotlb} net={} disk={rootmode} share={} params={params}",
             if net_args.is_empty() {
-                "无".to_string()
+                "无".to_owned()
             } else {
                 net_args.join(" ")
             },
@@ -474,54 +474,54 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         wakelock_on(env);
     }
 
-    let mut tramp_args: Vec<String> = vec!["internal".to_string(), "exec-crosvm".to_string()];
+    let mut tramp_args: Vec<String> = vec!["internal".to_owned(), "exec-crosvm".to_owned()];
     tramp_args.extend(share.wrap);
     tramp_args.push(env.crosvm.to_string_lossy().into_owned());
     tramp_args.extend([
-        "--log-level=info".to_string(),
-        "run".to_string(),
-        "--hypervisor".to_string(),
-        "gunyah".to_string(),
-        "--protected-vm-without-firmware".to_string(),
-        "--disable-sandbox".to_string(),
-        "--no-balloon".to_string(),
-        "--swiotlb".to_string(),
+        "--log-level=info".to_owned(),
+        "run".to_owned(),
+        "--hypervisor".to_owned(),
+        "gunyah".to_owned(),
+        "--protected-vm-without-firmware".to_owned(),
+        "--disable-sandbox".to_owned(),
+        "--no-balloon".to_owned(),
+        "--swiotlb".to_owned(),
         swiotlb.to_string(),
-        "--cpus".to_string(),
+        "--cpus".to_owned(),
         cpus.to_string(),
-        "--mem".to_string(),
+        "--mem".to_owned(),
         mem.to_string(),
     ]);
     tramp_args.extend(net_args);
     tramp_args.extend([
-        "--block".to_string(),
+        "--block".to_owned(),
         blk,
-        "--serial".to_string(),
+        "--serial".to_owned(),
         format!(
             "type=file,path={},hardware=serial,num=1,console=true,earlycon=true",
             env.console_log().display()
         ),
-        "--serial".to_string(),
+        "--serial".to_owned(),
         format!(
             "type=file,path={},hardware=virtio-console,num=1",
             env.ctl_log().display()
         ),
-        "--serial".to_string(),
+        "--serial".to_owned(),
         format!(
             "type=unix-stream,hardware=virtio-console,num=2,path={},input-unix-stream",
             run.join("clash-ctl.sock").display()
         ),
-        "--socket".to_string(),
+        "--socket".to_owned(),
         sock.to_string_lossy().into_owned(),
-        "--shared-dir".to_string(),
+        "--shared-dir".to_owned(),
         ctl_spec,
     ]);
     if !share.spec.is_empty() {
-        tramp_args.push("--shared-dir".to_string());
+        tramp_args.push("--shared-dir".to_owned());
         tramp_args.push(share.spec);
     }
     tramp_args.extend([
-        "--params".to_string(),
+        "--params".to_owned(),
         params,
         image_path.to_string_lossy().into_owned(),
     ]);
@@ -641,7 +641,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     let pid = fs::read_to_string(run.join("crosvm.pid"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     diag_snap(env, "停止前", 2);
     if vm_running(env) {
         let sock = run.join("crosvm.sock");
@@ -708,18 +708,18 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
         let s = fs::read_to_string(run.join("state")).unwrap_or_default();
         let t = s.trim();
         if t.is_empty() {
-            "booting".to_string()
+            "booting".to_owned()
         } else {
-            t.to_string()
+            t.to_owned()
         }
     } else {
-        "stopped".to_string()
+        "stopped".to_owned()
     };
     if running {
         let pid_s = fs::read_to_string(run.join("crosvm.pid"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .to_owned();
         if let Ok(p) = pid_s.parse::<u64>() {
             pid_num = Some(p);
         }
@@ -743,12 +743,12 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     }
     let tripped = fs::read_to_string(env.tripped_file())
         .ok()
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim().to_owned())
         .filter(|_| env.tripped_file().is_file());
     let lg = fs::read_to_string(env.last_good_file()).is_ok_and(|s| s.trim() == config_hash(env));
     let ch = match ready_channel(env) {
         "null" => None,
-        other => Some(other.to_string()),
+        other => Some(other.to_owned()),
     };
     let error = fs::read_to_string(run.join("last_error"))
         .unwrap_or_default()
@@ -771,5 +771,5 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
 
 pub fn vm_status_json(env: &Env) -> String {
     serde_json::to_string(&vm_status(env))
-        .unwrap_or_else(|_| "{\"running\":false,\"state\":\"stopped\"}".to_string())
+        .unwrap_or_else(|_| "{\"running\":false,\"state\":\"stopped\"}".to_owned())
 }

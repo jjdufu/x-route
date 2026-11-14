@@ -53,41 +53,39 @@ fn var_u64(key: &str, default: u64) -> u64 {
 impl Env {
     pub fn from_process() -> Self {
         let moddir = PathBuf::from(
-            var_nonempty("MODDIR").unwrap_or_else(|| "/data/adb/modules/xrouter".to_string()),
+            var_nonempty("MODDIR").unwrap_or_else(|| "/data/adb/modules/xrouter".to_owned()),
         );
         let xr_data = PathBuf::from(
-            var_nonempty("XR_DATA").unwrap_or_else(|| "/data/adb/xrouter".to_string()),
+            var_nonempty("XR_DATA").unwrap_or_else(|| "/data/adb/xrouter".to_owned()),
         );
         let bb = PathBuf::from(
-            var_nonempty("BB").unwrap_or_else(|| "/data/adb/ksu/bin/busybox".to_string()),
+            var_nonempty("BB").unwrap_or_else(|| "/data/adb/ksu/bin/busybox".to_owned()),
         );
         let media = PathBuf::from(
             var_nonempty("XR_MEDIA")
                 .or_else(|| var_nonempty("MEDIA"))
-                .unwrap_or_else(|| "/data/media/0".to_string()),
+                .unwrap_or_else(|| "/data/media/0".to_owned()),
         );
         let rw_map_opt = env::var("RW_MAP_OPT").unwrap_or_default();
         let sysbin =
-            PathBuf::from(var_nonempty("XR_SYSBIN").unwrap_or_else(|| "/system/bin".to_string()));
-        let proc_dir =
-            PathBuf::from(var_nonempty("XR_PROC").unwrap_or_else(|| "/proc".to_string()));
+            PathBuf::from(var_nonempty("XR_SYSBIN").unwrap_or_else(|| "/system/bin".to_owned()));
+        let proc_dir = PathBuf::from(var_nonempty("XR_PROC").unwrap_or_else(|| "/proc".to_owned()));
         let proc_base =
-            PathBuf::from(var_nonempty("XR_PROC_BASE").unwrap_or_else(|| "/proc".to_string()));
+            PathBuf::from(var_nonempty("XR_PROC_BASE").unwrap_or_else(|| "/proc".to_owned()));
         let proc_uptime = PathBuf::from(
-            var_nonempty("XR_PROC_UPTIME").unwrap_or_else(|| "/proc/uptime".to_string()),
+            var_nonempty("XR_PROC_UPTIME").unwrap_or_else(|| "/proc/uptime".to_owned()),
         );
         let proc_mounts = PathBuf::from(
-            var_nonempty("XR_PROC_MOUNTS").unwrap_or_else(|| "/proc/mounts".to_string()),
+            var_nonempty("XR_PROC_MOUNTS").unwrap_or_else(|| "/proc/mounts".to_owned()),
         );
-        let sysnet = PathBuf::from(
-            var_nonempty("XR_SYSNET").unwrap_or_else(|| "/sys/class/net".to_string()),
-        );
+        let sysnet =
+            PathBuf::from(var_nonempty("XR_SYSNET").unwrap_or_else(|| "/sys/class/net".to_owned()));
         let cgroup_root = PathBuf::from(
-            var_nonempty("XR_CGROUP_ROOT").unwrap_or_else(|| "/sys/fs/cgroup".to_string()),
+            var_nonempty("XR_CGROUP_ROOT").unwrap_or_else(|| "/sys/fs/cgroup".to_owned()),
         );
         let crosvm = PathBuf::from(
             var_nonempty("CROSVM")
-                .unwrap_or_else(|| "/apex/com.android.virt/bin/crosvm".to_string()),
+                .unwrap_or_else(|| "/apex/com.android.virt/bin/crosvm".to_owned()),
         );
         let notifier_jar = var_nonempty("XR_NOTIFIER_JAR")
             .map_or_else(|| moddir.join("bin/xrnotify.jar"), PathBuf::from);
@@ -114,7 +112,7 @@ impl Env {
             download_override: var_nonempty("XR_DOWNLOAD").map(PathBuf::from),
             modules_update: PathBuf::from(
                 var_nonempty("XR_MODULES_UPDATE")
-                    .unwrap_or_else(|| "/data/adb/modules_update".to_string()),
+                    .unwrap_or_else(|| "/data/adb/modules_update".to_owned()),
             ),
             tmpdir: var_nonempty("XR_TMPDIR").map(PathBuf::from),
             hs_any: var_nonempty("XR_HS_ANY").is_some(),
@@ -235,7 +233,7 @@ impl Env {
         let media_str = self.media.to_string_lossy();
         let media = media_str.trim_end_matches('/');
         if raw == "/sdcard" || raw == "/storage/emulated/0" {
-            return media.to_string();
+            return media.to_owned();
         }
         if let Some(rest) = raw.strip_prefix("/sdcard/") {
             return format!("{media}/{rest}");
@@ -243,7 +241,7 @@ impl Env {
         if let Some(rest) = raw.strip_prefix("/storage/emulated/0/") {
             return format!("{media}/{rest}");
         }
-        raw.to_string()
+        raw.to_owned()
     }
 
     pub fn sysbin_cmd(&self, name: &str) -> PathBuf {

@@ -109,7 +109,7 @@ pub fn xr_now(env: &Env) -> String {
     if is_executable(&env.bb) {
         if let Ok(out) = Command::new(&env.bb).args(["date", "+%F %T"]).output() {
             if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
                 if !s.is_empty() {
                     return s;
                 }
@@ -118,9 +118,9 @@ pub fn xr_now(env: &Env) -> String {
     }
     let up = fs::read_to_string(&env.proc_uptime)
         .ok()
-        .and_then(|s| s.split_whitespace().next().map(ToString::to_string))
+        .and_then(|s| s.split_whitespace().next().map(str::to_owned))
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "?".to_string());
+        .unwrap_or_else(|| "?".to_owned());
     format!("uptime+{up}s")
 }
 

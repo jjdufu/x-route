@@ -56,7 +56,7 @@ fn format_cmd_for_log(env: &Env, prog: &Path, args: &[&str]) -> String {
     let prog_s = prog.to_string_lossy();
     let short_prog = prog_s.strip_prefix(&sysbin_prefix).unwrap_or(&prog_s);
     if args.is_empty() {
-        short_prog.to_string()
+        short_prog.to_owned()
     } else {
         format!("{short_prog} {}", args.join(" "))
     }

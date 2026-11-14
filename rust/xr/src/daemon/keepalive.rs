@@ -83,11 +83,11 @@ pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     let content = fs::read_to_string(env.proc_base.join(pid.trim()).join("cgroup")).ok()?;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("0::") {
-            return Some(rest.to_string());
+            return Some(rest.to_owned());
         }
         // cgroup v1 行格式 `层级号:控制器:路径`，取第三段
         if let Some(rest) = line.splitn(3, ':').nth(2) {
-            return Some(rest.to_string());
+            return Some(rest.to_owned());
         }
     }
     None
@@ -339,12 +339,12 @@ pub fn notify_update(env: &Env) {
             let start = lines.len().saturating_sub(3);
             let joined = lines.get(start..).unwrap_or(&[]).join(" ");
             if joined.trim().is_empty() {
-                "无回执".to_string()
+                "无回执".to_owned()
             } else {
                 joined
             }
         } else {
-            ack.trim().to_string()
+            ack.trim().to_owned()
         };
         let short: String = why.chars().take(200).collect();
         log_err(env, "daemon", &format!("常驻通知发送失败：{short}"));
@@ -385,9 +385,9 @@ pub fn vm_exit_reason(env: &Env) -> String {
     let p = fs::read_to_string(env.run_dir().join("crosvm.pid"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if !p.is_empty() && is_pid_running(env, &p) {
-        return "crosvm 仍在运行".to_string();
+        return "crosvm 仍在运行".to_owned();
     }
     if let Ok(vmm) = fs::read_to_string(env.vmm_log()) {
         let cur = vmm_last_run_slice(&vmm);
@@ -404,7 +404,7 @@ pub fn vm_exit_reason(env: &Env) -> String {
             return format!("crosvm 已退出：{tail}");
         }
     }
-    "crosvm 已退出，日志未记录退出原因".to_string()
+    "crosvm 已退出，日志未记录退出原因".to_owned()
 }
 
 pub fn routes_emergency_down(env: &Env) {

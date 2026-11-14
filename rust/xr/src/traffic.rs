@@ -342,5 +342,5 @@ pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
 }
 
 pub fn acct_json(ctx: &NetCtx<'_>) -> String {
-    serde_json::to_string(&acct_summary(ctx)).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string(&acct_summary(ctx)).unwrap_or_else(|_| "{}".to_owned())
 }

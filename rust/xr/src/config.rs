@@ -71,16 +71,16 @@ fn unquote_shell_val(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.len() >= 2 {
         if let Some(inner) = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-            return inner.to_string();
+            return inner.to_owned();
         }
         if let Some(inner) = trimmed
             .strip_prefix('\'')
             .and_then(|s| s.strip_suffix('\''))
         {
-            return inner.to_string();
+            return inner.to_owned();
         }
     }
-    trimmed.to_string()
+    trimmed.to_owned()
 }
 
 /// 解析配置文件的一行：跳过空行、注释和未知键，返回 `(键, 去引号后的值)`。
@@ -364,7 +364,7 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
     let sv = if key == "VM_SHARE_PATH" {
         env.canon_share_path(val)
     } else {
-        val.to_string()
+        val.to_owned()
     };
     if !valid_kv(env, &cfg, key, &sv) {
         return false;

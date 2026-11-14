@@ -226,7 +226,7 @@ pub fn getprop(name: &str) -> String {
         .arg(name)
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
         .unwrap_or_default()
 }
 
@@ -313,12 +313,12 @@ pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     let content = fs::read_to_string(cg_file).ok()?;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("0::") {
-            return Some(rest.to_string());
+            return Some(rest.to_owned());
         }
         let mut parts = line.splitn(3, ':');
         let (_id, _ctrl, path) = (parts.next(), parts.next(), parts.next());
         if let Some(p) = path {
-            return Some(p.to_string());
+            return Some(p.to_owned());
         }
     }
     None

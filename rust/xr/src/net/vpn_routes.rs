@@ -19,7 +19,7 @@ pub fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     let mut last = String::new();
     for line in content.lines() {
         if let Some((_, rhs)) = line.split_once("XR_VPN_ROUTES") {
-            last = rhs.trim().to_string();
+            rhs.trim().clone_into(&mut last);
         }
     }
     last
@@ -34,7 +34,7 @@ pub fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
     };
     raw.split(|c: char| c == ',' || c.is_whitespace())
         .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -58,7 +58,7 @@ pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
             if *tok == "dev" {
                 if let Some(dev) = tokens.get(idx.saturating_add(1)) {
                     if *dev != XR_IF {
-                        set.extend(iter::once((*dev).to_string()));
+                        set.extend(iter::once((*dev).to_owned()));
                     }
                 }
             }
@@ -72,31 +72,31 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     let up = up.trim();
     let mut busy = vec![
         format!("{}.0/24", ctx.cfg.net_prefix()),
-        "127.0.0.0/8".to_string(),
-        "169.254.0.0/16".to_string(),
+        "127.0.0.0/8".to_owned(),
+        "169.254.0.0/16".to_owned(),
         format!("{XR_NET6}::/64"),
     ];
     if let Ok(hs_gw) = fs::read_to_string(ctx.env.run_dir().join("net.hs_gw")) {
         for tok in hs_gw.split_whitespace() {
-            busy.push(tok.to_string());
+            busy.push(tok.to_owned());
         }
     }
     let mut ifaces = Vec::new();
     if !up.is_empty() {
-        ifaces.push(up.to_string());
+        ifaces.push(up.to_owned());
     }
     ifaces.extend(tether_ifaces(ctx));
     for iface in ifaces {
         let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", &iface]);
         for line in out4.stdout.lines() {
             if let Some(cidr) = line.split_whitespace().nth(3) {
-                busy.push(cidr.to_string());
+                busy.push(cidr.to_owned());
             }
         }
         let out6 = ctx.ip(&["-6", "-o", "addr", "show", "dev", &iface]);
         for line in out6.stdout.lines() {
             if let Some(cidr) = line.split_whitespace().nth(3) {
-                busy.push(cidr.to_string());
+                busy.push(cidr.to_owned());
             }
         }
     }
@@ -195,7 +195,7 @@ pub fn cksum_crc_like(bytes: &[u8]) -> String {
 pub fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
     match fs::read(guest_routes_file(ctx)) {
         Ok(bytes) => cksum_crc_like(&bytes),
-        Err(_) => "none".to_string(),
+        Err(_) => "none".to_owned(),
     }
 }
 
@@ -207,7 +207,7 @@ pub fn routes_sync(ctx: &NetCtx<'_>) {
         .lines()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
 
     if want != have {

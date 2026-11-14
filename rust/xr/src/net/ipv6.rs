@@ -28,7 +28,7 @@ pub fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
         if v6_is_ll(addr) || v6_is_ula(addr) {
             continue;
         }
-        res.push(addr.to_string());
+        res.push(addr.to_owned());
     }
     res
 }
@@ -146,7 +146,7 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     let addr = fs::read_to_string(run.join("net.v6vm"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if run.join("net.v6proxy").is_file() {
         let r = reason.unwrap_or("虚拟机 IPv6 已关闭");
         log_info(ctx.env, "net", &format!("IPv6 邻居代理已撤销（{r}）"));
@@ -154,7 +154,7 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     let up_if = fs::read_to_string(run.join("net.v6upif"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     if !addr.is_empty() {
         let bare = addr.split('/').next().unwrap_or(&addr);
         if !up_if.is_empty() {
@@ -302,9 +302,9 @@ pub fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
 
 pub fn v6_proxy_sync(ctx: &NetCtx<'_>, outs6: &[String]) {
     let guest_v6 = fs::read_to_string(ctx.env.run_dir().join("guest/guest/ipv6"))
-        .unwrap_or_else(|_| "未上报".to_string());
+        .unwrap_or_else(|_| "未上报".to_owned());
     let outs6_s = if outs6.is_empty() {
-        "无".to_string()
+        "无".to_owned()
     } else {
         outs6.join(" ")
     };
@@ -423,7 +423,7 @@ pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[Stri
         .unwrap_or_default()
         .lines()
         .filter(|l| l.contains(':'))
-        .map(ToString::to_string)
+        .map(str::to_owned)
         .collect();
     for i in ex {
         nft_run(&[

@@ -400,7 +400,7 @@ pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
     if let Some(eui) = mac_eui64(mac) {
         cands.push(eui);
     }
-    cands.push("787200e900000254".to_string());
+    cands.push("787200e900000254".to_owned());
     for i in 1_u16..=8_u16 {
         cands.push(format!("787200e90000{i:04x}"));
     }
@@ -454,13 +454,13 @@ pub fn hs_subnet_clash(
     }
     let ip_bin = env.sysbin_cmd("ip");
     let mut skip = vec![
-        "lo".to_string(),
-        XR_IF.to_string(),
-        HS_TAP.to_string(),
-        HS_BR.to_string(),
+        "lo".to_owned(),
+        XR_IF.to_owned(),
+        HS_TAP.to_owned(),
+        HS_BR.to_owned(),
     ];
     if let Some(s) = skip_if.filter(|s| !s.is_empty()) {
-        skip.push(s.to_string());
+        skip.push(s.to_owned());
     }
     if let Ok(out) = Command::new(&ip_bin)
         .args(["route", "show", "table", "local_network"])
@@ -472,7 +472,7 @@ pub fn hs_subnet_clash(
             for (idx, tok) in tokens.iter().enumerate() {
                 if *tok == "dev" {
                     if let Some(dev) = tokens.get(idx.saturating_add(1)) {
-                        skip.push((*dev).to_string());
+                        skip.push((*dev).to_owned());
                     }
                 }
             }

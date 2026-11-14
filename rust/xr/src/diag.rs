@@ -108,7 +108,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
         let trimmed = line.trim();
         if !in_pem && line.contains("-----BEGIN") {
             if line.contains("-----END") {
-                out.push("<已隐去证书或密钥>".to_string());
+                out.push("<已隐去证书或密钥>".to_owned());
             } else {
                 in_pem = true;
             }
@@ -117,7 +117,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
         if in_pem {
             if line.contains("-----END") {
                 in_pem = false;
-                out.push("<已隐去证书或密钥>".to_string());
+                out.push("<已隐去证书或密钥>".to_owned());
             }
             continue;
         }
@@ -146,7 +146,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
             continue;
         }
 
-        out.push(line.to_string());
+        out.push(line.to_owned());
     }
 
     let mut text = out.join("\n");
@@ -206,16 +206,16 @@ pub fn diag_phone(env: &Env) -> String {
     let up = fs::read_to_string(env.run_dir().join("net.up_if"))
         .unwrap_or_default()
         .trim()
-        .to_string();
+        .to_owned();
     let mut tables = vec![
-        "main".to_string(),
-        "local_network".to_string(),
-        "97".to_string(),
-        "233".to_string(),
-        "234".to_string(),
+        "main".to_owned(),
+        "local_network".to_owned(),
+        "97".to_owned(),
+        "233".to_owned(),
+        "234".to_owned(),
     ];
     for tok in up.split_whitespace() {
-        tables.push(tok.to_string());
+        tables.push(tok.to_owned());
     }
     for tbl in &tables {
         dsec(
@@ -297,7 +297,7 @@ pub fn diag_phone(env: &Env) -> String {
                     }
                 }
                 let ps = if ports.is_empty() {
-                    "无".to_string()
+                    "无".to_owned()
                 } else {
                     ports.join(" ")
                 };
@@ -322,13 +322,13 @@ pub fn diag_phone(env: &Env) -> String {
         out.push_str(val.trim());
         out.push('\n');
     }
-    let mut ifaces = vec!["xr0".to_string(), "xr1".to_string(), "xrbr1".to_string()];
+    let mut ifaces = vec!["xr0".to_owned(), "xr1".to_owned(), "xrbr1".to_owned()];
     for tok in up.split_whitespace() {
-        ifaces.push(tok.to_string());
+        ifaces.push(tok.to_owned());
     }
     if let Ok(hs) = fs::read_to_string(env.run_dir().join("net.hs_if")) {
         for tok in hs.split_whitespace() {
-            ifaces.push(tok.to_string());
+            ifaces.push(tok.to_owned());
         }
     }
     for iface in ifaces {
@@ -473,7 +473,7 @@ pub fn diag_guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     let pid = pid_raw.trim();
     let host_dir = env.run_dir().join("guest/host");
     if pid.is_empty() || !crate::sys::is_pid_running(env, pid) || !host_dir.is_dir() {
-        return Err("### OpenWrt 快照：服务未运行\n".to_string());
+        return Err("### OpenWrt 快照：服务未运行\n".to_owned());
     }
     let ts = format!("{}{}", unix_now(), std::process::id());
     fsx::write_logged(env, host_dir.join("diag.cmd"), format!("snap {ts}\n"));
@@ -643,7 +643,7 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
 
 pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
     let Some(dest) = download_dir(env) else {
-        return "{\"ok\":false,\"error\":\"no download dir\"}".to_string();
+        return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();
     };
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     let name = format!("{prefix}-{stamp}");
@@ -652,7 +652,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     let raw_dir = tmpd.join("raw");
     let pack_dir = tmpd.join(&name);
     if fs::create_dir_all(&raw_dir).is_err() || fs::create_dir_all(&pack_dir).is_err() {
-        return "{\"ok\":false,\"error\":\"tmp\"}".to_string();
+        return "{\"ok\":false,\"error\":\"tmp\"}".to_owned();
     }
 
     let ver = fs::read_to_string(env.moddir.join("module.prop"))
@@ -661,7 +661,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         .find_map(|l| l.strip_prefix("version="))
         .unwrap_or("")
         .trim()
-        .to_string();
+        .to_owned();
     let model = sys_cmd_output(Path::new("getprop"), &["ro.product.model"]);
     let rel = sys_cmd_output(Path::new("getprop"), &["ro.build.version.release"]);
     let cfg = Config::load(env);
@@ -747,7 +747,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     if !write_zip_from_dir(&out_zip, &tmpd, &name) {
         fsx::remove_logged(env, &out_zip);
         fsx::remove_tree_logged(env, &tmpd);
-        return "{\"ok\":false,\"error\":\"zip\"}".to_string();
+        return "{\"ok\":false,\"error\":\"zip\"}".to_owned();
     }
     fsx::remove_tree_logged(env, &tmpd);
     let label = if is_diag { "诊断包" } else { "日志" };

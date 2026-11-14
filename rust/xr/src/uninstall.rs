@@ -288,7 +288,7 @@ fn pick_stage_base(env: &Env) -> PathBuf {
 
 pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
     if confirm_arg != "confirm" {
-        return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_string());
+        return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_owned());
     }
     let id = fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
@@ -296,20 +296,20 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
         .find_map(|l| l.strip_prefix("id="))
         .unwrap_or("")
         .trim()
-        .to_string();
+        .to_owned();
     let dir_name = env
         .moddir
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
     if id.is_empty() || dir_name != id {
-        return (1, "{\"ok\":false,\"error\":\"模块目录异常\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"模块目录异常\"}".to_owned());
     }
     let uninst_sh = env.moddir.join("uninstall.sh");
     if !uninst_sh.is_file() {
         return (
             1,
-            "{\"ok\":false,\"error\":\"缺少 uninstall.sh\"}".to_string(),
+            "{\"ok\":false,\"error\":\"缺少 uninstall.sh\"}".to_owned(),
         );
     }
 
@@ -372,7 +372,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
     }
     rustix::fs::sync();
 
-    (0, "{\"ok\":true}".to_string())
+    (0, "{\"ok\":true}".to_owned())
 }
 
 pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {

@@ -59,7 +59,7 @@ pub fn status_json(env: &Env) -> String {
         fs::read_to_string(run.join("share.mode"))
             .unwrap_or_default()
             .trim()
-            .to_string()
+            .to_owned()
     } else {
         String::new()
     };
@@ -71,25 +71,25 @@ pub fn status_json(env: &Env) -> String {
         .iter()
         .map(|key| {
             (
-                (*key).to_string(),
-                Value::String(cfg.get_raw(key).to_string()),
+                (*key).to_owned(),
+                Value::String(cfg.get_raw(key).to_owned()),
             )
         })
         .collect();
 
-    let mut vst = "down".to_string();
+    let mut vst = "down".to_owned();
     let mut vaddr = String::new();
     if alive {
         if let Ok(s) = fs::read_to_string(run.join("guest/guest/openvpn.status")) {
             let t = s.trim();
             if !t.is_empty() {
-                vst = t.to_string();
+                t.clone_into(&mut vst);
             }
         }
-        vaddr = fs::read_to_string(run.join("guest/guest/openvpn.addr"))
+        fs::read_to_string(run.join("guest/guest/openvpn.addr"))
             .unwrap_or_default()
             .trim()
-            .to_string();
+            .clone_into(&mut vaddr);
     }
 
     let profs = vpn_profiles(env, &vst);

@@ -67,7 +67,7 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                 if cfg.debug_on() {
                     let h = cfg.debug_hours();
                     let dur = if h == 0 {
-                        "不自动关闭".to_string()
+                        "不自动关闭".to_owned()
                     } else {
                         format!("{h} 小时后自动关闭")
                     };
@@ -81,12 +81,12 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
         "AUTOSTART" if cfg.autostart() => {
             if env.tripped_file().is_file() {
                 note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
-                return Err("存在未确认的熔断，不能开启自启".to_string());
+                return Err("存在未确认的熔断，不能开启自启".to_owned());
             }
             let lg = fs::read_to_string(env.last_good_file()).unwrap_or_default();
             if lg.trim() != config_hash(env) {
                 note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
-                return Err("需先用当前配置手动启动成功一次".to_string());
+                return Err("需先用当前配置手动启动成功一次".to_owned());
             }
         }
         _ => {}
@@ -101,13 +101,13 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
         _ => {
             return (
                 2,
-                "{\"ok\":false,\"error\":\"用法：xr ipv6 on|off\"}".to_string(),
+                "{\"ok\":false,\"error\":\"用法：xr ipv6 on|off\"}".to_owned(),
             );
         }
     };
     let v6_file = env.run_dir().join("guest/guest/ipv6");
     if !vm_running(env) || !v6_file.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"服务未就绪\"}".to_string());
+        return (1, "{\"ok\":false,\"error\":\"服务未就绪\"}".to_owned());
     }
     fsx::write_logged(
         env,
@@ -127,9 +127,9 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     if fs::read_to_string(&v6_file).is_ok_and(|s| s.trim() == want) {
         let label = if want == "1" { "开启" } else { "关闭" };
         log_info(env, "xr", &format!("服务 IPv6 已{label}"));
-        (0, "{\"ok\":true}".to_string())
+        (0, "{\"ok\":true}".to_owned())
     } else {
-        (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_string())
+        (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
     }
 }
 
