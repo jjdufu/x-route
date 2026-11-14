@@ -234,6 +234,7 @@ if (!/import \{[^}]*\bexit\b[^}]*\} from "kernelsu-alt"/.test(main)) fail("应�
 if (!/\$\("btn-gone-close"\)\.onclick = closeWebui;/.test(main)) fail("关闭按钮应绑定 closeWebui");
 
 // 异地组网（合并在网络页）：导入即展示多配置卡片，每张卡片直接独立启动 / 停止 / 删除，无下拉框选择
+if (!html.includes('id="vpn-local"') || !/alert-neutral/.test(html) || !/vpn\.routes_local/.test(main) || !main.includes("本地直连：")) fail("网络页应单列本地直连路由（中性提示，需求 2）");
 if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !html.includes('id="vpn-empty"') || !/function renderVpn/.test(main)) fail("异地组网应支持空状态与多配置列表渲染");
 if (!html.includes('class="btn-vpn-start"') || !html.includes('class="btn-vpn-stop"') || !html.includes('class="danger btn-vpn-del"')) fail("每张组网卡片应包含启动 / 停止 / 删除按钮");
 if (!/xr\("vpn-import", path, "0"\)/.test(main)) fail("WebUI 导入配置应默认传 0 以便在列表中按需启动");

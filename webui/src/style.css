@@ -552,6 +552,14 @@ md-icon.filled {
 .alert-banner md-icon {
   color: var(--md-sys-color-on-error-container);
 }
+/* 中性提示（本地直连等非错误信息） */
+.alert-banner.alert-neutral {
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.alert-banner.alert-neutral md-icon {
+  color: var(--md-sys-color-on-surface-variant);
+}
 .alert-banner .grow {
   font-size: 14px;
   font-weight: 500;

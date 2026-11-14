@@ -411,6 +411,9 @@ function renderVpn(vpn) {
   const rejected = Array.isArray(vpn && vpn.routes_rejected) ? vpn.routes_rejected : [];
   hide($("vpn-rejected"), rejected.length === 0);
   if (rejected.length) txt($("vpn-rejected-text"), `已忽略冲突路由：${rejected.join("、")}`);
+  const local = Array.isArray(vpn && vpn.routes_local) ? vpn.routes_local : [];
+  hide($("vpn-local"), local.length === 0);
+  if (local.length) txt($("vpn-local-text"), `本地直连：${local.map((x) => x.route).join("、")}（与当前网络同网段）`);
 
   const upList = list.filter((p) => p.status === "up");
   const connList = list.filter((p) => p.status === "connecting");
