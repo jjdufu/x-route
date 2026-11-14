@@ -543,63 +543,88 @@ pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
     trigger_diag_snap_bg(ctx.env, ctx.cfg, &format!("热点拆桥 {iface}"));
 }
 
+/// 当前应接管的热点接口：选项开启且条件满足时由 `hs_pick` 选出；客机不支持热点时只首次记一次 INFO，返回 `None`。
+fn hs_target(ctx: &NetCtx<'_>) -> Option<String> {
+    if !hs_want(ctx) {
+        return None;
+    }
+    if hs_guest_ok(ctx.env) {
+        return hs_pick(ctx);
+    }
+    let old_mark = ctx.env.run_dir().join("net.hs_old");
+    if !old_mark.is_file() {
+        log::info(
+            ctx.env,
+            "hotspot",
+            "当前系统盘不支持热点接管（请重置系统盘或使用新版完整包），热点保持由安卓分配",
+        );
+        fsx::touch_logged(ctx.env, old_mark);
+    }
+    // 客体不支持且已提示过一次：不重复记日志
+    None
+}
+
+/// 不再需要接管时：已接管或网桥仍在则记调试日志并拆桥。
+fn hs_release(ctx: &NetCtx<'_>, have: &str) {
+    if have.is_empty() && !ctx.env.sysnet.join(HS_BR).is_dir() {
+        return;
+    }
+    let st =
+        fs::read_to_string(ctx.env.run_dir().join("state")).unwrap_or_else(|_| "未运行".to_owned());
+    let tethers = tether_ifaces(ctx).join(" ");
+    dlog(
+        ctx.env,
+        ctx.cfg,
+        "hotspot",
+        &format!(
+            "拆桥：选项={} 虚拟机={} 热点={tethers}",
+            i32::from(ctx.cfg.hotspot_bridge()),
+            st.trim()
+        ),
+    );
+    hs_unbridge(ctx);
+}
+
+/// 已按当前参数桥接时只补规则：`XR_HS`/`XR_HS6` 钩子缺失则重装，固定网段时 `4790` 规则缺失则重装路由。
+fn hs_reassert(ctx: &NetCtx<'_>, want_if: &str, cidr: &str, gw: &str) {
+    if !ctx.ipt(&["-C", "OUTPUT", "-j", "XR_HS"]).success()
+        || !ctx.ip6t(&["-C", "OUTPUT", "-j", "XR_HS6"]).success()
+    {
+        hs_rules(ctx, want_if);
+    }
+    if gw != cidr
+        && !ctx
+            .ip(&["rule"])
+            .stdout
+            .lines()
+            .any(|line| line.starts_with(&format!("{HS_PREF4}:")))
+    {
+        hs_route4(ctx, gw, cidr);
+    }
+}
+
 /// 热点对账：按当前条件决定应接管的接口，与已接管的不同时先撤销再桥接，必要时记日志。
 pub(crate) fn hs_sync(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
-    let mut want = None;
-    if hs_want(ctx) {
-        if hs_guest_ok(ctx.env) {
-            want = hs_pick(ctx);
-        } else if !run.join("net.hs_old").is_file() {
-            log::info(
-                ctx.env,
-                "hotspot",
-                "当前系统盘不支持热点接管（请重置系统盘或使用新版完整包），热点保持由安卓分配",
-            );
-            fsx::touch_logged(ctx.env, run.join("net.hs_old"));
-        } else {
-            // 客体不支持且已提示过一次：不重复记日志，want 保持 None
-        }
-    }
-    let have = fs::read_to_string(run.join("net.hs_if"))
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
+    let want = hs_target(ctx);
+    let read = |name: &str| {
+        fs::read_to_string(run.join(name))
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    };
+    let have = read("net.hs_if");
     let Some(want_if) = want else {
-        if !have.is_empty() || ctx.env.sysnet.join(HS_BR).is_dir() {
-            let st = fs::read_to_string(run.join("state")).unwrap_or_else(|_| "未运行".to_owned());
-            let tethers = tether_ifaces(ctx).join(" ");
-            dlog(
-                ctx.env,
-                ctx.cfg,
-                "hotspot",
-                &format!(
-                    "拆桥：选项={} 虚拟机={} 热点={tethers}",
-                    i32::from(ctx.cfg.hotspot_bridge()),
-                    st.trim()
-                ),
-            );
-            hs_unbridge(ctx);
-        }
+        hs_release(ctx, &have);
         return;
     };
 
-    let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", &want_if]);
-    let mut cidr = out4
-        .stdout
-        .lines()
-        .next()
-        .and_then(|row| row.split_whitespace().nth(3))
-        .unwrap_or("")
-        .to_owned();
-    let hc = fs::read_to_string(run.join("net.hs_cidr"))
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    let hg = fs::read_to_string(run.join("net.hs_gw"))
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
+    let mut cidr = first_addr(
+        &ctx.ip(&["-4", "-o", "addr", "show", "dev", &want_if])
+            .stdout,
+    );
+    let hc = read("net.hs_cidr");
+    let hg = read("net.hs_gw");
     if cidr.is_empty() && want_if == have {
         cidr.clone_from(&hc);
     }
@@ -611,20 +636,7 @@ pub(crate) fn hs_sync(ctx: &NetCtx<'_>) {
         && cidr == hc
         && gw == *hg_eff
     {
-        if !ctx.ipt(&["-C", "OUTPUT", "-j", "XR_HS"]).success()
-            || !ctx.ip6t(&["-C", "OUTPUT", "-j", "XR_HS6"]).success()
-        {
-            hs_rules(ctx, &want_if);
-        }
-        if gw != cidr
-            && !ctx
-                .ip(&["rule"])
-                .stdout
-                .lines()
-                .any(|line| line.starts_with(&format!("{HS_PREF4}:")))
-        {
-            hs_route4(ctx, &gw, &cidr);
-        }
+        hs_reassert(ctx, &want_if, &cidr, &gw);
         return;
     }
 
