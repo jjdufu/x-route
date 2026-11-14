@@ -13,7 +13,8 @@ use serde_json::json;
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid};
 use crate::cli::status::needs_restart;
 use crate::cli::vpn_cfg::{list_dir, traffic_split, vpn_delete, vpn_import, vpn_set};
-use crate::config::{Config, KEYS, config_hash, set_kv, valid_kv};
+use crate::config;
+use crate::config::{Config, KEYS, set_kv, valid_kv};
 use crate::daemon::watchdog::watchdog_loop;
 use crate::daemon::{daemon_loop, ensure_daemon, ensure_watchdog, vm_start, vm_stop};
 use crate::diag::{diag_snap, diag_snap_bg, export_pack};
@@ -83,7 +84,7 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                 return Err("存在未确认的熔断，不能开启自启".to_owned());
             }
             let lg = fs::read_to_string(env.last_good_file()).unwrap_or_default();
-            if lg.trim() != config_hash(env) {
+            if lg.trim() != config::hash(env) {
                 note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
                 return Err("需先用当前配置手动启动成功一次".to_owned());
             }
@@ -200,7 +201,7 @@ fn boot_service(env: &Env) -> i32 {
         return 0;
     }
     let lg = fs::read_to_string(env.last_good_file()).unwrap_or_default();
-    if lg.trim() != config_hash(env) {
+    if lg.trim() != config::hash(env) {
         log_info(env, "service", "last_good 与当前配置不一致，跳过自启");
         return 0;
     }
@@ -451,7 +452,7 @@ pub fn run(args: &[String]) -> i32 {
         }
         "internal" => match rest.first().map(String::as_str) {
             Some("dump-config-keys") => emit_lines(&env, KEYS, 0),
-            Some("config-hash") => emit(&env, &config_hash(&env), 0),
+            Some("config-hash") => emit(&env, &config::hash(&env), 0),
             Some("valid-kv") => {
                 let (Some(set_key), Some(val)) = (rest.get(1), rest.get(2)) else {
                     return 2;

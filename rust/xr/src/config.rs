@@ -451,6 +451,6 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
 }
 
 #[must_use]
-pub fn config_hash(env: &Env) -> String {
+pub fn hash(env: &Env) -> String {
     Config::load(env).hash()
 }

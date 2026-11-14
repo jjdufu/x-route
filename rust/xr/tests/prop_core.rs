@@ -8,7 +8,8 @@ use xr::cidr::{
     hs_mac, hs_subnet_clash, hs_subnet_valid, ip2int, ip6_expand, ip6_format, ip6_mask, mac_eui64,
     mask2len, norm_route, v6_compose, v6_is_ll, v6_is_ula, v6_pick_addr, valid_ip4,
 };
-use xr::config::{Config, KEYS, config_hash, set_kv, valid_kv};
+use xr::config;
+use xr::config::{Config, KEYS, set_kv, valid_kv};
 use xr::daemon::keepalive::{
     VMM_RUN_MARKER, vm_exit_reason, vm_guest_reset_pending, vmm_has_guest_reset, vmm_last_run_slice,
 };
@@ -203,13 +204,13 @@ fn test_set_kv_log_boot_clean_and_cgroup() {
     let tmp = TempDir::new().unwrap_or_else(|_| std::process::abort());
     let mut env = make_test_env(&tmp);
 
-    let h0 = config_hash(&env);
+    let h0 = config::hash(&env);
     assert_eq!(h0.len(), 16);
     assert!(set_kv(&env, "XR_EXPOSE", "local"));
     assert!(!set_kv(&env, "XR_EXPOSE", "invalid"));
     assert_eq!(Config::load(&env).expose(), "local");
     assert!(set_kv(&env, "VM_MEM_MB", "1024"));
-    assert_ne!(h0, config_hash(&env));
+    assert_ne!(h0, config::hash(&env));
 
     env.fake_date_fail = true;
     env.bb = tmp.path().join("nonexistent-bb");

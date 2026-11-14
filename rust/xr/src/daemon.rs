@@ -369,7 +369,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
                         fsx::write_logged(
                             env,
                             env.last_good_file(),
-                            format!("{}\n", crate::config::config_hash(env)),
+                            format!("{}\n", crate::config::hash(env)),
                         );
                         fsx::write_logged(env, run.join("state"), "stable\n");
                         log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");

@@ -10,7 +10,8 @@ use rustix::process::Signal;
 use serde::Serialize;
 
 use crate::cidr::hs_mac;
-use crate::config::{Config, config_hash};
+use crate::config;
+use crate::config::Config;
 use crate::diag::{diag_snap, diag_snap_bg};
 use crate::env::Env;
 use crate::log::FAILURES;
@@ -68,7 +69,7 @@ pub(crate) fn reap_in_background(mut child: std::process::Child) {
 }
 
 pub fn fuse_arm(env: &Env) {
-    let line = format!("{} {}\n", unix_now(), config_hash(env));
+    let line = format!("{} {}\n", unix_now(), config::hash(env));
     fsx::write_logged(env, env.fuse_file(), line);
     if let Ok(fuse) = fs::File::open(env.fuse_file())
         && let Err(err) = fuse.sync_all()
@@ -203,7 +204,11 @@ pub fn fuse_watch(env: &Env) {
         st = st.saturating_add(5);
     }
     fsx::remove_logged(env, env.fuse_file());
-    fsx::write_logged(env, env.last_good_file(), format!("{}\n", config_hash(env)));
+    fsx::write_logged(
+        env,
+        env.last_good_file(),
+        format!("{}\n", config::hash(env)),
+    );
     fsx::write_logged(env, run.join("state"), "stable\n");
     log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
     fsx::remove_logged(env, env.boot_log());
@@ -753,7 +758,7 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
         .map(|raw| raw.trim().to_owned())
         .filter(|_| env.tripped_file().is_file());
     let lg =
-        fs::read_to_string(env.last_good_file()).is_ok_and(|text| text.trim() == config_hash(env));
+        fs::read_to_string(env.last_good_file()).is_ok_and(|text| text.trim() == config::hash(env));
     let ch = match ready_channel(env) {
         "null" => None,
         other => Some(other.to_owned()),
