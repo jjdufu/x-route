@@ -2,9 +2,7 @@
 
 use proptest::prelude::*;
 use xr::net::common::human_bytes;
-
-/// 失败信息。
-type Failure = String;
+use xr_test_support::Failure;
 
 /// 旧实现（`common.rs:196` 改动前）：`bytes` 转 `f64` 后按 1024 逐级缩小，一位小数。
 ///
@@ -15,8 +13,9 @@ type Failure = String;
 /// 拆分失败（不可能发生）时返回错误。
 fn human_bytes_f64(bytes: u64) -> Result<String, Failure> {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let hi = u32::try_from(bytes >> 32_u32).map_err(|err| err.to_string())?;
-    let lo = u32::try_from(bytes & 0xFFFF_FFFF_u64).map_err(|err| err.to_string())?;
+    let hi = u32::try_from(bytes >> 32_u32).map_err(|err| Failure::new(&err.to_string()))?;
+    let lo =
+        u32::try_from(bytes & 0xFFFF_FFFF_u64).map_err(|err| Failure::new(&err.to_string()))?;
     let mut val = f64::from(hi).mul_add(4_294_967_296.0_f64, f64::from(lo));
     let mut idx = 0_usize;
     while val >= 1024.0_f64 && idx < 4_usize {
@@ -41,7 +40,7 @@ fn same(bytes: u64) -> Result<(), Failure> {
     if old == new {
         Ok(())
     } else {
-        Err(format!("{bytes}: 旧 {old}，新 {new}"))
+        Err(Failure::new(&format!("{bytes}: 旧 {old}，新 {new}")))
     }
 }
 

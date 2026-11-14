@@ -6,9 +6,7 @@ use std::path::Path;
 
 use xr::diag;
 use xr::env::Env;
-
-/// 失败信息。
-type Failure = String;
+use xr_test_support::Failure;
 
 /// 改动前录制的快照（已做 [`normalize`]）。
 const FIXTURE: &str = include_str!("../fixtures/diag_phone.txt");
@@ -44,8 +42,9 @@ fn fake_bin(dir: &Path, name: &str) -> Result<(), Failure> {
     let mut body = String::from("#!/bin/sh\necho \"");
     body.push_str(name);
     body.push_str(" $*\"\n");
-    fs::write(&path, body).map_err(|err| err.to_string())?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(|err| err.to_string())
+    fs::write(&path, body).map_err(|err| Failure::new(&err.to_string()))?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        .map_err(|err| Failure::new(&err.to_string()))
 }
 
 /// 准备隔离的 `Env`：数据目录、`sysnet`、`sysbin` 都在临时目录中。
@@ -59,12 +58,13 @@ pub(crate) fn snapshot_env(dir: &Path) -> Result<Env, Failure> {
     env.sysnet = dir.join("sysnet");
     env.sysbin = dir.join("bin");
     for sub in [env.run_dir(), env.sysnet.clone(), env.sysbin.clone()] {
-        fs::create_dir_all(sub).map_err(|err| err.to_string())?;
+        fs::create_dir_all(sub).map_err(|err| Failure::new(&err.to_string()))?;
     }
     for name in ["ip", "iptables", "ip6tables", "iw"] {
         fake_bin(&env.sysbin, name)?;
     }
-    fs::write(env.run_dir().join("net.up_if"), "wlan0\n").map_err(|err| err.to_string())?;
+    fs::write(env.run_dir().join("net.up_if"), "wlan0\n")
+        .map_err(|err| Failure::new(&err.to_string()))?;
     Ok(env)
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn snapshot_env(dir: &Path) -> Result<Env, Failure> {
 /// 准备失败，或输出与 fixture 不一致（消息给出第一处不同的行号）时返回错误。
 #[test]
 fn diag_phone_matches_fixture() -> Result<(), Failure> {
-    let dir = tempfile::TempDir::new().map_err(|err| err.to_string())?;
+    let dir = tempfile::TempDir::new().map_err(|err| Failure::new(&err.to_string()))?;
     let env = snapshot_env(dir.path())?;
     let tmp = dir.path().to_string_lossy();
     let got = normalize(&diag::phone(&env), &tmp);
@@ -86,7 +86,7 @@ fn diag_phone_matches_fixture() -> Result<(), Failure> {
         .lines()
         .zip(FIXTURE.lines())
         .position(|(left, right)| left != right);
-    Err(format!(
+    Err(Failure::new(&format!(
         "第一处不同在第 {first_diff:?} 行（从 0 计，None 表示行数不同）；实际输出：\n{got}"
-    ))
+    )))
 }
