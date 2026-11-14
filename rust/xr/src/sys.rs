@@ -271,7 +271,7 @@ pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
     else {
         return 0;
     };
-    let started_secs = start_ticks / 100;
+    let started_secs = start_ticks.checked_div(100_u64).unwrap_or(0_u64);
     now_secs.saturating_sub(started_secs)
 }
 

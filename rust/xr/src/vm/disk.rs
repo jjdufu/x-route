@@ -20,7 +20,7 @@ pub fn expand(env: &Env, new_mb_str: &str) -> i32 {
     };
     let rootfs = env.rootfs_img();
     let cur_bytes = fs::metadata(&rootfs).map_or(0, |meta| meta.len());
-    let cur_mb = cur_bytes / 1_048_576;
+    let cur_mb = cur_bytes.checked_div(1_048_576_u64).unwrap_or(0_u64);
     if new_mb <= cur_mb {
         log::err(env, "vm", &format!("新大小必须大于当前 {cur_mb}MB"));
         return 1;

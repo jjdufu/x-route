@@ -50,7 +50,7 @@ pub fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
 
 pub fn boot_progress(env: &Env, secs: u64) {
     let sz = fs::metadata(env.console_log()).map_or(0, |meta| meta.len());
-    let kb = sz / 1024;
+    let kb = sz.checked_div(1024_u64).unwrap_or(0_u64);
     blog(
         env,
         "vm",
@@ -356,8 +356,12 @@ pub fn start_exec(env: &Env) -> i32 {
     if !ce_ready() {
         log::info(env, "vm", "警告：手机未解锁（CE 不可用）");
     }
-    let img_mb = fs::metadata(&image_path).map_or(0, |img_meta| img_meta.len() / 1_048_576);
-    let rfs_mb = fs::metadata(&rootfs).map_or(0, |meta| meta.len() / 1_048_576);
+    let img_mb = fs::metadata(&image_path).map_or(0, |img_meta| {
+        img_meta.len().checked_div(1_048_576_u64).unwrap_or(0_u64)
+    });
+    let rfs_mb = fs::metadata(&rootfs).map_or(0, |meta| {
+        meta.len().checked_div(1_048_576_u64).unwrap_or(0_u64)
+    });
     blog(
         env,
         "vm",
@@ -749,7 +753,7 @@ pub fn status(env: &Env) -> StatusJson {
                     mono_now(env),
                 )
             {
-                uptime_s = now.saturating_sub(st / 100);
+                uptime_s = now.saturating_sub(st.checked_div(100_u64).unwrap_or(0_u64));
             }
         }
     }

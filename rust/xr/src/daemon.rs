@@ -362,7 +362,7 @@ pub fn main_loop(env: &Env) -> i32 {
                             text.split_whitespace()
                                 .nth(21)
                                 .and_then(|x| x.parse::<u64>().ok())
-                                .map(|ticks| ticks / 100)
+                                .map(|ticks| ticks.checked_div(100_u64).unwrap_or(0_u64))
                         });
                     if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env))
                         && now.saturating_sub(r0) >= cfg.stable_sec()
