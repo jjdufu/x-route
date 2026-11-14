@@ -326,6 +326,15 @@ chk '[ "$rc" -eq 141 ] && ! grep -qi panic "$T/full.err"'
 $XR get >/dev/full 2>"$T/full.err"; rc=$?
 chk '[ "$rc" -eq 141 ] && ! grep -qi panic "$T/full.err"'
 
+# 日志时区（需求 4a）：XR_TZ_OFFSET 覆盖手机时区，module.log 新行的小时与该偏移下的当前小时一致（允许跨小时）；
+# 用两个相差很大的偏移，避免与宿主时区巧合；不设置时回退 date +%z，只要求正常运行
+for tzc in "+0800 UTC-8" "-1100 UTC+11"; do
+  off=${tzc% *}; ptz=${tzc#* }
+  h0=$(TZ=$ptz date +%H); XR_TZ_OFFSET=$off $XR set XR_DEBUG 0 >/dev/null; h1=$(TZ=$ptz date +%H)
+  lh=$(tail -n 1 "$LOG" | cut -c12-13)
+  chk 'tail -n 1 "$LOG" | grep -q "调试模式已关闭" && { [ "$lh" = "$h0" ] || [ "$lh" = "$h1" ]; }'
+done
+chk '$XR set XR_DEBUG 0 >/dev/null && tail -n 1 "$LOG" | grep -q "^[0-9-]\{10\} [0-9:]\{8\} .*调试模式已关闭"'
 # 立即卸载：必须带 confirm；模块目录名与 id 不符时拒绝（开发树里不会删源码）；
 # 正常时立即返回并同步删除模块目录（不遗留 remove 标记触发管理器恢复按钮），脱离会话的后台进程跑 uninstall.sh 再清理数据
 out="$($XR uninstall-now)"; chk '[ $? -eq 2 ] && [ -d "$T/mod/scripts" ]'
