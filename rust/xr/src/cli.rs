@@ -65,11 +65,11 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
             debug_arm(env);
             if key == "XR_DEBUG" {
                 if cfg.debug_on() {
-                    let h = cfg.debug_hours();
-                    let dur = if h == 0 {
+                    let hours = cfg.debug_hours();
+                    let dur = if hours == 0 {
                         "不自动关闭".to_owned()
                     } else {
-                        format!("{h} 小时后自动关闭")
+                        format!("{hours} 小时后自动关闭")
                     };
                     log_info(env, "debug", &format!("调试模式已开启（{dur}）"));
                     diag_snap_bg(env, "调试模式开启");
@@ -115,7 +115,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
         format!("{arg} {}\n", unix_now()),
     );
     for _ in 0..env.ipv6_wait {
-        if fs::read_to_string(&v6_file).is_ok_and(|s| s.trim() == want) {
+        if fs::read_to_string(&v6_file).is_ok_and(|raw| raw.trim() == want) {
             break;
         }
         thread::sleep(Duration::from_secs(1));
@@ -124,7 +124,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
     if cfg.vm_net() {
         note_rc(env, "run_net_hook", run_net_hook(env, "sync"));
     }
-    if fs::read_to_string(&v6_file).is_ok_and(|s| s.trim() == want) {
+    if fs::read_to_string(&v6_file).is_ok_and(|text| text.trim() == want) {
         let label = if want == "1" { "开启" } else { "关闭" };
         log_info(env, "xr", &format!("服务 IPv6 已{label}"));
         (0, "{\"ok\":true}".to_owned())
@@ -312,31 +312,31 @@ pub fn run_cli(args: &[String]) -> i32 {
             )
         }
         "set" => {
-            let (Some(k), Some(v)) = (rest.first(), rest.get(1)) else {
+            let (Some(cfg_key), Some(item)) = (rest.first(), rest.get(1)) else {
                 return emit(&env, SET_USAGE_JSON, 2);
             };
             if rest.len() != 2 {
                 return emit(&env, SET_USAGE_JSON, 2);
             }
             let cfg = Config::load(&env);
-            if k == "XR_HOTSPOT_SUBNET" && !v.is_empty() {
-                if !hs_subnet_valid(v) {
+            if cfg_key == "XR_HOTSPOT_SUBNET" && !item.is_empty() {
+                if !hs_subnet_valid(item) {
                     let msg = json!({"ok": false, "error": "固定热点网段格式：私网网关地址/16~30，如 10.233.0.1/24"});
                     return emit(&env, &msg.to_string(), 1);
                 }
-                if let Some(clash) = hs_subnet_clash(&env, cfg.net_prefix(), v, None) {
+                if let Some(clash) = hs_subnet_clash(&env, cfg.net_prefix(), item, None) {
                     let msg = json!({"ok": false, "error": format!("与 {clash} 冲突")});
                     return emit(&env, &msg.to_string(), 1);
                 }
             }
-            if !set_kv(&env, k, v) {
-                let msg = json!({"ok": false, "error": format!("取值不合法：{k}")});
+            if !set_kv(&env, cfg_key, item) {
+                let msg = json!({"ok": false, "error": format!("取值不合法：{cfg_key}")});
                 return emit(&env, &msg.to_string(), 1);
             }
-            if let Err(msg) = after_set(&env, k) {
+            if let Err(msg) = after_set(&env, cfg_key) {
                 return emit(&env, &json!({"ok": false, "error": msg}).to_string(), 1);
             }
-            let done = json!({"ok": true, "restart": needs_restart(&env, k)});
+            let done = json!({"ok": true, "restart": needs_restart(&env, cfg_key)});
             emit(&env, &done.to_string(), 0)
         }
         "ipv6" => {
@@ -398,7 +398,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            st.map_or(1, |s| s.code().unwrap_or(1_i32))
+            st.map_or(1, |run_status| run_status.code().unwrap_or(1_i32))
         }
         "luci" => {
             let cfg = Config::load(&env);
@@ -409,7 +409,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            st.map_or(1, |s| s.code().unwrap_or(1_i32))
+            st.map_or(1, |exit_status| exit_status.code().unwrap_or(1_i32))
         }
         "ls" => {
             let (rc, items) = list_dir(
@@ -454,17 +454,17 @@ pub fn run_cli(args: &[String]) -> i32 {
             Some("dump-config-keys") => emit_lines(&env, KEYS, 0),
             Some("config-hash") => emit(&env, &config_hash(&env), 0),
             Some("valid-kv") => {
-                let (Some(k), Some(v)) = (rest.get(1), rest.get(2)) else {
+                let (Some(set_key), Some(val)) = (rest.get(1), rest.get(2)) else {
                     return 2;
                 };
                 let cfg = Config::load(&env);
-                i32::from(!valid_kv(&env, &cfg, k, v))
+                i32::from(!valid_kv(&env, &cfg, set_key, val))
             }
             Some("set-kv") => {
-                let (Some(k), Some(v)) = (rest.get(1), rest.get(2)) else {
+                let (Some(name_key), Some(value)) = (rest.get(1), rest.get(2)) else {
                     return 2;
                 };
-                i32::from(!set_kv(&env, k, v))
+                i32::from(!set_kv(&env, name_key, value))
             }
             Some("net") => run_net_cli(&env, rest.get(1..).unwrap_or(&[])),
             Some("traffic") => run_traffic_cmd(&env, rest.get(1).map_or("json", String::as_str)),
@@ -482,14 +482,14 @@ pub fn run_cli(args: &[String]) -> i32 {
                 _ => 2,
             },
             Some("daemon") => {
-                let mut e = env;
-                e.in_daemon = true;
-                daemon_loop(&e)
+                let mut daemon_env = env;
+                daemon_env.in_daemon = true;
+                daemon_loop(&daemon_env)
             }
             Some("watchdog") => {
-                let mut e = env;
-                e.in_watchdog = true;
-                watchdog_loop(&e)
+                let mut role_env = env;
+                role_env.in_watchdog = true;
+                watchdog_loop(&role_env)
             }
             Some("fuse-watch") => {
                 fuse_watch(&env);
