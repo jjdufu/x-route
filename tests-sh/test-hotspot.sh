@@ -1,12 +1,12 @@
 #!/bin/sh
 # shellcheck disable=SC2016,SC2317,SC2034
 # XRouter: 热点接管（hotspot.rs）模拟测试：跟随安卓网段 / 固定网段 / 冲突退回 / 改设置后重新桥接
-# 假 ip / iptables（tests/mock/net），客侧由后台小循环模拟：读 host/hotspot.cmd，按前两段回写 guest/hotspot
+# 假 ip / iptables（tests-sh/mock/net），客侧由后台小循环模拟：读 host/hotspot.cmd，按前两段回写 guest/hotspot
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"; MOCK="$T/mock"; mkdir -p "$MOCK"
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
-export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" XR_PROC="$T/proc" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
+export PATH="$ROOT/tests-sh/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests-sh/mock/net" XR_PROC="$T/proc" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
 CONF="$XR_DATA/config/config.conf"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"
 mkdir -p "$XR_DATA/config" "$RUN" "$XR_DATA/log" "$T/proc/sys/net/ipv4/conf/xr0" "$T/proc/sys/net/ipv6/conf/xr0"
 echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
@@ -58,8 +58,8 @@ c0="$(cat "$RUN/guest/host/hotspot.cmd")"; $NET sync; chk '[ "$(cat "$RUN/guest/
 
 # 3. 固定网段与上游冲突（比如连上了同网段的 Wi-Fi）：本次退回跟随安卓，并只记一次错误
 echo "20: wlan0    inet 10.233.0.88/24 scope global wlan0" > "$T/addr.all"
-mkdir -p "$T/sb"; cp -a "$ROOT/tests/mock/net/." "$T/sb/"
-printf '#!/bin/sh\ncase "$*" in "-4 -o addr show") cat "%s/addr.all" "%s/addr.wlan1" ;; *) exec "%s/ip" "$@" ;; esac\n' "$T" "$MOCK" "$ROOT/tests/mock/net" > "$T/sb/ip"
+mkdir -p "$T/sb"; cp -a "$ROOT/tests-sh/mock/net/." "$T/sb/"
+printf '#!/bin/sh\ncase "$*" in "-4 -o addr show") cat "%s/addr.all" "%s/addr.wlan1" ;; *) exec "%s/ip" "$@" ;; esac\n' "$T" "$MOCK" "$ROOT/tests-sh/mock/net" > "$T/sb/ip"
 chmod +x "$T/sb/ip"
 unbridged; : > "$MOCK/calls"
 XR_SYSBIN="$T/sb" $NET sync; bridged

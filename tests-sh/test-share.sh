@@ -20,7 +20,7 @@ fi
 exec "$@"
 EOF
 chmod +x "$BB_MOCK"
-export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" XR_MEDIA="$T/media" BB="$BB_MOCK" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args" XR_DAEMON_FOREGROUND=1
+export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" XR_MEDIA="$T/media" BB="$BB_MOCK" CROSVM="$ROOT/tests-sh/mock/crosvm" FAKE_ARGS="$T/args" XR_DAEMON_FOREGROUND=1
 CONF="$XR_DATA/config/config.conf"; IMG="$XR_DATA/images"; ROOTFS="$IMG/openwrt-rootfs.img"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"
 mkdir -p "$XR_DATA/config" "$IMG" "$RUN" "$XR_DATA/log"
 cp "$T/mod/config/config.conf" "$CONF"

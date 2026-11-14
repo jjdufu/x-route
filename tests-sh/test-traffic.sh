@@ -7,7 +7,7 @@ T="$(mktemp -d)"; MOCK="$T/mock"; mkdir -p "$MOCK" "$T/proc/sys/net/ipv4/conf/xr
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
 trap 'rm -rf "$T"' EXIT
 echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
-export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" \
+export PATH="$ROOT/tests-sh/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests-sh/mock/net" \
   XR_PROC="$T/proc" XR_SYSNET="$T/sysnet" XR_DAEMON_FOREGROUND=1
 CONF="$XR_DATA/config/config.conf"; RUN="$XR_DATA/run"; mkdir -p "$XR_DATA/config" "$RUN" "$XR_DATA/log"
 cp "$ROOT/module/config/config.conf" "$CONF"

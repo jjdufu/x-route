@@ -96,7 +96,7 @@
 
 ## 附：OpenVPN / Clash 能力核对（VM 内，可离线）
 
-把仓库里的 `tests/vm-caps.sh` 拷进 VM 执行（`ssh root@172.29.233.254 sh -s < tests/vm-caps.sh`），最后一行应为 `CAPS_OK`。
+把仓库里的 `tests-sh/vm-caps.sh` 拷进 VM 执行（`ssh root@172.29.233.254 sh -s < tests-sh/vm-caps.sh`），最后一行应为 `CAPS_OK`。
 它核对：预装官方 kmod 可 modprobe（tun、nft_tproxy、nft_socket、nft_fullcone、inet_diag、ovpn 等）；
 socket / tproxy / redirect / masquerade / fullcone 等 nft 规则能加载；fwmark 策略路由、TUN、IPv6 转发可用；
 fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容错误。
@@ -121,9 +121,9 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
 
 | 检查 | 结果 |
 |---|---|
-| `sh scripts/lint.sh`（shellcheck、`sh -n`、全部 `tests/test-*.sh` 在 dash / mksh / busybox sh 下） | 通过 |
+| `sh scripts/lint.sh`（shellcheck、`sh -n`、全部 `tests-sh/test-*.sh` 在 dash / mksh / busybox sh 下） | 通过 |
 | `sh scripts/check-config-keys.sh` | 通过（19 个配置键） |
 | `bash scripts/package-module.sh --lite-only` | 生成 `xrouter-sukisu-lite-v3.0.0.zip`：`id=xrouter`，无旧路径，无 META-INF |
-| `tests/test-webui.sh`（node） | 通过 |
-| `tests/e2e-qemu.sh` | 通过（先用当前源码重新构建 rootfs，再启动；已核对主机名 XRouter、型号、zh_cn、fw4、OpenVPN、透明代理能力） |
+| `tests-sh/test-webui.sh`（node） | 通过 |
+| `tests-sh/e2e-qemu.sh` | 通过（先用当前源码重新构建 rootfs，再启动；已核对主机名 XRouter、型号、zh_cn、fw4、OpenVPN、透明代理能力） |
 

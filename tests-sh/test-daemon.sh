@@ -10,7 +10,7 @@ cp -a "$ROOT/module/." "$T/mod/"
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"
 chmod +x "$T/bin/getprop"
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
-export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm" FAKE_ARGS="$T/args"
+export PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests-sh/mock/crosvm" FAKE_ARGS="$T/args"
 # 本测试走真实守护进程路径，不要前台模式；看门狗拉长间隔以免测试中把进程拉起来
 unset XR_DAEMON_FOREGROUND
 export XR_WATCHDOG_INTERVAL=300

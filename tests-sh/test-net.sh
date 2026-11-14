@@ -9,7 +9,7 @@ echo '4321 (crosvm) S 1 1 1 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0 18446744
 fail=0; chk() { if eval "$1"; then :; else echo "FAIL: $1"; fail=1; fi; }
 trap 'rm -rf "$T"' EXIT
 echo 0 > "$T/proc/sys/net/ipv4/ip_forward"
-export PATH="$ROOT/tests/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests/mock/net" XR_PROC="$T/proc" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
+export PATH="$ROOT/tests-sh/mock/net:$PATH" MOCK XR_DATA="$T/data" MODDIR="$ROOT/module" XR_SYSBIN="$ROOT/tests-sh/mock/net" XR_PROC="$T/proc" XR_PROC_BASE="$T/proc" XR_SYSNET="$T/sysnet"
 CONF="$XR_DATA/config/config.conf"; RUN="$XR_DATA/run"; LOG="$XR_DATA/log/module.log"; mkdir -p "$XR_DATA/config" "$RUN" "$XR_DATA/log"
 cp "$ROOT/module/config/config.conf" "$CONF"
 NET="sh $ROOT/module/scripts/net.sh"

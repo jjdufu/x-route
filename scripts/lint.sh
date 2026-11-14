@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 list_sh() {
-  for d in module scripts openwrt/files tests; do
+  for d in module scripts openwrt/files tests-sh; do
     [ -d "$d" ] || continue
     find "$d" -type f \( -name '*.sh' -o -path '*/init.d/*' -o -path '*/uci-defaults/*' -o -path '*/libexec/*' -o -path 'module/scripts/xr' \)
   done | sort
@@ -57,7 +57,7 @@ if [ -f Cargo.toml ]; then
   trap 'rm -f module/bin/xr' EXIT
 fi
 
-for t in tests/test-*.sh; do
+for t in tests-sh/test-*.sh; do
   [ -f "$t" ] || continue
   for s in sh mksh "busybox sh"; do
     command -v "${s%% *}" >/dev/null 2>&1 || continue

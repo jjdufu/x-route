@@ -96,7 +96,7 @@ n="$(cat "$MOCK/dumpsys.n" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$MOCK/dum
 exit 0
 D
 chmod +x "$T/bin/dumpsys"
-XR_SYSBIN="$ROOT/tests/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
+XR_SYSBIN="$ROOT/tests-sh/mock/net" MODDIR="$T/live" sh "$T/live/uninstall.sh" >/dev/null 2>&1
 for c in "ip6tables -X XR_FWD6" "ip6tables -t nat -X XR_NAT6" "iptables -X XR_FWD" "ip -6 route flush table 233" "ip route flush table 233" "ip route flush table 97 dev xr0"; do
   chk 'grep -qx "$c" "$MOCK/calls"'
 done

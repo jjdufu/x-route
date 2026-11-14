@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016,SC2317,SC2034
 # XRouter: 端到端冒烟测试（手动运行）：vm.sh 生成的参数 -> QEMU 启动 dist/openwrt 下的真实 Image 与 rootfs，
 # 检查 XR_READY、稳定期、last_good、VM 内网络/防火墙/软件包，再停止。
-# 用法：sh tests/e2e-qemu.sh（需要 qemu-system-aarch64，先运行 build-kernel.sh / build-rootfs.sh）
+# 用法：sh tests-sh/e2e-qemu.sh（需要 qemu-system-aarch64，先运行 build-kernel.sh / build-rootfs.sh）
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d)"
@@ -11,7 +11,7 @@ mkdir -p "$T/bin" "$T/mod"; cp -a "$ROOT/module/." "$T/mod/"
 printf '#!/bin/sh\ncase "$1" in sys.boot_completed) echo 1;; sys.user.0.ce_available) echo true;; esac\n' > "$T/bin/getprop"; chmod +x "$T/bin/getprop"
 printf '#!/bin/sh\necho "net $*" >> "%s/net.calls"\n' "$T" > "$T/mod/scripts/net.sh"
 [ -f "$T/mod/scripts/share.sh" ] || printf "share_prepare() { share_spec=; share_mode=off; share_wrap=; }\n" > "$T/mod/scripts/share.sh"
-export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests/mock/crosvm-qemu"
+export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests-sh/mock/crosvm-qemu"
 trap 'sh "$T/mod/scripts/vm.sh" stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 . "$T/mod/scripts/common.sh"; ensure_dirs; cp "$T/mod/config/config.conf" "$CONF"
 sed -i "s/^STABLE_SEC=.*/STABLE_SEC=\"${E2E_STABLE:-60}\"/" "$CONF"
@@ -32,7 +32,7 @@ chk 'echo "$out" | grep -qx FW4_OK && echo "$out" | grep -qx zh_cn && echo "$out
 chk 'echo "$out" | grep -qx XRouter && echo "$out" | grep -qx "AMD Ryzen Threadripper PRO 9995WX"'
 chk 'echo "$out" | grep -q /usr/sbin/openvpn && echo "$out" | grep -q /usr/bin/apk'
 chk '[ "$(echo "$out" | grep -E "^[0-9]+$" | sed -n 1p)" -gt 900 ]'
-caps="$($S sh -s < "$ROOT/tests/vm-caps.sh" 2>&1)"
+caps="$($S sh -s < "$ROOT/tests-sh/vm-caps.sh" 2>&1)"
 echo "$caps" | sed 's/^/  caps> /'
 chk 'echo "$caps" | grep -qx CAPS_OK'
 chk 'echo "$out" | grep -qx REJECT && echo "$out" | grep -qx lan && echo "$out" | grep -qx vpn'
