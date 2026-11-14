@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use crate::cli::guest_stats;
 use crate::cli::vpn_cfg::{vpn_local_routes, vpn_profiles, vpn_rejected, vpn_tunnels};
 use crate::config::{Config, KEYS, RESTART_KEYS};
 use crate::env::Env;
@@ -23,7 +24,7 @@ pub(crate) fn needs_restart(env: &Env, key: &str) -> bool {
 }
 
 /// 手机侧网络状态：有 `scripts/net.sh` 时取它的 `status` 输出，否则用内置实现；解析失败时为 `{"mode":"down"}`。
-fn net_section(env: &Env) -> Value {
+pub(crate) fn net_section(env: &Env) -> Value {
     let net_sh = env.moddir.join("scripts/net.sh");
     let net_raw = if net_sh.is_file() {
         Command::new("sh")
@@ -38,6 +39,12 @@ fn net_section(env: &Env) -> Value {
         net::status_json(env)
     };
     serde_json::from_str(net_raw.trim()).unwrap_or_else(|_| json!({"mode": "down"}))
+}
+
+/// 手机侧网络状态中被接管的热点接口名，没有时为空串。
+#[must_use]
+pub(crate) fn hotspot_if(net_val: &Value) -> &str {
+    net_val.get("hotspot").and_then(Value::as_str).unwrap_or("")
 }
 
 /// 共享目录状态：开关、当前挂载方式（虚拟机未运行或未挂载时为 `off`）、路径、存储是否已解锁、是否支持读写挂载。
@@ -202,7 +209,7 @@ fn traffic_section(env: &Env) -> Value {
     })
 }
 
-/// `xr status-json` 的 JSON 文本：虚拟机、手机侧网络（`scripts/net.sh status` 或内置实现）、客机 `IPv6`、`OpenClash`、`VPN`、共享目录与当前配置。
+/// `xr status-json` 的 JSON 文本：虚拟机、手机侧网络（`scripts/net.sh status` 或内置实现）、客机 `IPv6`、`OpenClash`、`VPN`、共享目录、当前配置、流量与客机负载设备（`guest_stats`）。
 #[must_use]
 pub(crate) fn json(env: &Env) -> String {
     let cfg = Config::load(env);
@@ -213,6 +220,7 @@ pub(crate) fn json(env: &Env) -> String {
     let share = share_section(env, &cfg, alive);
     let cfg_map = config_section(&cfg);
     let vpn = vpn_section(env, alive);
+    let guest = guest_stats::section(env, alive, hotspot_if(&net_val));
     json!({
         "vm": vm_val,
         "net": net_val,
@@ -222,6 +230,7 @@ pub(crate) fn json(env: &Env) -> String {
         "share": share,
         "config": cfg_map,
         "traffic": traffic_section(env),
+        "guest_stats": guest,
     })
     .to_string()
 }

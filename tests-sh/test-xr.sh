@@ -161,6 +161,25 @@ chk 'echo "$out" | J "d[\"ok\"] and d[\"phone\"][\"wan\"]=={\"up\":1,\"down\":2}
 wait
 rm -f "$RUN/guest/host/acct.cmd" "$RUN/guest/guest/acct"
 out="$($XR traffic-split 1)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "未响应"'
+# OpenWrt 负载与设备（guest_stats）：旧系统盘不发请求；有新鲜数据不等待并发出下一次请求；无数据约 2.5 s 后超时
+ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+rm -f "$RUN/guest/guest/stats.cap" "$RUN/guest/guest/stats" "$RUN/guest/host/stats.cmd"
+chk '$XR status-json | J "d[\"guest_stats\"]=={\"ok\":False,\"reason\":\"unsupported\"}" | grep -qx True && [ ! -e "$RUN/guest/host/stats.cmd" ]'
+echo 1 > "$RUN/guest/guest/stats.cap"
+printf 'ts=1\ncpu_pct=12\nmem_pct=43\nload1=0.15\ndev_hotspot=2\nhs=on\n' > "$RUN/guest/guest/stats"
+t0="$(ms)"; s="$($XR status-json)"; t1="$(ms)"
+chk 'echo "$s" | J "d[\"guest_stats\"]==dict(ok=True, age_s=d[\"guest_stats\"][\"age_s\"], cpu_pct=12, mem_pct=43, load1=\"0.15\", devices=dict(total=3, phone=1, hotspot=2, source=\"openwrt\")) and d[\"guest_stats\"][\"age_s\"] <= 15" | grep -qx True'
+chk '[ $((t1 - t0)) -lt 500 ] && [ -n "$(cat "$RUN/guest/host/stats.cmd")" ]'
+rm -f "$RUN/guest/guest/stats"
+t0="$(ms)"; s="$($XR status-json)"; t1="$(ms)"
+chk 'echo "$s" | J "d[\"guest_stats\"]=={\"ok\":False,\"reason\":\"timeout\"}" | grep -qx True && [ $((t1 - t0)) -ge 2400 ] && [ $((t1 - t0)) -lt 4000 ]'
+# xr guest-stats：回显本次请求的 ts 才算数
+prev_sc="$(cat "$RUN/guest/host/stats.cmd")"
+( i=0; while [ $i -lt 30 ]; do c="$(cat "$RUN/guest/host/stats.cmd" 2>/dev/null)"; if [ -n "$c" ] && [ "$c" != "$prev_sc" ]; then printf 'ts=%s\ncpu_pct=7\nhs=off\n' "$c" > "$RUN/guest/guest/stats"; break; fi; sleep 0.1; i=$((i+1)); done ) &
+out="$($XR guest-stats)"; rc=$?
+chk '[ $rc -eq 0 ] && echo "$out" | J "d[\"ok\"] and d[\"cpu_pct\"]==7 and d[\"mem_pct\"] is None and d[\"age_s\"]==0" | grep -qx True'
+wait
+rm -f "$RUN/guest/guest/stats.cap" "$RUN/guest/guest/stats" "$RUN/guest/host/stats.cmd"
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null'; i=0; while [ "$(grep -c "net sync" "$T/net.calls")" -lt 2 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done
 chk '[ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'   # 后台执行，稍等
@@ -277,6 +296,7 @@ D "set VM_MEM_MB" set VM_MEM_MB 768
 D traffic traffic
 D traffic-reset traffic-reset
 D traffic-split traffic-split
+D "guest-stats 0" guest-stats 0
 D "ipv6(no arg)" ipv6
 D ack-trip ack-trip
 D "expand(no arg)" expand

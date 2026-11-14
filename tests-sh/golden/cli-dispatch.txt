@@ -10,6 +10,7 @@ set VM_MEM_MB -> 0 -> True -> quiet
 traffic -> 0 -> - -> quiet
 traffic-reset -> 0 -> True -> quiet
 traffic-split -> 1 -> False -> quiet
+guest-stats 0 -> 1 -> False -> quiet
 ipv6(no arg) -> 2 -> False -> quiet
 ack-trip -> 0 -> - -> quiet
 expand(no arg) -> 2 -> - -> quiet

@@ -2,6 +2,8 @@
 
 /// `xr boot-tail <MOFF> <COFF>`：增量读取开机日志与串口日志，供界面显示启动进度。
 pub(crate) mod boot_tail;
+/// 状态页「负载」「设备」：按需请客机采集 `OpenWrt` 负载与在线设备数。
+pub(crate) mod guest_stats;
 /// `xr status-json` 与 `xr status-line`：汇总服务状态。
 pub(crate) mod status;
 /// `VPN` 配置管理：导入、启用停用、删除，以及流量分流与目录浏览。
@@ -287,7 +289,7 @@ const OK_JSON: &str = "{\"ok\":true}";
 const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
 
 /// 未知子命令时打印的用法。
-const USAGE: &str = "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm";
+const USAGE: &str = "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|guest-stats [WAIT]|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm";
 
 /// 取 `rest` 的第 `idx` 个参数，没有时用 `default`。
 fn arg<'a>(rest: &'a [String], idx: usize, default: &'a str) -> &'a str {
@@ -319,7 +321,9 @@ pub fn run(args: &[String]) -> i32 {
         "start" | "stop" | "start-bg" | "stop-bg" | "running" => cmd_vm(&env, cmd),
         "ack-trip" | "expand" | "reset-disk" | "sync" => cmd_vm_misc(&env, cmd, rest),
         "traffic" | "traffic-reset" | "traffic-split" => cmd_traffic(&env, cmd, rest),
-        "status-json" | "status-line" | "get" | "ipv6" => cmd_status(&env, cmd, rest),
+        "status-json" | "status-line" | "get" | "ipv6" | "guest-stats" => {
+            cmd_status(&env, cmd, rest)
+        }
         "set" => cmd_set(&env, rest),
         "vpn-import" | "vpn-enable" | "vpn-disable" | "vpn-delete" => cmd_vpn(&env, cmd, rest),
         "project" | "luci" | "ls" | "log-export" | "diag-export" | "uninstall-now" => {
@@ -403,11 +407,18 @@ fn traffic_reset(env: &Env) -> i32 {
     emit(env, OK_JSON, 0)
 }
 
-/// 状态与配置读取类子命令：`status-json`、`status-line`、`get`、`ipv6`。
+/// 状态与配置读取类子命令：`status-json`、`status-line`、`get`、`ipv6`、`guest-stats`。
 fn cmd_status(env: &Env, cmd: &str, rest: &[String]) -> i32 {
     match cmd {
         "status-json" => emit(env, &status::json(env), 0),
         "status-line" => emit(env, &status::line(env), 0),
+        "guest-stats" => {
+            let wait = arg(rest, 0, "3").trim().parse::<u64>().unwrap_or(3);
+            let net_val = status::net_section(env);
+            let (rc, value) =
+                guest_stats::probe(env, vm::running(env), status::hotspot_if(&net_val), wait);
+            emit(env, &value.to_string(), rc)
+        }
         "get" => {
             let cfg = Config::load(env);
             emit_lines(
