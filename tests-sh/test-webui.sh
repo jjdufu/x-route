@@ -48,7 +48,7 @@ const subs = new Set([
   ...ce.matchAll(/(?:xr|xrCmd)\("([\w-]+)"/g),
 ].map((m) => m[1]));
 for (const s of subs) if (!cliMod.includes(`"${s}" =>`) && !cliMod.includes(`cmd == "${s}"`)) fail(`xr 不支持子命令 ${s}`);
-for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "traffic-split", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "vpn-delete", "ls", "log-export", "diag-export", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci", "project", "clash-call", "clash-stream", "clash-ws-send", "clash-ws-close"]) {
+for (const s of ["status-json", "start-bg", "stop-bg", "traffic", "traffic-reset", "traffic-split", "set", "ipv6", "vpn-import", "vpn-enable", "vpn-disable", "vpn-delete", "ls", "log-export", "diag-export", "config-export", "config-import", "uninstall-now", "expand", "reset-disk", "ack-trip", "luci", "project", "clash-call", "clash-stream", "clash-ws-send", "clash-ws-close"]) {
   if (!subs.has(s)) fail(`WebUI 未使用 ${s}`);
 }
 
@@ -165,6 +165,18 @@ eq(L.homeLive({ traffic: { rate: null }, guest_stats: { ok: true, devices: {} } 
 eq(L.trafficFromStatus({ traffic: { source: "daemon", since: 9, total: { total: { up: 1, down: 2 } } } }), { total: { up: 1, down: 2 }, since: 9 }, "trafficFromStatus daemon");
 eq([L.trafficFromStatus({ traffic: { source: "none", total: null } }), L.trafficFromStatus({})], [null, null], "trafficFromStatus 回退");
 
+// 需求 9c：系统页「配置备份」分组在日志分组之后；导入先选 zip、再确认（含明文提示）、最后带 --restart；按钮随服务与系统盘能力禁用
+const sysHtml2 = html.slice(html.indexOf('id="page-system"'), html.indexOf('</main>'));
+for (const id of ["btn-cfg-export", "btn-cfg-import", "cfg-note"]) if (!sysHtml2.includes(`id="${id}"`)) fail(`系统页缺少 ${id}`);
+if (sysHtml2.indexOf('id="btn-cfg-export"') < sysHtml2.indexOf('id="btn-export"')) fail("配置备份应在日志分组之后");
+if (sysHtml2.indexOf('id="btn-cfg-export"') > sysHtml2.indexOf('about-group')) fail("配置备份应在关于分组之前");
+{ const f = main.slice(main.indexOf("async function importConfig"), main.indexOf("async function importConfig") + 1200);
+  const iB = f.indexOf('openBrowser({ mode: "zip"'), iC = f.indexOf("confirmDlg("), iX = f.indexOf('xr("config-import"');
+  if (iB < 0 || iC < 0 || iX < 0 || !(iB < iC && iC < iX) || !/明文/.test(f) || !/--restart/.test(f)) fail("导入配置应先选文件、再确认（含明文提示）、最后带 --restart 调用"); }
+if (!/mode === "dir" \? "dir" : mode/.test(fb) || !/mode !== "dir" \? MEDIA_ROOT \+ "\/Download"/.test(fb)) fail("文件浏览器应支持 zip 模式并从 Download 开始");
+if (!/function cfgState\(d\)/.test(main) || !/reason === "unsupported"\) return \{ ok: false, note: "当前系统盘不支持" \}/.test(main) || !/note: "服务未运行，需先启动"/.test(main)) fail("配置备份按钮应随服务状态与系统盘能力禁用");
+if (!/renderPower\(d\);\n  renderCfgButtons\(d\);/.test(main)) fail("render 应刷新配置备份按钮");
+
 // 日志统一：系统页「日志」分组按调试模式切换「日志导出 / 诊断导出」
 if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-kinds") || /xr\("log",|"log-clear"/.test(main)) fail("不应再有日志页与日志分类");
 if (!html.includes('<div class="group-title">日志</div>') || html.includes('<div class="group-title">调试</div>')) fail("分组应为「日志」");
@@ -176,9 +188,9 @@ eq(L.MODE_OPTS.map((o) => o.value), ["global", "bypass"], "运行模式取值");
 if (!/XR_EXPOSE="lan"/.test(fs.readFileSync(root + "/module/config/config.conf", "utf8"))) fail("管理访问默认应为内网");
 for (const k of L.SET_KEYS) if (!new RegExp(`\\b${k}\\b`).test(configRs)) fail(`SET_KEYS 含未知键 ${k}`);
 
-// 确认弹窗范围（含删除组网配置）
+// 确认弹窗范围（含删除组网配置、导入配置）
 const confirms = [...main.matchAll(/confirmDlg\([`"]([^`"]+)/g)].map((m) => m[1]);
-eq(confirms.sort(), ["切换为${label}", "停止服务", "删除配置 ${name}", "${label}改为 ${fmt(v)}", "清零流量统计", "重置系统盘", "立即卸载 XRouter"].sort(), "确认弹窗范围");
+eq(confirms.sort(), ["切换为${label}", "停止服务", "删除配置 ${name}", "${label}改为 ${fmt(v)}", "清零流量统计", "重置系统盘", "立即卸载 XRouter", "导入配置"].sort(), "确认弹窗范围");
 if (!main.includes('dialogResult($("dlg-expand"))')) fail("扩容需确认");
 
 // 纯函数测试

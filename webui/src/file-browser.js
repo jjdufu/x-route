@@ -1,5 +1,5 @@
 // XRouter WebUI：深色文件夹浏览（root 列目录，参考 bindhosts webui/utils/file_selector.js）
-// mode=dir：选择文件夹；mode=ovpn：只显示文件夹与 .ovpn / .conf 文件，点文件即选中
+// mode=dir：选择文件夹；mode=ovpn：只显示文件夹与 .ovpn / .conf 文件，点文件即选中；mode=zip：只显示文件夹与 .zip 文件（配置备份）
 import { ICONS } from "./icons.js";
 import { MEDIA_ROOT, toMediaPath, crumbs, parseLs } from "./logic.js";
 
@@ -19,7 +19,7 @@ function iconEl(name) {
 // 目录切换不做过渡：读到结果后一次性替换列表
 async function list(path) {
   const box = $("fb-list");
-  const r = await xr("ls", path, mode === "ovpn" ? "ovpn" : "dir");
+  const r = await xr("ls", path, mode === "dir" ? "dir" : mode);
   if (r.errno !== 0 && path !== MEDIA_ROOT) return list(MEDIA_ROOT);
   cur = path;
   const items = parseLs(r.stdout);
@@ -82,7 +82,7 @@ export async function openBrowser(opts) {
   xr = opts.xr; mode = opts.mode || "dir"; picked = null;
   $("fb-pick").hidden = mode !== "dir";
   $("dlg-files").returnValue = "";
-  const start = opts.start ? toMediaPath(opts.start) : (mode === "ovpn" ? MEDIA_ROOT + "/Download" : MEDIA_ROOT);
+  const start = opts.start ? toMediaPath(opts.start) : (mode !== "dir" ? MEDIA_ROOT + "/Download" : MEDIA_ROOT);
   await list(start);
   return new Promise((resolve) => { resolveFn = resolve; $("dlg-files").show(); });
 }

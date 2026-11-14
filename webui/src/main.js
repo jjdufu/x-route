@@ -456,6 +456,7 @@ function render(d) {
   }
 
   renderPower(d);
+  renderCfgButtons(d);
 
   const tripped = vm.tripped !== null && vm.tripped !== undefined;
   hide($("trip"), !tripped);
@@ -940,6 +941,43 @@ async function exportLogs() {
   snack(res && res.ok ? `已保存到 Download/${String(res.path).split("/").pop()}` : "导出失败", !(res && res.ok));
 }
 
+// ---- 配置备份（需求 9c）：服务运行且系统盘支持时可用；导入先选文件、再确认、最后带 --restart 调用 ----
+let cfgBusy = false;
+function cfgState(d) {
+  if (!(d && d.vm && d.vm.running)) return { ok: false, note: "服务未运行，需先启动" };
+  if (d.guest_stats && d.guest_stats.reason === "unsupported") return { ok: false, note: "当前系统盘不支持" };
+  return { ok: true, note: "明文 zip，保存在 Download" };
+}
+function renderCfgButtons(d) {
+  const s = cfgState(d);
+  $("btn-cfg-export").disabled = cfgBusy || !s.ok;
+  $("btn-cfg-import").disabled = cfgBusy || !s.ok;
+  txt($("cfg-note"), s.note);
+}
+async function exportConfig() {
+  if (cfgBusy) return;
+  if (!isKsuWebui()) { snack("预览：已保存到 Download/xrouter-config-20261114-135744.zip"); return; }
+  cfgBusy = true; renderCfgButtons(status);
+  snack("正在导出配置…");
+  const r = await xr("config-export"); const res = lastJson(r.stdout);
+  cfgBusy = false; renderCfgButtons(status);
+  snack(res && res.ok ? `已保存到 Download/${String(res.path).split("/").pop()}` : (res && res.error) || "导出失败", !(res && res.ok));
+}
+async function importConfig() {
+  if (cfgBusy) return;
+  if (!isKsuWebui()) { snack("预览：已导入，正在重启"); return; }
+  const path = await openBrowser({ mode: "zip", xr });
+  if (!path) return;
+  if (!await confirmDlg("导入配置", "将覆盖手机侧设置、VPN 配置和 OpenWrt 全部配置，并重启服务。备份文件为明文，含密码与密钥，请妥善保管。", "导入并重启", true)) return;
+  cfgBusy = true; renderCfgButtons(status); snack("正在导入配置…");
+  const r = await xr("config-import", path, "--restart"); const res = lastJson(r.stdout);
+  cfgBusy = false;
+  if (!(res && res.ok)) { renderCfgButtons(status); snack((res && res.error) || "导入失败", true); return; }
+  pending = "start"; pendingAt = Date.now(); renderPower(status || {}); schedule();
+  const sk = Array.isArray(res.skipped) ? res.skipped.map((x) => x.key) : [];
+  snack(sk.length ? `已导入，正在重启（跳过 ${sk.join("、")}）` : "已导入，正在重启");
+}
+
 // ---- M3 页面切换：底部导航栏 + 横向轻扫手势，180ms 空间过渡 ----
 const PAGE_MS = 180;
 const visiblePages = () => ($("nav-clash") && !$("nav-clash").hidden ? [0, 1, 2, 3] : [0, 1, 3]);
@@ -1129,6 +1167,8 @@ function bind() {
 
   $("sel-debug-hours").addEventListener("change", (e) => setKey("XR_DEBUG_HOURS", e.target.value));
   $("btn-export").addEventListener("click", exportLogs);
+  $("btn-cfg-export").addEventListener("click", exportConfig);
+  $("btn-cfg-import").addEventListener("click", importConfig);
   $("row-hs-net").addEventListener("click", editHotspotNet);
   $("dlg-hsnet-form").addEventListener("submit", submitHotspotNet);
   $("hsnet-cancel").addEventListener("click", () => $("dlg-hsnet").close("cancel"));
