@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -416,79 +416,83 @@ fn valid_profile_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
-/// `xr vpn-import <路径> [0|1]`：从内部存储导入一个 `OpenVPN` 文本配置（同名覆盖），按参数或原状态决定是否启用，运行中时同步给客机。
+/// 导入前检查：路径须在内部存储下且不含 `..`、文件存在、大小在 8 字节到 256 KiB 之间、内容只含可见 `ASCII` 与空白。
 ///
-/// 返回（退出码, JSON 结果）；路径不在内部存储下、文件不存在、大小不在 8 字节到 256 KiB 之间或不是文本时返回 1。
-#[must_use]
-pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
+/// # Errors
+///
+/// 不满足时返回给用户看的 JSON 错误应答。
+fn import_source(env: &Env, path_arg: &str) -> Result<PathBuf, &'static str> {
     let src_s = env.canon_share_path(path_arg);
     let media_s = env.media.to_string_lossy();
     if !src_s.starts_with(&format!("{media_s}/")) || src_s.contains("..") {
-        return (1, "{\"ok\":false,\"error\":\"路径无效\"}".to_owned());
+        return Err("{\"ok\":false,\"error\":\"路径无效\"}");
     }
-    let src = Path::new(&src_s);
+    let src = PathBuf::from(&src_s);
     if !src.is_file() {
-        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_owned());
+        return Err("{\"ok\":false,\"error\":\"文件不存在\"}");
     }
-    let sz = fs::metadata(src).map_or(0, |meta| meta.len());
+    let sz = fs::metadata(&src).map_or(0, |meta| meta.len());
     if !(8..=262_144).contains(&sz) {
-        return (1, "{\"ok\":false,\"error\":\"文件大小不符\"}".to_owned());
+        return Err("{\"ok\":false,\"error\":\"文件大小不符\"}");
     }
-    let Ok(bytes) = fs::read(src) else {
-        return (1, "{\"ok\":false,\"error\":\"文件不存在\"}".to_owned());
+    let Ok(bytes) = fs::read(&src) else {
+        return Err("{\"ok\":false,\"error\":\"文件不存在\"}");
     };
     if bytes
         .iter()
         .any(|&byte| !byte.is_ascii_graphic() && !byte.is_ascii_whitespace())
     {
-        return (1, "{\"ok\":false,\"error\":\"不是文本配置\"}".to_owned());
+        return Err("{\"ok\":false,\"error\":\"不是文本配置\"}");
     }
+    Ok(src)
+}
 
-    vpn_migrate_legacy(env);
-    let vpn_dir = env.vpn_dir();
-    fsx::mkdirs_logged(env, env.xr_data.join("config"));
-    fsx::mkdirs_logged(env, &vpn_dir);
-
-    let raw_bn = src
-        .file_stem()
-        .and_then(|ext_os| ext_os.to_str())
-        .unwrap_or("OpenVPN")
-        .replace(['"', '\\'], "");
-    let bn = if raw_bn.is_empty() {
-        "OpenVPN".to_owned()
-    } else {
-        raw_bn
-    };
-
-    let mut id = String::new();
-    if let Ok(rd) = fs::read_dir(&vpn_dir) {
+/// 导入配置的编号：已有同名（`.name` 与 `bn` 相同）配置时沿用其编号，否则由名字生成编号并在重名时追加 `_2`、`_3`…。
+fn import_id(vpn_dir: &Path, bn: &str) -> String {
+    if let Ok(rd) = fs::read_dir(vpn_dir) {
         for ent in rd.flatten() {
             let file_path = ent.path();
-            if file_path.extension().and_then(|raw_name| raw_name.to_str()) == Some("ovpn")
-                && let Some(eid) = file_path.file_stem().and_then(|os_str| os_str.to_str())
-            {
-                let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned();
-                if enm == bn {
-                    eid.clone_into(&mut id);
-                    break;
-                }
+            if file_path.extension().and_then(|raw_name| raw_name.to_str()) != Some("ovpn") {
+                continue;
+            }
+            let Some(eid) = file_path.file_stem().and_then(|os_str| os_str.to_str()) else {
+                continue;
+            };
+            let enm = fs::read_to_string(vpn_dir.join(format!("{eid}.name")))
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            if enm == bn {
+                return eid.to_owned();
             }
         }
     }
-    if id.is_empty() {
-        let base = vpn_slug(&bn);
-        let mut cand = base.clone();
-        let mut n = 2_u32;
-        while vpn_dir.join(format!("{cand}.ovpn")).exists() {
-            cand = format!("{base}_{n}");
-            n = n.saturating_add(1);
-        }
-        id = cand;
+    let base = vpn_slug(bn);
+    let mut cand = base.clone();
+    let mut n = 2_u32;
+    while vpn_dir.join(format!("{cand}.ovpn")).exists() {
+        cand = format!("{base}_{n}");
+        n = n.saturating_add(1);
     }
+    cand
+}
 
+/// 导入配置的落盘位置。
+#[derive(Debug, Clone, Copy)]
+struct ImportTarget<'tgt> {
+    /// 配置目录 `config/vpn/`。
+    vpn_dir: &'tgt Path,
+    /// 配置编号。
+    id: &'tgt str,
+    /// 显示名。
+    bn: &'tgt str,
+}
+
+/// 写入导入的配置（`.ovpn` 权限 600、`.name`、`.enabled`）并同步旧版镜像；`enable_flag` 为 `0` 时保留原启用状态，否则启用。
+///
+/// 返回是否启用。
+fn import_write(env: &Env, src: &Path, tgt: ImportTarget<'_>, enable_flag: &str) -> bool {
+    let ImportTarget { vpn_dir, id, bn } = tgt;
     let dst_ovpn = vpn_dir.join(format!("{id}.ovpn"));
     fsx::copy_logged(env, src, &dst_ovpn);
     #[cfg(unix)]
@@ -508,6 +512,41 @@ pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, 
         if en { "1\n" } else { "0\n" },
     );
     vpn_mirror_legacy(env);
+    en
+}
+
+/// `xr vpn-import <路径> [0|1]`：从内部存储导入一个 `OpenVPN` 文本配置（同名覆盖），按参数或原状态决定是否启用，运行中时同步给客机。
+///
+/// 返回（退出码, JSON 结果）；路径不在内部存储下、文件不存在、大小不在 8 字节到 256 KiB 之间或不是文本时返回 1。
+#[must_use]
+pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
+    let src = match import_source(env, path_arg) {
+        Ok(path) => path,
+        Err(msg) => return (1, msg.to_owned()),
+    };
+
+    vpn_migrate_legacy(env);
+    let vpn_dir = env.vpn_dir();
+    fsx::mkdirs_logged(env, env.xr_data.join("config"));
+    fsx::mkdirs_logged(env, &vpn_dir);
+
+    let raw_bn = src
+        .file_stem()
+        .and_then(|ext_os| ext_os.to_str())
+        .unwrap_or("OpenVPN")
+        .replace(['"', '\\'], "");
+    let bn = if raw_bn.is_empty() {
+        "OpenVPN".to_owned()
+    } else {
+        raw_bn
+    };
+    let id = import_id(&vpn_dir, &bn);
+    let tgt = ImportTarget {
+        vpn_dir: &vpn_dir,
+        id: &id,
+        bn: &bn,
+    };
+    let en = import_write(env, &src, tgt, enable_flag);
 
     if vm::running(env) {
         if vpn_sync_host(env).is_none() {
@@ -516,7 +555,7 @@ pub(crate) fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, 
         }
         if en {
             let host = env.run_dir().join("guest/host");
-            fsx::copy_logged(env, src, host.join("openvpn.ovpn"));
+            fsx::copy_logged(env, &src, host.join("openvpn.ovpn"));
             fsx::write_logged(env, host.join("openvpn.cmd"), vpn_next_cmd(env, "enable"));
         }
     }
