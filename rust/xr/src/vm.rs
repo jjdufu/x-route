@@ -938,6 +938,51 @@ pub(crate) struct StatusJson {
     pub(crate) error: String,
 }
 
+/// 运行中的状态文字：`run/state` 的内容，空时为 `booting`；未运行为 `stopped`。
+fn vm_state(env: &Env, running: bool) -> String {
+    if !running {
+        return "stopped".to_owned();
+    }
+    let state_text = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
+    let trimmed = state_text.trim();
+    if trimmed.is_empty() {
+        "booting".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// 就绪后的运行秒数：优先用就绪时刻 `ready_at`，取不到时用 `crosvm` 进程启动时间；都取不到为 0。
+fn vm_uptime(env: &Env, pid_s: &str) -> u64 {
+    let ready_at = fs::read_to_string(env.run_dir().join("ready_at"))
+        .ok()
+        .and_then(|uptime_text| uptime_text.trim().parse::<u64>().ok());
+    if let (Some(r0), Some(now)) = (ready_at, mono_now(env)) {
+        return now.saturating_sub(r0);
+    }
+    if let Ok(stat) = fs::read_to_string(env.proc_base.join(pid_s).join("stat"))
+        && let (Some(st), Some(now)) = (
+            stat.split_whitespace()
+                .nth(21)
+                .and_then(|content| content.parse::<u64>().ok()),
+            mono_now(env),
+        )
+    {
+        return now.saturating_sub(st.checked_div(100_u64).unwrap_or(0_u64));
+    }
+    0
+}
+
+/// 上次失败原因：`run/last_error` 的第一行，去掉引号与反斜杠。
+fn last_error(env: &Env) -> String {
+    fs::read_to_string(env.run_dir().join("last_error"))
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .replace(['"', '\\'], "")
+}
+
 /// 从运行状态文件汇总虚拟机状态。
 #[must_use]
 pub(crate) fn status(env: &Env) -> StatusJson {
@@ -945,43 +990,15 @@ pub(crate) fn status(env: &Env) -> StatusJson {
     let running = running(env);
     let mut pid_num = None;
     let mut uptime_s = 0_u64;
-    let state = if running {
-        let state_text = fs::read_to_string(run.join("state")).unwrap_or_default();
-        let trimmed = state_text.trim();
-        if trimmed.is_empty() {
-            "booting".to_owned()
-        } else {
-            trimmed.to_owned()
-        }
-    } else {
-        "stopped".to_owned()
-    };
+    let state = vm_state(env, running);
     if running {
         let pid_s = fs::read_to_string(run.join("crosvm.pid"))
             .unwrap_or_default()
             .trim()
             .to_owned();
-        if let Ok(pid_text) = pid_s.parse::<u64>() {
-            pid_num = Some(pid_text);
-        }
+        pid_num = pid_s.parse::<u64>().ok();
         if matches!(state.as_str(), "ready" | "stable") {
-            let ready_at = fs::read_to_string(run.join("ready_at"))
-                .ok()
-                .and_then(|uptime_text| uptime_text.trim().parse::<u64>().ok());
-            if let (Some(r0), Some(now)) = (ready_at, mono_now(env)) {
-                uptime_s = now.saturating_sub(r0);
-            } else if let Ok(stat) = fs::read_to_string(env.proc_base.join(&pid_s).join("stat"))
-                && let (Some(st), Some(now)) = (
-                    stat.split_whitespace()
-                        .nth(21)
-                        .and_then(|content| content.parse::<u64>().ok()),
-                    mono_now(env),
-                )
-            {
-                uptime_s = now.saturating_sub(st.checked_div(100_u64).unwrap_or(0_u64));
-            } else {
-                // 取不到就绪时刻也读不到进程启动时间：uptime_s 保持 0
-            }
+            uptime_s = vm_uptime(env, &pid_s);
         }
     }
     let tripped = fs::read_to_string(env.tripped_file())
@@ -994,13 +1011,6 @@ pub(crate) fn status(env: &Env) -> StatusJson {
         "null" => None,
         other => Some(other.to_owned()),
     };
-    let error = fs::read_to_string(run.join("last_error"))
-        .unwrap_or_default()
-        .lines()
-        .next()
-        .unwrap_or("")
-        .replace(['"', '\\'], "");
-
     StatusJson {
         running,
         pid: pid_num,
@@ -1009,7 +1019,7 @@ pub(crate) fn status(env: &Env) -> StatusJson {
         tripped,
         last_good_match: lg,
         ready_channel: ch,
-        error,
+        error: last_error(env),
     }
 }
 
