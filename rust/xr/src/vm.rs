@@ -5,8 +5,8 @@ pub(crate) mod share;
 
 use std::fs::{self, OpenOptions};
 use std::ops::ControlFlow;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -66,7 +66,7 @@ pub(crate) fn boot_progress(env: &Env, secs: u64) {
 }
 
 /// 在后台线程里回收子进程（避免僵尸）；退出状态无人需要，等待本身失败时计数。
-pub(crate) fn reap_in_background(mut child: std::process::Child) {
+pub(crate) fn reap_in_background(mut child: Child) {
     // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
     drop(thread::spawn(move || {
         if child.wait().is_err() {
@@ -376,13 +376,24 @@ pub(crate) fn vpn_boot_prepare(env: &Env) {
     }
 }
 
-/// `xr start` 的实际执行：检查熔断与镜像、准备共享目录与系统盘、启动 `crosvm`、拉起网络与保险丝看守；返回进程退出码。
-#[must_use]
-pub(crate) fn start_exec(env: &Env) -> i32 {
-    let cfg = Config::load(env);
+/// 启动所需的内核与系统盘镜像路径。
+#[derive(Debug)]
+struct Images {
+    /// 内核镜像 `Image`。
+    image: PathBuf,
+    /// 系统盘 `rootfs` 镜像。
+    rootfs: PathBuf,
+}
+
+/// 启动前检查：已在运行时返回 `Err(0)`；清理上次的停机标记并记准备日志；有未确认熔断或缺少 `crosvm`/镜像时返回 `Err(1)`。
+///
+/// # Errors
+///
+/// 不需要或不能继续启动时返回应使用的退出码。
+fn preflight(env: &Env, cfg: &Config) -> Result<Images, i32> {
     if running(env) {
         log::info(env, "vm", "已在运行");
-        return 0;
+        return Err(0);
     }
     let run = env.run_dir();
     if !env.boot_log().is_file() {
@@ -391,30 +402,31 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
     for marker in ["teardown.last", "shutdown", "shutdown.noted", "stopping"] {
         fsx::remove_logged(env, run.join(marker));
     }
-    let cpus = cfg.vm_cpus();
-    let mem = cfg.vm_mem_mb();
-    let disk_rw = cfg.vm_disk_rw();
-    let disk_lbl = if disk_rw { "读写" } else { "只读" };
+    let disk_lbl = if cfg.vm_disk_rw() { "读写" } else { "只读" };
     blog(
         env,
         "vm",
-        &format!("准备启动：CPU {cpus} 核 · 内存 {mem}MB · 系统盘 {disk_lbl}"),
+        &format!(
+            "准备启动：CPU {} 核 · 内存 {}MB · 系统盘 {disk_lbl}",
+            cfg.vm_cpus(),
+            cfg.vm_mem_mb()
+        ),
     );
     fsx::remove_logged(env, run.join("last_error"));
     if env.tripped_file().is_file() {
         log::err(env, "vm", "熔断未确认（xr ack-trip）");
-        return 1;
+        return Err(1);
     }
-    let image_path = env.img_dir().join("Image");
+    let image = env.img_dir().join("Image");
     let rootfs = env.rootfs_img();
-    if !crate::env::is_executable(&env.crosvm) || !image_path.is_file() || !rootfs.is_file() {
+    if !crate::env::is_executable(&env.crosvm) || !image.is_file() || !rootfs.is_file() {
         fail(env, "缺少 crosvm 或镜像", "缺少虚拟化组件或系统镜像");
-        return 1;
+        return Err(1);
     }
     if !ce_ready() {
         log::info(env, "vm", "警告：手机未解锁（CE 不可用）");
     }
-    let img_mb = fs::metadata(&image_path).map_or(0, |img_meta| {
+    let img_mb = fs::metadata(&image).map_or(0, |img_meta| {
         img_meta.len().checked_div(1_048_576_u64).unwrap_or(0_u64)
     });
     let rfs_mb = fs::metadata(&rootfs).map_or(0, |meta| {
@@ -425,7 +437,11 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
         "vm",
         &format!("内核 {img_mb}MB · 系统盘 {rfs_mb}MB · crosvm 就绪"),
     );
+    Ok(Images { image, rootfs })
+}
 
+/// 建好控制通道目录 `run/guest/{host,guest}`（权限 700）并删除上次运行留下的控制与状态文件；返回 `host` 目录。
+fn prepare_ctl_dirs(env: &Env, run: &Path) -> PathBuf {
     let host_dir = run.join("guest/host");
     let guest_dir = run.join("guest/guest");
     fsx::mkdirs_logged(env, &host_dir);
@@ -448,106 +464,96 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
     ] {
         fsx::remove_logged(env, run.join("guest").join(file_name));
     }
+    host_dir
+}
 
-    let mut net_args: Vec<String> = Vec::new();
-    let vm_net = cfg.vm_net();
-    if vm_net {
-        blog(
-            env,
-            "net",
-            "创建 xr0 / xr1、登记 netd 本地网络、建立转发规则",
-        );
-        if run_net_hook(env, "up") != 0_i32 {
-            fail(env, "net up 失败", "网络初始化失败");
-            return 1;
-        }
-        let up_if = fs::read_to_string(run.join("net.up_if"))
-            .ok()
-            .map(|raw| raw.trim().to_owned())
-            .filter(|text| !text.is_empty())
-            .unwrap_or_else(|| "无".to_owned());
-        let mode = fs::read_to_string(run.join("net.mode"))
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        blog(
-            env,
-            "net",
-            &format!("手机侧网络就绪：上游 {up_if} · 模式 {mode}"),
-        );
-        net_args.push("--net".to_owned());
-        net_args.push(format!("tap-name=xr0,mac={}", cfg.vm_mac()));
-        if env.sysnet.join("xr1").is_dir() {
-            let mac1 = hs_mac(cfg.vm_mac()).unwrap_or_else(|| "52:54:00:1d:e9:ff".to_owned());
-            net_args.push("--net".to_owned());
-            net_args.push(format!("tap-name=xr1,mac={mac1}"));
-        }
+/// 开启组网（`VM_NET`）时拉起手机侧网络并返回 `crosvm` 的 `--net` 参数（`xr0`，有热点口 `xr1` 时再加一组）；未开启时为空。
+///
+/// # Errors
+///
+/// 手机侧网络初始化失败时记失败原因并返回退出码 1。
+fn net_args(env: &Env, cfg: &Config) -> Result<Vec<String>, i32> {
+    let mut args: Vec<String> = Vec::new();
+    if !cfg.vm_net() {
+        return Ok(args);
     }
-
-    let (blk, rootmode) = if disk_rw {
-        (format!("{},lock=false,root=true", rootfs.display()), "rw")
-    } else {
-        (
-            format!("{},lock=false,root=true,ro=true", rootfs.display()),
-            "ro",
-        )
-    };
-
-    let share = share::prepare(env, &cfg);
+    let run = env.run_dir();
     blog(
         env,
-        "vm",
-        &format!("共享目录：{} · 控制通道 virtiofs", share.mode),
+        "net",
+        "创建 xr0 / xr1、登记 netd 本地网络、建立转发规则",
     );
-    let ctl_spec = format!(
-        "{}:xrctl:type=fs:cache=auto:timeout=0",
-        run.join("guest").display()
-    );
-    vpn_boot_prepare(env);
-
-    let boot_ts = unix_now();
-    fsx::write_logged(env, host_dir.join("time"), format!("{boot_ts}\n"));
-    let dns_csv = cfg.dns().split_whitespace().collect::<Vec<_>>().join(",");
-    let params = format!(
-        "root=/dev/vda {rootmode} rootwait console=ttyS0,115200 earlycon panic=5 xr.ip={}.254/24 xr.gw={}.1 xr.dns={dns_csv} xr.ip6={}::254/64 xr.gw6={}::1 xr.share={} xr.time={boot_ts}",
-        cfg.net_prefix(),
-        cfg.net_prefix(),
-        crate::env::XR_NET6,
-        crate::env::XR_NET6,
-        share.mode
-    );
-
-    fsx::write_logged(env, env.console_log(), "");
-    fsx::write_logged(env, env.ctl_log(), "");
-    let sock = run.join("crosvm.sock");
-    fsx::remove_logged(env, &sock);
-    fsx::remove_logged(env, run.join("state"));
-    fsx::remove_logged(env, run.join("ready_at"));
-
-    let swiotlb = cfg.vm_swiotlb_mb();
-    dlog(
-        env,
-        &cfg,
-        "vm",
-        &format!(
-            "启动参数：cpus={cpus} mem={mem} swiotlb={swiotlb} net={} disk={rootmode} share={} params={params}",
-            if net_args.is_empty() {
-                "无".to_owned()
-            } else {
-                net_args.join(" ")
-            },
-            share.mode
-        ),
-    );
-    fuse_arm(env);
-    crate::clash::start_clash_mux(env);
-    blog(env, "vm", "熔断已布防，启动 crosvm（gunyah）");
-    if cfg.vm_wakelock() {
-        wakelock_on(env);
+    if run_net_hook(env, "up") != 0_i32 {
+        fail(env, "net up 失败", "网络初始化失败");
+        return Err(1);
     }
+    let up_if = fs::read_to_string(run.join("net.up_if"))
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "无".to_owned());
+    let mode = fs::read_to_string(run.join("net.mode"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    blog(
+        env,
+        "net",
+        &format!("手机侧网络就绪：上游 {up_if} · 模式 {mode}"),
+    );
+    args.push("--net".to_owned());
+    args.push(format!("tap-name=xr0,mac={}", cfg.vm_mac()));
+    if env.sysnet.join("xr1").is_dir() {
+        let mac1 = hs_mac(cfg.vm_mac()).unwrap_or_else(|| "52:54:00:1d:e9:ff".to_owned());
+        args.push("--net".to_owned());
+        args.push(format!("tap-name=xr1,mac={mac1}"));
+    }
+    Ok(args)
+}
 
+/// 内核命令行：根设备与读写方式、串口、客机地址/网关/`DNS`（`IPv4` 与 `IPv6`）、共享方式与启动时刻。
+fn kernel_params(cfg: &Config, rootmode: &str, share_mode: &str, boot_ts: u64) -> String {
+    let dns_csv = cfg.dns().split_whitespace().collect::<Vec<_>>().join(",");
+    format!(
+        "root=/dev/vda {rootmode} rootwait console=ttyS0,115200 earlycon panic=5 xr.ip={}.254/24 xr.gw={}.1 xr.dns={dns_csv} xr.ip6={}::254/64 xr.gw6={}::1 xr.share={share_mode} xr.time={boot_ts}",
+        cfg.net_prefix(),
+        cfg.net_prefix(),
+        crate::env::XR_NET6,
+        crate::env::XR_NET6,
+    )
+}
+
+/// 拼装 `crosvm` 命令行所需的全部取值。
+#[derive(Debug)]
+struct StartPlan {
+    /// 虚拟 `CPU` 数。
+    cpus: u32,
+    /// 内存（`MB`）。
+    mem: u32,
+    /// `swiotlb` 大小（`MB`）。
+    swiotlb: u32,
+    /// `--net` 参数。
+    net_args: Vec<String>,
+    /// `--block` 的系统盘描述。
+    blk: String,
+    /// 共享目录需要的前置包装参数。
+    wrap: Vec<String>,
+    /// 共享目录的 `--shared-dir` 描述，空表示不共享。
+    shared_dir: String,
+    /// 控制通道的 `--shared-dir` 描述。
+    ctl_spec: String,
+    /// 内核命令行。
+    params: String,
+    /// 内核镜像。
+    image: PathBuf,
+    /// `crosvm` 控制套接字。
+    sock: PathBuf,
+}
+
+/// 经 `xr internal exec-crosvm` 跳板启动 `crosvm` 的完整参数。
+fn crosvm_args(env: &Env, plan: StartPlan) -> Vec<String> {
     let mut tramp_args: Vec<String> = vec!["internal".to_owned(), "exec-crosvm".to_owned()];
-    tramp_args.extend(share.wrap);
+    tramp_args.extend(plan.wrap);
     tramp_args.push(env.crosvm.to_string_lossy().into_owned());
     tramp_args.extend([
         "--log-level=info".to_owned(),
@@ -558,16 +564,16 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
         "--disable-sandbox".to_owned(),
         "--no-balloon".to_owned(),
         "--swiotlb".to_owned(),
-        swiotlb.to_string(),
+        plan.swiotlb.to_string(),
         "--cpus".to_owned(),
-        cpus.to_string(),
+        plan.cpus.to_string(),
         "--mem".to_owned(),
-        mem.to_string(),
+        plan.mem.to_string(),
     ]);
-    tramp_args.extend(net_args);
+    tramp_args.extend(plan.net_args);
     tramp_args.extend([
         "--block".to_owned(),
-        blk,
+        plan.blk,
         "--serial".to_owned(),
         format!(
             "type=file,path={},hardware=serial,num=1,console=true,earlycon=true",
@@ -581,23 +587,31 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
         "--serial".to_owned(),
         format!(
             "type=unix-stream,hardware=virtio-console,num=2,path={},input-unix-stream",
-            run.join("clash-ctl.sock").display()
+            env.run_dir().join("clash-ctl.sock").display()
         ),
         "--socket".to_owned(),
-        sock.to_string_lossy().into_owned(),
+        plan.sock.to_string_lossy().into_owned(),
         "--shared-dir".to_owned(),
-        ctl_spec,
+        plan.ctl_spec,
     ]);
-    if !share.shared_dir.is_empty() {
+    if !plan.shared_dir.is_empty() {
         tramp_args.push("--shared-dir".to_owned());
-        tramp_args.push(share.shared_dir);
+        tramp_args.push(plan.shared_dir);
     }
     tramp_args.extend([
         "--params".to_owned(),
-        params,
-        image_path.to_string_lossy().into_owned(),
+        plan.params,
+        plan.image.to_string_lossy().into_owned(),
     ]);
+    tramp_args
+}
 
+/// 在 `vmm.log` 写入本次运行标记，并以它为标准输出与错误输出拉起跳板进程（打不开日志时输出丢弃）。
+///
+/// # Errors
+///
+/// 进程无法拉起时返回对应错误。
+fn spawn_crosvm(env: &Env, tramp_args: &[String], boot_ts: u64) -> std::io::Result<Child> {
     let vmm_log = env.vmm_log();
     if let Some(file_path) = vmm_log.parent() {
         fsx::mkdirs_logged(env, file_path);
@@ -615,10 +629,10 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
     {
         fsx::record_failure(env, "write", &vmm_log, &err);
     }
-    let child = out_f.map_or_else(
+    out_f.map_or_else(
         |_| {
             Command::new(env.self_exe())
-                .args(&tramp_args)
+                .args(tramp_args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -632,24 +646,49 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
                 .open(&vmm_log)
                 .map_or_else(|_| Stdio::null(), Stdio::from);
             Command::new(env.self_exe())
-                .args(&tramp_args)
+                .args(tramp_args)
                 .stdin(Stdio::null())
                 .stdout(out_std)
                 .stderr(err_std)
                 .spawn()
         },
-    );
+    )
+}
 
-    let Ok(mut ch) = child else {
-        fail(env, "无法拉起 crosvm", "无法启动");
-        fsx::remove_logged(env, env.fuse_file());
-        crate::clash::stop_clash_mux(env);
-        wakelock_off(env);
-        if vm_net {
-            note_rc(env, "run_net_hook", run_net_hook(env, "down"));
-        }
-        return 1;
-    };
+/// 清空串口与控制通道日志，删除上次的控制套接字、状态与就绪时刻；返回控制套接字路径。
+fn reset_boot_files(env: &Env, run: &Path) -> PathBuf {
+    fsx::write_logged(env, env.console_log(), "");
+    fsx::write_logged(env, env.ctl_log(), "");
+    let sock = run.join("crosvm.sock");
+    fsx::remove_logged(env, &sock);
+    fsx::remove_logged(env, run.join("state"));
+    fsx::remove_logged(env, run.join("ready_at"));
+    sock
+}
+
+/// 拉起 `crosvm` 前布防保险丝、启动 `OpenClash` 复用通道，按配置持唤醒锁。
+fn arm_start(env: &Env, cfg: &Config) {
+    fuse_arm(env);
+    crate::clash::start_clash_mux(env);
+    blog(env, "vm", "熔断已布防，启动 crosvm（gunyah）");
+    if cfg.vm_wakelock() {
+        wakelock_on(env);
+    }
+}
+
+/// 启动失败后的回退：停 `OpenClash` 复用通道、释放唤醒锁，开启组网时撤销手机侧网络。
+fn rollback_start(env: &Env, vm_net: bool) {
+    crate::clash::stop_clash_mux(env);
+    wakelock_off(env);
+    if vm_net {
+        note_rc(env, "run_net_hook", run_net_hook(env, "down"));
+    }
+}
+
+/// 拉起之后：记 `crosvm.pid`，分离线程等待其退出（守护进程内通知守护进程），2 秒后确认仍在运行；
+/// 立即退出时回退并返回 `None`，否则拉起保险丝看守、记共享方式、逃出应用 `cgroup` 并返回 `crosvm` 的进程号。
+fn after_spawn(env: &Env, mut ch: Child, vm_net: bool, share_mode: &str) -> Option<String> {
+    let run = env.run_dir();
     let pid_str = ch.id().to_string();
     fsx::write_logged(env, run.join("crosvm.pid"), format!("{pid_str}\n"));
     let notify_daemon = env.role.is_daemon().then(|| std::process::id().to_string());
@@ -669,12 +708,8 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
         fail(env, "crosvm 立即退出，详见 vmm.log", "无法启动");
         fsx::remove_logged(env, env.fuse_file());
         fsx::remove_logged(env, run.join("crosvm.pid"));
-        crate::clash::stop_clash_mux(env);
-        wakelock_off(env);
-        if vm_net {
-            note_rc(env, "run_net_hook", run_net_hook(env, "down"));
-        }
-        return 1;
+        rollback_start(env, vm_net);
+        return None;
     }
 
     if let Ok(fw) = spawn::self_detached(env, &["internal", "fuse-watch"]) {
@@ -683,15 +718,134 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
             reap_in_background(fw);
         }
     }
-    fsx::write_logged(env, run.join("share.mode"), format!("{}\n", share.mode));
+    fsx::write_logged(env, run.join("share.mode"), format!("{share_mode}\n"));
     crate::daemon::keepalive::cgroup_escape_tree(env, std::process::id());
+    Some(pid_str)
+}
+
+/// 系统盘的 `--block` 描述与内核命令行里的读写方式（`rw`/`ro`）。
+fn disk_block(rootfs: &Path, disk_rw: bool) -> (String, &'static str) {
+    if disk_rw {
+        (format!("{},lock=false,root=true", rootfs.display()), "rw")
+    } else {
+        (
+            format!("{},lock=false,root=true,ro=true", rootfs.display()),
+            "ro",
+        )
+    }
+}
+
+/// 调试日志记一行启动参数：`CPU`、内存、`swiotlb`、网络、系统盘读写方式、共享方式与内核命令行。
+fn log_launch(env: &Env, cfg: &Config, plan: &StartPlan, rootmode: &str, share_mode: &str) {
+    let net_desc = if plan.net_args.is_empty() {
+        "无".to_owned()
+    } else {
+        plan.net_args.join(" ")
+    };
+    dlog(
+        env,
+        cfg,
+        "vm",
+        &format!(
+            "启动参数：cpus={} mem={} swiotlb={} net={net_desc} disk={rootmode} share={share_mode} params={}",
+            plan.cpus, plan.mem, plan.swiotlb, plan.params
+        ),
+    );
+}
+
+/// 一次启动的参数与共享方式、启动时刻。
+#[derive(Debug)]
+struct Launch {
+    /// `crosvm` 命令行取值。
+    plan: StartPlan,
+    /// 共享方式。
+    share_mode: String,
+    /// 启动时刻（秒）。
+    boot_ts: u64,
+}
+
+/// 准备共享目录与 `VPN`、写启动时刻、生成内核命令行、重置运行文件，记启动参数并布防；返回本次启动的参数。
+fn prepare_launch(
+    env: &Env,
+    cfg: &Config,
+    images: Images,
+    net: Vec<String>,
+    host_dir: &Path,
+) -> Launch {
+    let run = env.run_dir();
+    let (blk, rootmode) = disk_block(&images.rootfs, cfg.vm_disk_rw());
+    let share = share::prepare(env, cfg);
+    blog(
+        env,
+        "vm",
+        &format!("共享目录：{} · 控制通道 virtiofs", share.mode),
+    );
+    let ctl_spec = format!(
+        "{}:xrctl:type=fs:cache=auto:timeout=0",
+        run.join("guest").display()
+    );
+    vpn_boot_prepare(env);
+
+    let boot_ts = unix_now();
+    fsx::write_logged(env, host_dir.join("time"), format!("{boot_ts}\n"));
+    let params = kernel_params(cfg, rootmode, &share.mode, boot_ts);
+    let sock = reset_boot_files(env, &run);
+    let plan = StartPlan {
+        cpus: cfg.vm_cpus(),
+        mem: cfg.vm_mem_mb(),
+        swiotlb: cfg.vm_swiotlb_mb(),
+        net_args: net,
+        blk,
+        wrap: share.wrap,
+        shared_dir: share.shared_dir,
+        ctl_spec,
+        params,
+        image: images.image,
+        sock,
+    };
+    log_launch(env, cfg, &plan, rootmode, &share.mode);
+    arm_start(env, cfg);
+    Launch {
+        plan,
+        share_mode: share.mode,
+        boot_ts,
+    }
+}
+
+/// `xr start` 的实际执行：检查熔断与镜像、准备共享目录与系统盘、启动 `crosvm`、拉起网络与保险丝看守；返回进程退出码。
+#[must_use]
+pub(crate) fn start_exec(env: &Env) -> i32 {
+    let cfg = Config::load(env);
+    let images = match preflight(env, &cfg) {
+        Ok(found) => found,
+        Err(code) => return code,
+    };
+    let host_dir = prepare_ctl_dirs(env, &env.run_dir());
+    let vm_net = cfg.vm_net();
+    let net = match net_args(env, &cfg) {
+        Ok(args) => args,
+        Err(code) => return code,
+    };
+    let Launch {
+        plan,
+        share_mode,
+        boot_ts,
+    } = prepare_launch(env, &cfg, images, net, &host_dir);
+    let (cpus, mem) = (plan.cpus, plan.mem);
+    let tramp_args = crosvm_args(env, plan);
+    let Ok(ch) = spawn_crosvm(env, &tramp_args, boot_ts) else {
+        fail(env, "无法拉起 crosvm", "无法启动");
+        fsx::remove_logged(env, env.fuse_file());
+        rollback_start(env, vm_net);
+        return 1;
+    };
+    let Some(pid_str) = after_spawn(env, ch, vm_net, &share_mode) else {
+        return 1;
+    };
     log::info(
         env,
         "vm",
-        &format!(
-            "已启动 pid={pid_str} mem={mem}MB cpus={cpus} share={}",
-            share.mode
-        ),
+        &format!("已启动 pid={pid_str} mem={mem}MB cpus={cpus} share={share_mode}"),
     );
     0
 }
