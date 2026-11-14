@@ -1,7 +1,7 @@
 == (none)
 usage: xr <subcommand>
 == bogus
-usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|guest-stats [WAIT]|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm
+usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|guest-stats [WAIT]|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|config-export|config-import PATH [--restart]|uninstall-now confirm
 == running
 == stop
 == status-json
@@ -63,6 +63,10 @@ usage: xr expand MB
 == ls(no arg)
 d/Download
 d/Music
+== config-export
+{"error":"服务未运行","ok":false}
+== config-import(no arg)
+{"error":"路径无效","ok":false}
 == project
 == luci
 == log-export

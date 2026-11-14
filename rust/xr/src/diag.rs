@@ -714,15 +714,21 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
     zw.finish().is_ok()
 }
 
-/// 写导出包的 `summary.txt`：版本、机型与安卓版本，导出时间，调试模式，状态 JSON 与失败计数。
-fn write_summary(env: &Env, raw_dir: &Path, status_json_str: &str) {
-    let ver = fs::read_to_string(env.moddir.join("module.prop"))
+/// 模块版本：`module.prop` 中 `version=` 的值，读不到时为空串。
+#[must_use]
+pub(crate) fn module_version(env: &Env) -> String {
+    fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
         .lines()
         .find_map(|row| row.strip_prefix("version="))
         .unwrap_or("")
         .trim()
-        .to_owned();
+        .to_owned()
+}
+
+/// 写导出包的 `summary.txt`：版本、机型与安卓版本，导出时间，调试模式，状态 JSON 与失败计数。
+fn write_summary(env: &Env, raw_dir: &Path, status_json_str: &str) {
+    let ver = module_version(env);
     let model = sys_cmd_output(Path::new("getprop"), &["ro.product.model"]);
     let rel = sys_cmd_output(Path::new("getprop"), &["ro.build.version.release"]);
     let cfg = Config::load(env);

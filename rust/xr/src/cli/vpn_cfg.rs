@@ -402,7 +402,8 @@ fn vpn_next_cmd(env: &Env, act: &str) -> String {
 }
 
 /// 配置编号非空且只含字母、数字和下划线时返回 true。
-fn valid_profile_id(id: &str) -> bool {
+#[must_use]
+pub(crate) fn valid_profile_id(id: &str) -> bool {
     !id.is_empty()
         && id
             .bytes()
@@ -861,7 +862,14 @@ pub(crate) fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
 }
 
-/// `xr ls <路径> [dir|ovpn]`：列出内部存储下某个目录的子目录（`d/名字`）与文件（`f/名字`，`ovpn` 模式只列 `.ovpn`/`.conf`），按名字排序。
+/// 扩展名（不区分大小写）在 `exts` 中时返回 true。
+fn is_ext(path: &Path, exts: &[&str]) -> bool {
+    path.extension()
+        .and_then(|os_str| os_str.to_str())
+        .is_some_and(|ext| exts.iter().any(|want| ext.eq_ignore_ascii_case(want)))
+}
+
+/// `xr ls <路径> [dir|ovpn|zip]`：列出内部存储下某个目录的子目录（`d/名字`）与文件（`f/名字`，`ovpn` 模式只列 `.ovpn`/`.conf`，`zip` 模式只列 `.zip`），按名字排序。
 ///
 /// 路径不在内部存储下或不是目录时返回 1 和空列表。
 #[must_use]
@@ -894,13 +902,8 @@ pub(crate) fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<Strin
             }
             if ep.is_dir() {
                 items.push(format!("d/{name}"));
-            } else if mode == "ovpn"
-                && ep
-                    .extension()
-                    .and_then(|os_str| os_str.to_str())
-                    .is_some_and(|ext| {
-                        ext.eq_ignore_ascii_case("ovpn") || ext.eq_ignore_ascii_case("conf")
-                    })
+            } else if (mode == "ovpn" && is_ext(&ep, &["ovpn", "conf"]))
+                || (mode == "zip" && is_ext(&ep, &["zip"]))
             {
                 items.push(format!("f/{name}"));
             } else {

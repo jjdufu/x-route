@@ -45,6 +45,9 @@ pub const KEYS: [&str; 25] = [
     "XR_CLASH_UI",
 ];
 
+/// 不随配置备份迁移的键：磁盘镜像大小是本机的物理状态。
+pub(crate) const BACKUP_EXCLUDE: [&str; 1] = ["VM_DISK_SIZE_MB"];
+
 /// 参与配置哈希的键：这些键变化意味着虚拟机硬件或网络形态变化，需要重新确认稳定性。
 pub(crate) const HASH_KEYS: [&str; 8] = [
     "XR_NET_PREFIX",
@@ -113,15 +116,42 @@ fn conf_line_entry(line: &str) -> Option<(String, String)> {
 
 impl Config {
     /// 读取配置：先取环境变量中的同名键，再用配置文件中的键覆盖；文件不存在时只有环境变量的值。
+    #[must_use]
     pub fn load(env: &Env) -> Self {
         let mut values: BTreeMap<String, String> = KEYS
             .iter()
             .filter_map(|key| std::env::var(key).ok().map(|val| ((*key).to_owned(), val)))
             .collect();
         if let Ok(content) = fs::read_to_string(env.conf_file()) {
-            values.extend(content.lines().filter_map(conf_line_entry));
+            values.extend(Self::from_conf_str(&content).values);
         }
         Self { values }
+    }
+
+    /// 只解析配置文本（不读环境变量）：跳过空行、注释和未知键，同名键以后出现的为准。
+    #[must_use]
+    pub(crate) fn from_conf_str(text: &str) -> Self {
+        Self {
+            values: text.lines().filter_map(conf_line_entry).collect(),
+        }
+    }
+
+    /// 返回把 `key` 设为 `value` 后的副本（不写文件），供逐键模拟校验。
+    #[must_use]
+    pub(crate) fn with(&self, key: &str, value: &str) -> Self {
+        let values = self
+            .values
+            .iter()
+            .map(|(name, val)| (name.clone(), val.clone()))
+            .chain(std::iter::once((key.to_owned(), value.to_owned())))
+            .collect();
+        Self { values }
+    }
+
+    /// 键在配置中出现过时返回其取值（可能为空串），否则 `None`。
+    #[must_use]
+    pub(crate) fn get(&self, key: &str) -> Option<&str> {
+        self.values.get(key).map(String::as_str)
     }
 
     /// 键的原始取值，未设置时为空串。

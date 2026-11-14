@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use crate::backup;
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid};
 use crate::cli::status::needs_restart;
 use crate::cli::vpn_cfg::{list_dir, traffic_split, vpn_delete, vpn_import, vpn_set};
@@ -158,6 +159,18 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
 
 /// `xr start-bg`/`xr stop-bg`：在后台执行启动或停止并立即输出成功应答；结果码稍后写入 `run/bg.rc`。
 fn bg_run(env: &Env, action: &str) -> i32 {
+    if !bg_spawn(env, action) {
+        log::dlog_env(
+            env,
+            "xr",
+            &format!("{action}-bg 未能拉起后台任务，应答不变"),
+        );
+    }
+    emit(env, OK_JSON, 0)
+}
+
+/// 在后台执行 `xr internal bg-exec <action>`（不打印）：清掉上次的结果文件，启动时先清空开机与串口日志；能拉起返回 true。
+pub(crate) fn bg_spawn(env: &Env, action: &str) -> bool {
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("bg.rc"));
     fsx::remove_logged(env, run.join("bg.rc.tmp"));
@@ -166,12 +179,10 @@ fn bg_run(env: &Env, action: &str) -> i32 {
         fsx::write_logged(env, env.boot_log(), "");
         blog(env, "xr", "收到启动请求");
     }
-    note_spawn(
-        env,
-        "xr internal bg-exec",
-        spawn::self_detached(env, &["internal", "bg-exec", action]),
-    );
-    emit(env, OK_JSON, 0)
+    let res = spawn::self_detached(env, &["internal", "bg-exec", action]);
+    let spawned = res.is_ok();
+    note_spawn(env, "xr internal bg-exec", res);
+    spawned
 }
 
 /// `xr internal bg-exec`：执行启动或停止，把退出码原子写入 `run/bg.rc` 并返回它。
@@ -289,7 +300,7 @@ const OK_JSON: &str = "{\"ok\":true}";
 const SET_USAGE_JSON: &str = "{\"ok\":false,\"error\":\"用法：xr set KEY VALUE\"}";
 
 /// 未知子命令时打印的用法。
-const USAGE: &str = "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|guest-stats [WAIT]|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|uninstall-now confirm";
+const USAGE: &str = "usage: xr start|stop|start-bg|stop-bg|boot-tail MOFF COFF|traffic|traffic-reset|traffic-split|guest-stats [WAIT]|running|status-json|status-line|get|set K V|ipv6 on|off|ack-trip|expand MB|reset-disk|sync|luci|project|vpn-import PATH [0|1]|vpn-enable [ID]|vpn-disable [ID]|vpn-delete ID|clash-bridge|clash-ping|ls PATH [dir|ovpn]|log-export|diag-export|config-export|config-import PATH [--restart]|uninstall-now confirm";
 
 /// 取 `rest` 的第 `idx` 个参数，没有时用 `default`。
 fn arg<'a>(rest: &'a [String], idx: usize, default: &'a str) -> &'a str {
@@ -326,9 +337,8 @@ pub fn run(args: &[String]) -> i32 {
         }
         "set" => cmd_set(&env, rest),
         "vpn-import" | "vpn-enable" | "vpn-disable" | "vpn-delete" => cmd_vpn(&env, cmd, rest),
-        "project" | "luci" | "ls" | "log-export" | "diag-export" | "uninstall-now" => {
-            cmd_misc(&env, cmd, rest)
-        }
+        "project" | "luci" | "ls" | "log-export" | "diag-export" | "uninstall-now"
+        | "config-export" | "config-import" => cmd_misc(&env, cmd, rest),
         "clash-bridge" | "clash-ping" | "clash-call" | "clash-stream" | "clash-ws-send"
         | "clash-ws-close" => cmd_clash(&env, cmd, rest),
         "internal" => cmd_internal(&env, rest),
@@ -508,6 +518,15 @@ fn cmd_misc(env: &Env, cmd: &str, rest: &[String]) -> i32 {
             emit_lines(env, items, rc)
         }
         "log-export" => cmd_export(env, "xrouter-logs", false),
+        "config-export" => {
+            let (rc, out) = backup::config_export(env);
+            emit(env, &out, rc)
+        }
+        "config-import" => {
+            let restart = rest.iter().skip(1).any(|flag| flag == "--restart");
+            let (rc, out) = backup::config_import(env, arg(rest, 0, ""), restart);
+            emit(env, &out, rc)
+        }
         "diag-export" => cmd_export(env, "xrouter-diag", true),
         "uninstall-now" => {
             let (rc, out) = uninstall::now(env, arg(rest, 0, ""));

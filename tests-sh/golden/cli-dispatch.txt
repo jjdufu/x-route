@@ -20,6 +20,8 @@ vpn-disable(no id) -> 0 -> True -> quiet
 vpn-delete no_such -> 1 -> False -> quiet
 vpn-import(no arg) -> 1 -> False -> quiet
 ls(no arg) -> 0 -> - -> quiet
+config-export -> 1 -> False -> quiet
+config-import(no arg) -> 1 -> False -> quiet
 project -> 1 -> - -> quiet
 luci -> 1 -> - -> quiet
 log-export -> 0 -> True -> quiet

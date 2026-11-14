@@ -180,6 +180,62 @@ out="$($XR guest-stats)"; rc=$?
 chk '[ $rc -eq 0 ] && echo "$out" | J "d[\"ok\"] and d[\"cpu_pct\"]==7 and d[\"mem_pct\"] is None and d[\"age_s\"]==0" | grep -qx True'
 wait
 rm -f "$RUN/guest/guest/stats.cap" "$RUN/guest/guest/stats" "$RUN/guest/host/stats.cmd"
+# 配置备份（config-export / config-import）：后台 sh 循环扮演客机 xrouter-backup
+echo 1 > "$RUN/guest/guest/backup.cap"; rm -f "$T/bk.err" "$T/bk.stop" "$T/bk.calls"
+mkdir -p "$T/bksrc/etc/config"; echo "config system" > "$T/bksrc/etc/config/x"
+( last=""; i=0; while [ ! -e "$T/bk.stop" ] && [ $i -lt 600 ]; do
+    c="$(cat "$RUN/guest/host/backup.cmd" 2>/dev/null)"
+    if [ -n "$c" ] && [ "$c" != "$last" ]; then
+      last="$c"; ts="${c#* }"; echo "$c" >> "$T/bk.calls"
+      if [ -e "$T/bk.err" ]; then printf 'ts=%s\nerr sysupgrade -r 失败\n' "$ts" > "$RUN/guest/guest/backup.ack"
+      elif [ "${c%% *}" = export ]; then
+        tar -czf "$RUN/guest/guest/backup.tar.gz" -C "$T/bksrc" etc
+        printf 'ts=%s\nok\nfw=24.10.4 r28959\nsize=%s\n' "$ts" "$(wc -c < "$RUN/guest/guest/backup.tar.gz")" > "$RUN/guest/guest/backup.ack"
+      else
+        cp "$RUN/guest/host/backup.in.tar.gz" "$T/bk.in" 2>/dev/null; printf 'ts=%s\nok\n' "$ts" > "$RUN/guest/guest/backup.ack"
+      fi
+    fi; sleep 0.1; i=$((i+1)); done ) &
+bkpid=$!
+out="$(XR_DOWNLOAD="$XR_MEDIA/Download" $XR config-export)"
+zip="$(echo "$out" | J 'd.get("path", "")')"
+chk 'echo "$out" | J "d[\"ok\"] and d[\"firmware\"]==\"24.10.4 r28959\" and d[\"vpn\"] >= 1 and d[\"size\"] > 0" | grep -qx True'
+chk 'case "$zip" in "$XR_MEDIA/Download/xrouter-config-"*.zip) [ -f "$zip" ] ;; *) false ;; esac'
+chk 'python3 - "$zip" <<"PY"
+import hashlib, json, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1]); names = set(z.namelist()); m = json.loads(z.read("manifest.json"))
+assert {"manifest.json", "phone/config.conf", "openwrt/backup.tar.gz"} <= names, names
+assert any(n.startswith("phone/vpn/") and n.endswith(".ovpn") for n in names), names
+assert m["kind"] == "xrouter-config" and m["format"] == 1 and set(m["files"]) == names - {"manifest.json"}
+assert all(hashlib.sha256(z.read(n)).hexdigest() == h for n, h in m["files"].items())
+assert "VM_DISK_SIZE_MB" not in z.read("phone/config.conf").decode()
+PY'
+chk '[ -z "$(ls -d "$RUN"/cfgexp.* 2>/dev/null)" ] && [ ! -e "$RUN/guest/guest/backup.tar.gz" ] && [ -z "$(ls -A "$XR_MEDIA/Download" | grep "^\.xrouter-config")" ]'
+# xr ls … zip：只列目录与 .zip
+chk '[ "$($XR ls "$XR_MEDIA/Download" zip | tr "\n" " ")" = "d/vpn f/${zip##*/} " ]'
+# 导入：改动手机配置与一个 VPN 文件后还原；OpenWrt 先收到 import
+cp "$CONF" "$T/conf.before"; for f in "$XR_DATA/config/vpn/"*.ovpn; do vpnf="$f"; break; done; cp "$vpnf" "$T/vpn.before"
+sed -i 's/^XR_DNS=.*/XR_DNS="9.9.9.9"/' "$CONF"; echo "# changed" >> "$vpnf"
+out="$($XR config-import "$zip")"
+# 测试配置里 READY_TIMEOUT_SEC=6、STABLE_SEC=5 超出合法范围，VM_SHARE_PATH 指向的 /data/media/0 在测试机上不存在：这三项记入 skipped，不中止导入
+chk 'echo "$out" | J "d[\"ok\"] and d[\"restart\"] is True and \"XR_DNS\" in d[\"applied\"] and sorted(x[\"key\"] for x in d[\"skipped\"])==[\"READY_TIMEOUT_SEC\",\"STABLE_SEC\",\"VM_SHARE_PATH\"] and \"VM_DISK_SIZE_MB\" not in d[\"applied\"]" | grep -qx True'
+chk 'grep -qx "XR_DNS=\"$(sed -n "s/^XR_DNS=\"\(.*\)\"$/\1/p" "$T/conf.before")\"" "$CONF" && cmp -s "$vpnf" "$T/vpn.before"'
+chk 'grep -q "^import " "$T/bk.calls" && tar -tzf "$T/bk.in" | grep -qx "etc/config/x" && [ ! -e "$RUN/guest/host/backup.in.tar.gz" ] && [ -z "$(ls -d "$XR_DATA"/config/vpn.prev.* 2>/dev/null)" ]'
+chk 'grep -q "配置已导入：${zip##*/}（跳过 3 项）" "$LOG"'
+# 客机还原失败：手机侧配置与 VPN 不变
+touch "$T/bk.err"; sed -i 's/^XR_DNS=.*/XR_DNS="9.9.9.9"/' "$CONF"; echo "# changed" >> "$vpnf"; cp "$CONF" "$T/conf.mid"; cp "$vpnf" "$T/vpn.mid"
+out="$($XR config-import "$zip")"; rc=$?
+chk '[ $rc -ne 0 ] && echo "$out" | J "not d[\"ok\"] and \"sysupgrade -r 失败\" in d[\"error\"]" | grep -qx True && cmp -s "$CONF" "$T/conf.mid" && cmp -s "$vpnf" "$T/vpn.mid"'
+# 改坏一个字节：校验失败，什么都不改
+rm -f "$T/bk.err"; python3 -c 'import sys, zipfile; p=sys.argv[1]; i=zipfile.ZipFile(p).getinfo("phone/config.conf"); b=bytearray(open(p,"rb").read()); o=i.header_offset+30+len(i.filename)+len(i.extra)+2; b[o]^=0xff; open(p,"wb").write(b)' "$zip"; n_calls="$(wc -l < "$T/bk.calls")"
+out="$($XR config-import "$zip")"; rc=$?
+chk '[ $rc -ne 0 ] && echo "$out" | grep -q "校验失败\|备份包无效" && cmp -s "$CONF" "$T/conf.mid" && [ "$(wc -l < "$T/bk.calls")" = "$n_calls" ]'
+cp "$T/conf.before" "$CONF"; cp "$T/vpn.before" "$vpnf"
+# 旧系统盘（无 backup.cap）：导出与导入都拒绝，不写 host/backup.cmd
+rm -f "$RUN/guest/guest/backup.cap" "$RUN/guest/host/backup.cmd"
+out="$($XR config-export)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "当前系统盘不支持配置备份"'
+out="$($XR config-import "$zip")"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "当前系统盘不支持配置备份" && [ ! -e "$RUN/guest/host/backup.cmd" ]'
+out="$($XR config-import /data/adb/x.zip)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "路径无效"'
+touch "$T/bk.stop"; wait "$bkpid"
 chk '! grep -q "127.0.0.1 1194" "$LOG"'
 chk '$XR set XR_EXPOSE all >/dev/null'; i=0; while [ "$(grep -c "net sync" "$T/net.calls")" -lt 2 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done
 chk '[ "$(grep -c "net sync" "$T/net.calls")" -eq 2 ]'   # 后台执行，稍等
@@ -219,6 +275,7 @@ zl() { python3 -c "import zipfile,sys; print(\"\n\".join(zipfile.ZipFile(sys.arg
 chk 'zl "$dg" | grep -q "/debug.log$" && zl "$dg" | grep -q "/phone.txt$" && zl "$dg" | grep -q "/module.log$"'
 chk '[ -z "$(find "$T/dl" -name "*.gz")" ]'   # 全部导出都是 zip
 $XR stop; chk '! $XR running'
+out="$($XR config-export)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "服务未运行"'
 # vpn_set：VM 未运行时按配置 ID 启用被拒绝、停用只改持久开关
 chk '! $XR running && [ -f "$XR_DATA/config/vpn/home.ovpn" ]'
 out="$($XR vpn-enable home)"; chk '[ $? -eq 1 ] && echo "$out" | grep -q "服务未运行"'
@@ -306,6 +363,8 @@ D "vpn-disable(no id)" vpn-disable
 D "vpn-delete no_such" vpn-delete no_such
 D "vpn-import(no arg)" vpn-import
 D "ls(no arg)" ls
+D config-export config-export
+D "config-import(no arg)" config-import
 D project project
 D luci luci
 D log-export log-export
