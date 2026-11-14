@@ -13,10 +13,16 @@ use crate::cidr::hs_mac;
 use crate::config::{Config, config_hash};
 use crate::diag::{diag_snap, diag_snap_bg};
 use crate::env::Env;
+use crate::log::FAILURES;
+use crate::log::note_failure;
+use crate::log::note_rc;
 use crate::log::{blog, dlog, log_err, log_info, unix_now};
 use crate::net::run_net_cli;
+use crate::sys::exec::note_status;
+use crate::sys::fsx;
+use crate::sys::send_signal_logged;
 use crate::sys::spawn::spawn_self_detached;
-use crate::sys::{ce_ready, is_pid_running, proc_cmdline, send_signal, wakelock_off, wakelock_on};
+use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
 use crate::vm::share::share_prepare;
 
 pub fn vm_running(env: &Env) -> bool {
@@ -30,12 +36,14 @@ pub fn vm_running(env: &Env) -> bool {
 
 pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
     log_err(env, "vm", log_msg);
-    let _ = fs::write(env.run_dir().join("last_error"), format!("{ui_msg}\n"));
+    fsx::write_logged(env, env.run_dir().join("last_error"), format!("{ui_msg}\n"));
     let boot_log = env.boot_log();
-    thread::spawn(move || {
+    let env_t = env.clone();
+    // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
+    drop(thread::spawn(move || {
         thread::sleep(Duration::from_secs(5));
-        let _ = fs::remove_file(boot_log);
-    });
+        fsx::remove_logged(&env_t, boot_log);
+    }));
 }
 
 pub fn boot_progress(env: &Env, secs: u64) {
@@ -48,11 +56,23 @@ pub fn boot_progress(env: &Env, secs: u64) {
     );
 }
 
+/// 在后台线程里回收子进程（避免僵尸）；退出状态无人需要，等待本身失败时计数。
+fn reap_in_background(mut child: std::process::Child) {
+    // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
+    drop(thread::spawn(move || {
+        if child.wait().is_err() {
+            note_failure(&FAILURES.exec);
+        }
+    }));
+}
+
 pub fn fuse_arm(env: &Env) {
     let line = format!("{} {}\n", unix_now(), config_hash(env));
-    let _ = fs::write(env.fuse_file(), line);
-    if let Ok(f) = fs::File::open(env.fuse_file()) {
-        let _ = f.sync_all();
+    fsx::write_logged(env, env.fuse_file(), line);
+    if let Ok(fuse) = fs::File::open(env.fuse_file())
+        && let Err(err) = fuse.sync_all()
+    {
+        fsx::record_failure(env, "sync", &env.fuse_file(), &err);
     }
     thread::sleep(Duration::from_secs(1));
 }
@@ -119,7 +139,7 @@ pub fn fuse_watch(env: &Env) {
     let mut t = 0_u64;
     while t < ready_to {
         if !vm_running(env) {
-            let _ = fs::remove_file(env.fuse_file());
+            fsx::remove_logged(env, env.fuse_file());
             vm_fail(env, "就绪前 crosvm 已退出，详见 vmm.log", "启动中退出");
             return;
         }
@@ -134,21 +154,21 @@ pub fn fuse_watch(env: &Env) {
         let msg = format!("{ready_to} 秒内未就绪，停止 VM");
         let ui = format!("{ready_to} 秒内未就绪");
         vm_fail(env, &msg, &ui);
-        let _ = vm_stop_exec(env, true);
+        note_rc(env, "vm_stop_exec", vm_stop_exec(env, true));
         return;
     }
 
     let run = env.run_dir();
     if let Some(now_m) = mono_now(env) {
-        let _ = fs::write(run.join("ready_at"), format!("{now_m}\n"));
+        fsx::write_logged(env, run.join("ready_at"), format!("{now_m}\n"));
     }
-    let _ = fs::write(run.join("state"), "ready\n");
-    let _ = fs::remove_file(run.join("last_error"));
+    fsx::write_logged(env, run.join("state"), "ready\n");
+    fsx::remove_logged(env, run.join("last_error"));
     log_info(env, "vm", &format!("XR_READY（{}）", ready_channel(env)));
     blog(env, "net", "重建转发 / NAT / 接管规则");
-    let _ = run_net_hook(env, "sync");
+    note_rc(env, "run_net_hook", run_net_hook(env, "sync"));
     if let Some(now_m) = mono_now(env) {
-        let _ = fs::write(run.join("ready_at"), format!("{now_m}\n"));
+        fsx::write_logged(env, run.join("ready_at"), format!("{now_m}\n"));
     }
     let gw = fs::read_to_string(run.join("net.gw"))
         .ok()
@@ -166,33 +186,33 @@ pub fn fuse_watch(env: &Env) {
             if crate::daemon::keepalive::vm_guest_reset_pending(env) {
                 let dpid = crate::daemon::daemon_pid(env);
                 if is_pid_running(env, &dpid) {
-                    let _ = send_signal(&dpid, Signal::USR2);
+                    send_signal_logged(env, &dpid, Signal::USR2);
                     return;
                 }
             }
-            let _ = fs::remove_file(env.fuse_file());
+            fsx::remove_logged(env, env.fuse_file());
             vm_fail(env, "稳定期内 crosvm 退出", "服务意外退出");
             return;
         }
         thread::sleep(Duration::from_secs(5));
         st = st.saturating_add(5);
     }
-    let _ = fs::remove_file(env.fuse_file());
-    let _ = fs::write(env.last_good_file(), format!("{}\n", config_hash(env)));
-    let _ = fs::write(run.join("state"), "stable\n");
+    fsx::remove_logged(env, env.fuse_file());
+    fsx::write_logged(env, env.last_good_file(), format!("{}\n", config_hash(env)));
+    fsx::write_logged(env, run.join("state"), "stable\n");
     log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
-    let _ = fs::remove_file(env.boot_log());
+    fsx::remove_logged(env, env.boot_log());
 }
 
 pub fn vpn_sync_host(env: &Env) -> Option<bool> {
     let host_dir = env.run_dir().join("guest/host");
-    let _ = fs::create_dir_all(&host_dir);
+    fsx::mkdirs_logged(env, &host_dir);
     let vpn_dir = env.vpn_dir();
     if !vpn_dir.is_dir() {
         return None;
     }
     let host_vpn = host_dir.join("vpn");
-    let _ = fs::create_dir_all(&host_vpn);
+    fsx::mkdirs_logged(env, &host_vpn);
     if let Ok(rd) = fs::read_dir(&host_vpn) {
         for ent in rd.flatten() {
             let p = ent.path();
@@ -200,7 +220,7 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
                 let ovpn = vpn_dir.join(format!("{stem}.ovpn"));
                 let keep = fs::metadata(&ovpn).is_ok_and(|m| m.len() > 0);
                 if !keep {
-                    let _ = fs::remove_file(p);
+                    fsx::remove_logged(env, p);
                 }
             }
         }
@@ -223,22 +243,23 @@ pub fn vpn_sync_host(env: &Env) -> Option<bool> {
             if first.is_none() {
                 first = Some(p.clone());
             }
-            let _ = fs::copy(&p, host_vpn.join(format!("{pid}.ovpn")));
+            fsx::copy_logged(env, &p, host_vpn.join(format!("{pid}.ovpn")));
             let en = fs::read_to_string(vpn_dir.join(format!("{pid}.enabled")))
                 .is_ok_and(|s| s.trim() == "1");
-            let _ = fs::write(
+            fsx::write_logged(
+                env,
                 host_vpn.join(format!("{pid}.enabled")),
                 if en { "1\n" } else { "0\n" },
             );
             if en {
                 any = true;
-                let _ = fs::copy(&p, host_dir.join("openvpn.ovpn"));
+                fsx::copy_logged(env, &p, host_dir.join("openvpn.ovpn"));
             }
         }
     }
     if !any {
         if let Some(f) = first {
-            let _ = fs::copy(f, host_dir.join("openvpn.ovpn"));
+            fsx::copy_logged(env, f, host_dir.join("openvpn.ovpn"));
         }
     }
     Some(any)
@@ -248,15 +269,15 @@ pub fn vpn_boot_prepare(env: &Env) {
     let guest = env.run_dir().join("guest/guest");
     let host = env.run_dir().join("guest/host");
     for f in ["openvpn.ack", "openvpn.multi", "openvpn.connecting"] {
-        let _ = fs::remove_file(guest.join(f));
+        fsx::remove_logged(env, guest.join(f));
     }
     if env.vpn_dir().is_dir() {
         if let Some(any) = vpn_sync_host(env) {
             if any {
-                let _ = fs::write(host.join("openvpn.cmd"), "enable\n");
+                fsx::write_logged(env, host.join("openvpn.cmd"), "enable\n");
                 blog(env, "vpn", "下发 OpenVPN 配置");
             } else {
-                let _ = fs::write(host.join("openvpn.cmd"), "disable\n");
+                fsx::write_logged(env, host.join("openvpn.cmd"), "disable\n");
                 if let Ok(rd) = fs::read_dir(env.vpn_dir()) {
                     for ent in rd.flatten() {
                         let p = ent.path();
@@ -276,15 +297,15 @@ pub fn vpn_boot_prepare(env: &Env) {
     if !legacy.is_file() {
         return;
     }
-    let _ = fs::create_dir_all(&host);
-    let _ = fs::copy(&legacy, host.join("openvpn.ovpn"));
+    fsx::mkdirs_logged(env, &host);
+    fsx::copy_logged(env, &legacy, host.join("openvpn.ovpn"));
     let en = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
         .map_or(true, |s| s.trim() != "0");
     if en {
-        let _ = fs::write(host.join("openvpn.cmd"), "enable\n");
+        fsx::write_logged(env, host.join("openvpn.cmd"), "enable\n");
         blog(env, "vpn", "下发 OpenVPN 配置");
     } else {
-        let _ = fs::write(host.join("openvpn.cmd"), "disable\n");
+        fsx::write_logged(env, host.join("openvpn.cmd"), "disable\n");
         blog(env, "vpn", "OpenVPN 保持停止");
     }
 }
@@ -297,10 +318,10 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     }
     let run = env.run_dir();
     if !env.boot_log().is_file() {
-        let _ = fs::write(env.boot_log(), "");
+        fsx::write_logged(env, env.boot_log(), "");
     }
     for f in ["teardown.last", "shutdown", "shutdown.noted", "stopping"] {
-        let _ = fs::remove_file(run.join(f));
+        fsx::remove_logged(env, run.join(f));
     }
     let cpus = cfg.vm_cpus();
     let mem = cfg.vm_mem_mb();
@@ -311,7 +332,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         "vm",
         &format!("准备启动：CPU {cpus} 核 · 内存 {mem}MB · 系统盘 {disk_lbl}"),
     );
-    let _ = fs::remove_file(run.join("last_error"));
+    fsx::remove_logged(env, run.join("last_error"));
     if env.tripped_file().is_file() {
         log_err(env, "vm", "熔断未确认（xr ack-trip）");
         return 1;
@@ -335,13 +356,9 @@ pub fn vm_start_exec(env: &Env) -> i32 {
 
     let host_dir = run.join("guest/host");
     let guest_dir = run.join("guest/guest");
-    let _ = fs::create_dir_all(&host_dir);
-    let _ = fs::create_dir_all(&guest_dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(run.join("guest"), fs::Permissions::from_mode(0o700));
-    }
+    fsx::mkdirs_logged(env, &host_dir);
+    fsx::mkdirs_logged(env, &guest_dir);
+    fsx::chmod_logged(env, run.join("guest"), 0o700);
     for f in [
         "host/ipv6.cmd",
         "guest/ipv6",
@@ -357,7 +374,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         "guest/openvpn.addr",
         "guest/openvpn.routes",
     ] {
-        let _ = fs::remove_file(run.join("guest").join(f));
+        fsx::remove_logged(env, run.join("guest").join(f));
     }
 
     let mut net_args: Vec<String> = Vec::new();
@@ -417,7 +434,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     vpn_boot_prepare(env);
 
     let boot_ts = unix_now();
-    let _ = fs::write(host_dir.join("time"), format!("{boot_ts}\n"));
+    fsx::write_logged(env, host_dir.join("time"), format!("{boot_ts}\n"));
     let dns_csv = cfg.dns().split_whitespace().collect::<Vec<_>>().join(",");
     let params = format!(
         "root=/dev/vda {rootmode} rootwait console=ttyS0,115200 earlycon panic=5 xr.ip={}.254/24 xr.gw={}.1 xr.dns={dns_csv} xr.ip6={}::254/64 xr.gw6={}::1 xr.share={} xr.time={boot_ts}",
@@ -428,12 +445,12 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         share.mode
     );
 
-    let _ = fs::write(env.console_log(), "");
-    let _ = fs::write(env.ctl_log(), "");
+    fsx::write_logged(env, env.console_log(), "");
+    fsx::write_logged(env, env.ctl_log(), "");
     let sock = run.join("crosvm.sock");
-    let _ = fs::remove_file(&sock);
-    let _ = fs::remove_file(run.join("state"));
-    let _ = fs::remove_file(run.join("ready_at"));
+    fsx::remove_logged(env, &sock);
+    fsx::remove_logged(env, run.join("state"));
+    fsx::remove_logged(env, run.join("ready_at"));
 
     let swiotlb = cfg.vm_swiotlb_mb();
     dlog(
@@ -511,16 +528,20 @@ pub fn vm_start_exec(env: &Env) -> i32 {
 
     let vmm_log = env.vmm_log();
     if let Some(p) = vmm_log.parent() {
-        let _ = fs::create_dir_all(p);
+        fsx::mkdirs_logged(env, p);
     }
     let out_f = OpenOptions::new().create(true).append(true).open(&vmm_log);
-    if let Ok(mut mf) = OpenOptions::new().create(true).append(true).open(&vmm_log) {
-        use std::io::Write;
-        let _ = writeln!(
-            mf,
-            "{}ts={boot_ts} ===",
-            crate::daemon::keepalive::VMM_RUN_MARKER
-        );
+    if let Ok(mut mf) = OpenOptions::new().create(true).append(true).open(&vmm_log)
+        && let Err(err) = std::io::Write::write_all(
+            &mut mf,
+            format!(
+                "{}ts={boot_ts} ===\n",
+                crate::daemon::keepalive::VMM_RUN_MARKER
+            )
+            .as_bytes(),
+        )
+    {
+        fsx::record_failure(env, "write", &vmm_log, &err);
     }
     let child = match out_f {
         Ok(f) => {
@@ -547,46 +568,48 @@ pub fn vm_start_exec(env: &Env) -> i32 {
 
     let Ok(mut ch) = child else {
         vm_fail(env, "无法拉起 crosvm", "无法启动");
-        let _ = fs::remove_file(env.fuse_file());
+        fsx::remove_logged(env, env.fuse_file());
         crate::clash::stop_clash_mux(env);
         wakelock_off(env);
         if vm_net {
-            let _ = run_net_hook(env, "down");
+            note_rc(env, "run_net_hook", run_net_hook(env, "down"));
         }
         return 1;
     };
     let pid_str = ch.id().to_string();
-    let _ = fs::write(run.join("crosvm.pid"), format!("{pid_str}\n"));
+    fsx::write_logged(env, run.join("crosvm.pid"), format!("{pid_str}\n"));
     let notify_daemon = env.in_daemon.then(|| std::process::id().to_string());
-    thread::spawn(move || {
-        let _ = ch.wait();
-        if let Some(dp) = notify_daemon {
-            let _ = send_signal(&dp, Signal::USR2);
+    let env_t = env.clone();
+    // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
+    drop(thread::spawn(move || {
+        if let Err(err) = ch.wait() {
+            fsx::record_failure(&env_t, "wait crosvm", &env_t.crosvm, &err);
         }
-    });
+        if let Some(dp) = notify_daemon {
+            send_signal_logged(&env_t, &dp, Signal::USR2);
+        }
+    }));
     blog(env, "vm", &format!("crosvm pid {pid_str}，等待内核输出"));
     thread::sleep(Duration::from_secs(2));
     if !vm_running(env) {
         vm_fail(env, "crosvm 立即退出，详见 vmm.log", "无法启动");
-        let _ = fs::remove_file(env.fuse_file());
-        let _ = fs::remove_file(run.join("crosvm.pid"));
+        fsx::remove_logged(env, env.fuse_file());
+        fsx::remove_logged(env, run.join("crosvm.pid"));
         crate::clash::stop_clash_mux(env);
         wakelock_off(env);
         if vm_net {
-            let _ = run_net_hook(env, "down");
+            note_rc(env, "run_net_hook", run_net_hook(env, "down"));
         }
         return 1;
     }
 
-    if let Ok(mut fw) = spawn_self_detached(env, &["internal", "fuse-watch"]) {
-        let _ = fs::write(run.join("fuse_watch.pid"), format!("{}\n", fw.id()));
+    if let Ok(fw) = spawn_self_detached(env, &["internal", "fuse-watch"]) {
+        fsx::write_logged(env, run.join("fuse_watch.pid"), format!("{}\n", fw.id()));
         if env.in_daemon {
-            thread::spawn(move || {
-                let _ = fw.wait();
-            });
+            reap_in_background(fw);
         }
     }
-    let _ = fs::write(run.join("share.mode"), format!("{}\n", share.mode));
+    fsx::write_logged(env, run.join("share.mode"), format!("{}\n", share.mode));
     crate::daemon::keepalive::cgroup_escape_tree(env, std::process::id());
     log_info(
         env,
@@ -601,13 +624,17 @@ pub fn vm_start_exec(env: &Env) -> i32 {
 
 pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     let run = env.run_dir();
-    let _ = fs::write(run.join("stopping"), format!("{}\n", std::process::id()));
-    let _ = fs::remove_file(env.fuse_file());
+    fsx::write_logged(
+        env,
+        run.join("stopping"),
+        format!("{}\n", std::process::id()),
+    );
+    fsx::remove_logged(env, env.fuse_file());
     if !in_watch {
         if let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
             let wp = wp.trim();
             if !wp.is_empty() {
-                let _ = send_signal(wp, Signal::TERM);
+                send_signal_logged(env, wp, Signal::TERM);
             }
         }
     }
@@ -618,12 +645,13 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     diag_snap(env, "停止前", 2);
     if vm_running(env) {
         let sock = run.join("crosvm.sock");
-        let _ = Command::new(&env.crosvm)
+        let stop_status = Command::new(&env.crosvm)
             .args(["stop", &sock.to_string_lossy()])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        note_status(env, "crosvm stop", stop_status);
         for _ in 0..10 {
             if !vm_running(env) {
                 break;
@@ -631,11 +659,11 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
             thread::sleep(Duration::from_secs(1));
         }
         if vm_running(env) && !pid.is_empty() {
-            let _ = send_signal(&pid, Signal::TERM);
+            send_signal_logged(env, &pid, Signal::TERM);
             thread::sleep(Duration::from_secs(5));
         }
         if vm_running(env) && !pid.is_empty() {
-            let _ = send_signal(&pid, Signal::KILL);
+            send_signal_logged(env, &pid, Signal::KILL);
         }
     }
     crate::clash::stop_clash_mux(env);
@@ -650,11 +678,11 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         env.fuse_file(),
         env.boot_log(),
     ] {
-        let _ = fs::remove_file(p);
+        fsx::remove_logged(env, p);
     }
-    let _ = run_net_hook(env, "down");
+    note_rc(env, "run_net_hook", run_net_hook(env, "down"));
     wakelock_off(env);
-    let _ = fs::remove_file(run.join("stopping"));
+    fsx::remove_logged(env, run.join("stopping"));
     log_info(env, "vm", "已停止");
     0
 }
