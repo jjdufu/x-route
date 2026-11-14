@@ -220,11 +220,9 @@ pub(crate) fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
 }
 
-/// 为虚拟机安装 `IPv6` 邻居代理：选前缀与地址、打开转发与 `proxy_ndp`、加代理表项与 `/128` 路由，成功返回 true。
-///
-/// 前缀或地址未变时只补齐表项；无可用前缀或地址时撤销并返回 false。
-#[must_use]
-pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
+/// 选定邻居代理用的上游接口与虚拟机地址：无可用前缀时记一次提示（`net.v6nopfx`）并撤销代理，
+/// 前缀中分不到地址时记错误并撤销；成功返回（上游接口, 地址/长度）。
+fn v6_pick_uplink(ctx: &NetCtx<'_>, outs6: &[String]) -> Option<(String, String)> {
     let run = ctx.env.run_dir();
     let Some(V6Uplink { pfx, up_if, busy }) = v6_discover(ctx, outs6) else {
         if !run.join("net.v6nopfx").is_file() {
@@ -236,7 +234,7 @@ pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
         }
         fsx::touch_logged(ctx.env, run.join("net.v6nopfx"));
         v6_proxy_remove(ctx, Some("上游没有可共享的前缀"));
-        return false;
+        return None;
     };
     fsx::remove_logged(ctx.env, run.join("net.v6nopfx"));
     let Some(wan) = v6_pick_addr(&pfx, &busy, ctx.cfg.vm_mac()) else {
@@ -246,6 +244,47 @@ pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
             &format!("无法在 {pfx} 中分到未占用的 IPv6 地址"),
         );
         v6_proxy_remove(ctx, Some("前缀中没有可用地址"));
+        return None;
+    };
+    Some((up_if, wan))
+}
+
+/// 打开 `IPv6` 转发与 `proxy_ndp`（保存 `all/forwarding` 原值）、加代理表项与 `/128` 路由、关闭热点硬件卸载；
+/// 返回上游接口的 `proxy_ndp` 是否已为 1。
+fn v6_enable_proxy(ctx: &NetCtx<'_>, up_if: &str, bare: &str) -> bool {
+    let run = ctx.env.run_dir();
+    let proc_v6 = ctx.env.proc_dir.join("sys/net/ipv6/conf");
+    fsx::mkdirs_logged(ctx.env, proc_v6.join("all"));
+    fsx::mkdirs_logged(ctx.env, proc_v6.join(up_if));
+    fsx::mkdirs_logged(ctx.env, proc_v6.join(XR_IF));
+
+    v6_sysw_save(
+        ctx,
+        &proc_v6.join("all/forwarding"),
+        "1",
+        &run.join("v6fwd.orig"),
+    );
+    ctx.sysw_run(&proc_v6.join(format!("{up_if}/forwarding")), "1");
+    ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/forwarding")), "1");
+    ctx.sysw_run(&proc_v6.join(format!("{up_if}/accept_ra")), "2");
+    ctx.sysw_run(&proc_v6.join(format!("{up_if}/proxy_ndp")), "1");
+    ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/proxy_ndp")), "1");
+    ctx.ip6_run(&["neigh", "replace", "proxy", bare, "dev", up_if]);
+    let bare128 = format!("{bare}/128");
+    ctx.ip6_run(&["route", "replace", &bare128, "dev", XR_IF]);
+    v6_tether_offload_off(ctx);
+
+    fs::read_to_string(proc_v6.join(format!("{up_if}/proxy_ndp")))
+        .is_ok_and(|text| text.trim() == "1")
+}
+
+/// 为虚拟机安装 `IPv6` 邻居代理：选前缀与地址、打开转发与 `proxy_ndp`、加代理表项与 `/128` 路由，成功返回 true。
+///
+/// 前缀或地址未变时只补齐表项；无可用前缀或地址时撤销并返回 false。
+#[must_use]
+pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
+    let run = ctx.env.run_dir();
+    let Some((up_if, wan)) = v6_pick_uplink(ctx, outs6) else {
         return false;
     };
     let bare = wan.split('/').next().unwrap_or(&wan);
@@ -274,30 +313,7 @@ pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     };
     let new_bare = new_wan.split('/').next().unwrap_or(&new_wan);
 
-    let proc_v6 = ctx.env.proc_dir.join("sys/net/ipv6/conf");
-    fsx::mkdirs_logged(ctx.env, proc_v6.join("all"));
-    fsx::mkdirs_logged(ctx.env, proc_v6.join(&new_up_if));
-    fsx::mkdirs_logged(ctx.env, proc_v6.join(XR_IF));
-
-    v6_sysw_save(
-        ctx,
-        &proc_v6.join("all/forwarding"),
-        "1",
-        &run.join("v6fwd.orig"),
-    );
-    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/forwarding")), "1");
-    ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/forwarding")), "1");
-    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/accept_ra")), "2");
-    ctx.sysw_run(&proc_v6.join(format!("{new_up_if}/proxy_ndp")), "1");
-    ctx.sysw_run(&proc_v6.join(format!("{XR_IF}/proxy_ndp")), "1");
-    ctx.ip6_run(&["neigh", "replace", "proxy", new_bare, "dev", &new_up_if]);
-    let bare128 = format!("{new_bare}/128");
-    ctx.ip6_run(&["route", "replace", &bare128, "dev", XR_IF]);
-    v6_tether_offload_off(ctx);
-
-    let ok = fs::read_to_string(proc_v6.join(format!("{new_up_if}/proxy_ndp")))
-        .is_ok_and(|text| text.trim() == "1");
-    if !ok {
+    if !v6_enable_proxy(ctx, &new_up_if, new_bare) {
         log::err(
             ctx.env,
             "net",
