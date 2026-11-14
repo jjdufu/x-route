@@ -2,20 +2,20 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::process::{self, Child, Command, ExitStatus, Stdio};
 
 use crate::config::Config;
 use crate::env::Env;
 use crate::log::{FAILURES, dlog, dlog_env, note_failure};
 
 #[derive(Debug, Clone)]
-pub struct ExecResult {
+pub struct Output {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
 }
 
-impl ExecResult {
+impl Output {
     #[must_use]
     pub const fn success(&self) -> bool {
         self.code == 0
@@ -64,7 +64,7 @@ fn format_cmd_for_log(env: &Env, prog: &Path, args: &[&str]) -> String {
     }
 }
 
-fn exit_code_from_output(out: &Output) -> i32 {
+fn exit_code_from_output(out: &process::Output) -> i32 {
     out.status.code().unwrap_or_else(|| {
         out.status
             .signal()
@@ -73,13 +73,7 @@ fn exit_code_from_output(out: &Output) -> i32 {
 }
 
 #[must_use]
-pub fn xr_exec(
-    env: &Env,
-    cfg: &Config,
-    prog: &Path,
-    args: &[&str],
-    pass_stderr: bool,
-) -> ExecResult {
+pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) -> Output {
     let mutating = is_mutating_args(args);
     let boot_log = env.boot_log();
     if boot_log.is_file() && mutating {
@@ -101,7 +95,7 @@ pub fn xr_exec(
                 &format!("rc=127 {cmd_str} | stderr: exec failed"),
             );
         }
-        return ExecResult {
+        return Output {
             code: 127,
             stdout: String::new(),
             stderr: String::new(),
@@ -143,7 +137,7 @@ pub fn xr_exec(
         dlog(env, cfg, "cmd", &format!("stderr 转发失败：{err}"));
     }
 
-    ExecResult {
+    Output {
         code,
         stdout,
         stderr,
@@ -153,7 +147,7 @@ pub fn xr_exec(
 /// 读取一次命令结果的成败：非 0 退出或无法执行时计数到 `FAILURES.exec`。
 ///
 /// 调试日志已由 [`xr_exec`] 写过，这里不重复写。
-pub(crate) fn note_exec_result(res: &ExecResult) {
+pub(crate) fn note_exec_result(res: &Output) {
     if !res.success() {
         note_failure(&FAILURES.exec);
     }
@@ -161,7 +155,7 @@ pub(crate) fn note_exec_result(res: &ExecResult) {
 
 /// 执行命令，只关心成败：非 0 退出或无法执行时计数，调用方不会得到结果。
 pub fn xr_run(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) {
-    note_exec_result(&xr_exec(env, cfg, prog, args, pass_stderr));
+    note_exec_result(&run_xr(env, cfg, prog, args, pass_stderr));
 }
 
 /// 处理不经 [`xr_exec`] 直接运行并等待的命令结果：非 0 退出或无法执行时计数，
@@ -197,6 +191,6 @@ pub(crate) fn note_spawn(env: &Env, what: &str, res: std::io::Result<Child>) {
 }
 
 #[must_use]
-pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> ExecResult {
-    xr_exec(env, cfg, prog, args, false)
+pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> Output {
+    run_xr(env, cfg, prog, args, false)
 }

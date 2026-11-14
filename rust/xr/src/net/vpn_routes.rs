@@ -150,7 +150,7 @@ fn route_via(ctx: &NetCtx<'_>, cidr: &str) -> String {
     }
 }
 
-fn ipx(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) -> crate::sys::exec::ExecResult {
+fn ipx(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) -> crate::sys::exec::Output {
     if is_ip6_cidr(cidr) {
         ctx.ip6(args)
     } else {

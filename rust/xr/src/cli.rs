@@ -28,7 +28,8 @@ use crate::net::run_net_cli;
 use crate::out::{emit, emit_lines};
 use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
-use crate::sys::spawn::{exec_crosvm_trampoline, spawn_self_detached};
+use crate::sys::spawn;
+use crate::sys::spawn::exec_crosvm_trampoline;
 use crate::sys::{ce_ready, wait_boot_completed};
 use crate::traffic::{acct_hooks, acct_json, acct_reset, acct_setup, acct_snapshot, acct_teardown};
 use crate::uninstall::{uninstall_now, uninstall_standard, uninstall_worker};
@@ -56,7 +57,7 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                     note_spawn(
                         env,
                         "xr internal net sync",
-                        spawn_self_detached(env, &["internal", "net", "sync"]),
+                        spawn::self_detached(env, &["internal", "net", "sync"]),
                     );
                 }
             }
@@ -148,7 +149,7 @@ fn bg_run(env: &Env, action: &str) -> i32 {
     note_spawn(
         env,
         "xr internal bg-exec",
-        spawn_self_detached(env, &["internal", "bg-exec", action]),
+        spawn::self_detached(env, &["internal", "bg-exec", action]),
     );
     emit(env, OK_JSON, 0)
 }

@@ -23,21 +23,21 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ip(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
-        crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ip"), args, true)
+    pub fn ip(&self, args: &[&str]) -> crate::sys::exec::Output {
+        crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ip"), args, true)
     }
 
     #[must_use]
-    pub fn ip6(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
+    pub fn ip6(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-6");
         full.extend_from_slice(args);
-        crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ip"), &full, true)
+        crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ip"), &full, true)
     }
 
     #[must_use]
-    pub fn ndc(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
-        crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ndc"), args, true)
+    pub fn ndc(&self, args: &[&str]) -> crate::sys::exec::Output {
+        crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ndc"), args, true)
     }
 
     #[must_use]
@@ -48,11 +48,11 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ipt(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
+    pub fn ipt(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
         full.extend_from_slice(args);
-        crate::sys::exec::xr_exec(
+        crate::sys::exec::run_xr(
             self.env,
             self.cfg,
             &self.env.sysbin_cmd("iptables"),
@@ -62,11 +62,11 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ip6t(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
+    pub fn ip6t(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
         full.extend_from_slice(args);
-        crate::sys::exec::xr_exec(
+        crate::sys::exec::run_xr(
             self.env,
             self.cfg,
             &self.env.sysbin_cmd("ip6tables"),

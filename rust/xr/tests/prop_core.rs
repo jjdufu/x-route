@@ -16,7 +16,7 @@ use xr::daemon::keepalive::{
 use xr::env::Env;
 use xr::log;
 use xr::log::{blog, boot_clean_run, xr_now};
-use xr::sys::exec::xr_exec;
+use xr::sys::exec;
 use xr::sys::{cgroup_escape, cgroup_in_apps};
 
 fn make_test_env(tmp: &TempDir) -> Env {
@@ -234,14 +234,14 @@ fn test_set_kv_log_boot_clean_and_cgroup() {
     let _ = fs::File::create(env.boot_log());
     blog(&env, "vm", "step 1");
     let cfg = Config::load(&env);
-    let _ = xr_exec(
+    let _ = exec::run_xr(
         &env,
         &cfg,
         std::path::Path::new("/bin/true"),
         &["add", "x"],
         false,
     );
-    let _ = xr_exec(
+    let _ = exec::run_xr(
         &env,
         &cfg,
         std::path::Path::new("/bin/true"),

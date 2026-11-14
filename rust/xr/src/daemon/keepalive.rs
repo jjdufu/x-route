@@ -14,10 +14,11 @@ use crate::log::note_ok;
 use crate::log::note_rc;
 use crate::log::unix_now;
 use crate::net::common::NetCtx;
+use crate::sys;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
-use crate::sys::{is_pid_running, proc_cmdline, shutdown_note, sys_shutting_down};
+use crate::sys::{is_pid_running, proc_cmdline, shutdown_note};
 use crate::traffic::acct_total;
 use crate::vm::{run_net_hook, vm_running};
 
@@ -385,7 +386,7 @@ pub fn vmm_has_guest_reset(vmm: &str) -> bool {
 
 #[must_use]
 pub fn vm_guest_reset_pending(env: &Env) -> bool {
-    if vm_stopping(env) || xr_vm_alive(env) || sys_shutting_down(env) {
+    if vm_stopping(env) || xr_vm_alive(env) || sys::shutting_down(env) {
         return false;
     }
     let st = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
@@ -428,7 +429,7 @@ pub fn routes_emergency_down(env: &Env) {
 
 pub fn emergency_teardown(env: &Env, why: &str) {
     let run = env.run_dir();
-    if sys_shutting_down(env) {
+    if sys::shutting_down(env) {
         shutdown_note(env, "daemon");
         if xr_vm_alive(env) {
             return;

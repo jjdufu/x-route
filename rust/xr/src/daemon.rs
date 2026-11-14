@@ -23,10 +23,11 @@ use crate::log::note_ok;
 use crate::log::note_rc;
 use crate::log::{debug_expire, rotate_all_logs, unix_now};
 use crate::net::common::NetCtx;
+use crate::sys;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
-use crate::sys::spawn::spawn_self_detached;
-use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note, sys_shutting_down};
+use crate::sys::spawn;
+use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note};
 use crate::traffic::acct_snapshot;
 use crate::vm::{run_net_hook, vm_running, vm_start_exec, vm_stop_exec};
 
@@ -116,7 +117,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
         note_ok(env, "cgroup_escape", cgroup_escape(env, &wp));
         return true;
     }
-    if spawn_self_detached(env, &["internal", "watchdog"]).is_err() {
+    if spawn::self_detached(env, &["internal", "watchdog"]).is_err() {
         log::err(env, "daemon", "看门狗未能启动");
         return false;
     }
@@ -151,7 +152,7 @@ pub fn ensure(env: &Env) -> bool {
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("daemon.ready"));
     fsx::remove_logged(env, run.join("daemon.res"));
-    if spawn_self_detached(env, &["internal", "daemon"]).is_err() {
+    if spawn::self_detached(env, &["internal", "daemon"]).is_err() {
         log::err(env, "daemon", "守护进程未能启动");
         return false;
     }
@@ -268,7 +269,7 @@ pub fn main_loop(env: &Env) -> i32 {
     let mut reset_times: Vec<u64> = Vec::new();
     loop {
         if term.load(Ordering::Relaxed) {
-            if sys_shutting_down(env) {
+            if sys::shutting_down(env) {
                 shutdown_note(env, "daemon");
             } else {
                 log::info(env, "daemon", "收到 TERM，守护进程退出");
@@ -315,7 +316,7 @@ pub fn main_loop(env: &Env) -> i32 {
                     _ => 2,
                 };
                 fsx::write_logged(env, run.join("daemon.res"), format!("{rc}\n"));
-                if term.load(Ordering::Relaxed) && !sys_shutting_down(env) {
+                if term.load(Ordering::Relaxed) && !sys::shutting_down(env) {
                     log::info(env, "daemon", "停止流程完成，响应 TERM 退出");
                     clean_daemon_pid(env, &self_pid);
                     return 0;
@@ -325,7 +326,7 @@ pub fn main_loop(env: &Env) -> i32 {
             }
         }
 
-        if sys_shutting_down(env) {
+        if sys::shutting_down(env) {
             shutdown_note(env, "daemon");
             clean_daemon_pid(env, &self_pid);
             return 0;

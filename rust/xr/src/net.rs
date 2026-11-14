@@ -28,7 +28,7 @@ use crate::net::vpn_routes::{
 use crate::out::emit;
 use crate::sys::exec::note_exec_result;
 use crate::sys::fsx;
-use crate::sys::spawn::spawn_self_detached;
+use crate::sys::spawn;
 use crate::sys::{LockWait, PathLock, send_signal};
 use crate::traffic::{acct_hooks, acct_present, acct_present6, acct_setup, acct_teardown};
 
@@ -994,7 +994,7 @@ pub fn up(env: &Env) -> i32 {
         sync_all_unlocked(env);
     }
 
-    if let Ok(child) = spawn_self_detached(env, &["internal", "net", "watch"]) {
+    if let Ok(child) = spawn::self_detached(env, &["internal", "net", "watch"]) {
         fsx::write_logged(env, run.join("net_watch.pid"), format!("{}\n", child.id()));
     }
     let mode_s = fs::read_to_string(run.join("net.mode")).unwrap_or_default();

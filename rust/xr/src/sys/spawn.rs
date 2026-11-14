@@ -30,7 +30,7 @@ pub fn unlock_memlock_rlimit(env: &Env) {
     }
 }
 
-pub fn spawn_self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
+pub fn self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
     let exe = env.self_exe();
     Command::new(exe)
         .args(args)
@@ -43,7 +43,7 @@ pub fn spawn_self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
         .spawn()
 }
 
-pub fn spawn_self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::Result<Child> {
+pub fn self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::Result<Child> {
     if let Some(parent) = log_path.parent() {
         fsx::mkdirs_logged(env, parent);
     }

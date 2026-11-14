@@ -17,9 +17,9 @@ use crate::env::Env;
 use crate::log;
 use crate::log::note_ok;
 use crate::log::rotate_all_logs;
+use crate::sys;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
-use crate::sys::sys_shutting_down;
 
 #[must_use]
 pub fn main_loop(env: &Env) -> i32 {
@@ -50,7 +50,7 @@ pub fn main_loop(env: &Env) -> i32 {
             fsx::remove_logged(env, run.join("watchdog.pid"));
             return 0;
         }
-        if sys_shutting_down(env) {
+        if sys::shutting_down(env) {
             fsx::remove_logged(env, run.join("watchdog.pid"));
             return 0;
         }

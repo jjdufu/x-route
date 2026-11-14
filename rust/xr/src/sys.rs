@@ -296,7 +296,7 @@ pub fn wait_boot_completed() {
 }
 
 #[must_use]
-pub fn sys_shutting_down(env: &Env) -> bool {
+pub fn shutting_down(env: &Env) -> bool {
     let marker = env.run_dir().join("shutdown");
     if marker.is_file() {
         return true;

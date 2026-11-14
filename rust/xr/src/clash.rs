@@ -19,7 +19,7 @@ use crate::log;
 use crate::log::{FAILURES, dlog_env, note_failure};
 use crate::out::{self, emit};
 use crate::sys::fsx;
-use crate::sys::spawn::spawn_self_detached;
+use crate::sys::spawn;
 use crate::sys::{is_pid_running, send_signal_logged};
 use crate::vm::{reap_in_background, vm_running};
 
@@ -102,7 +102,7 @@ pub fn start_clash_mux(env: &Env) {
     stop_clash_mux(env);
     let run = env.run_dir();
     let ready = run.join("clash_mux.ready");
-    let Ok(mux) = spawn_self_detached(env, &["internal", "clash-mux"]) else {
+    let Ok(mux) = spawn::self_detached(env, &["internal", "clash-mux"]) else {
         log::info(env, "clash", "clash-mux 启动失败");
         return;
     };

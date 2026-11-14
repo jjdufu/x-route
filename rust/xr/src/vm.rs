@@ -23,7 +23,7 @@ use crate::net::run_net_cli;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
-use crate::sys::spawn::spawn_self_detached;
+use crate::sys::spawn;
 use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
 use crate::vm::share::share_prepare;
 
@@ -616,7 +616,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         return 1;
     }
 
-    if let Ok(fw) = spawn_self_detached(env, &["internal", "fuse-watch"]) {
+    if let Ok(fw) = spawn::self_detached(env, &["internal", "fuse-watch"]) {
         fsx::write_logged(env, run.join("fuse_watch.pid"), format!("{}\n", fw.id()));
         if env.in_daemon {
             reap_in_background(fw);
