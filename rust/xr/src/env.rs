@@ -155,44 +155,16 @@ fn var_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+/// 读环境变量 `key` 作为路径，未设置或为空时取 `default`。
+fn path_var(key: &str, default: &str) -> PathBuf {
+    PathBuf::from(var_nonempty(key).unwrap_or_else(|| default.to_owned()))
+}
+
 impl Env {
     /// 从当前进程的环境变量构造运行环境，未设置的项取真机默认路径。
     pub fn from_process() -> Self {
-        let moddir = PathBuf::from(
-            var_nonempty("MODDIR").unwrap_or_else(|| "/data/adb/modules/xrouter".to_owned()),
-        );
-        let xr_data = PathBuf::from(
-            var_nonempty("XR_DATA").unwrap_or_else(|| "/data/adb/xrouter".to_owned()),
-        );
-        let bb = PathBuf::from(
-            var_nonempty("BB").unwrap_or_else(|| "/data/adb/ksu/bin/busybox".to_owned()),
-        );
-        let media = PathBuf::from(
-            var_nonempty("XR_MEDIA")
-                .or_else(|| var_nonempty("MEDIA"))
-                .unwrap_or_else(|| "/data/media/0".to_owned()),
-        );
-        let rw_map_opt = env::var("RW_MAP_OPT").unwrap_or_default();
-        let sysbin =
-            PathBuf::from(var_nonempty("XR_SYSBIN").unwrap_or_else(|| "/system/bin".to_owned()));
-        let proc_dir = PathBuf::from(var_nonempty("XR_PROC").unwrap_or_else(|| "/proc".to_owned()));
-        let proc_base =
-            PathBuf::from(var_nonempty("XR_PROC_BASE").unwrap_or_else(|| "/proc".to_owned()));
-        let proc_uptime = PathBuf::from(
-            var_nonempty("XR_PROC_UPTIME").unwrap_or_else(|| "/proc/uptime".to_owned()),
-        );
-        let proc_mounts = PathBuf::from(
-            var_nonempty("XR_PROC_MOUNTS").unwrap_or_else(|| "/proc/mounts".to_owned()),
-        );
-        let sysnet =
-            PathBuf::from(var_nonempty("XR_SYSNET").unwrap_or_else(|| "/sys/class/net".to_owned()));
-        let cgroup_root = PathBuf::from(
-            var_nonempty("XR_CGROUP_ROOT").unwrap_or_else(|| "/sys/fs/cgroup".to_owned()),
-        );
-        let crosvm = PathBuf::from(
-            var_nonempty("CROSVM")
-                .unwrap_or_else(|| "/apex/com.android.virt/bin/crosvm".to_owned()),
-        );
+        let moddir = path_var("MODDIR", "/data/adb/modules/xrouter");
+        let sysbin = path_var("XR_SYSBIN", "/system/bin");
         let notifier_jar = var_nonempty("XR_NOTIFIER_JAR")
             .map_or_else(|| moddir.join("bin/xrnotify.jar"), PathBuf::from);
         let app_process = var_nonempty("XR_APP_PROCESS")
@@ -200,26 +172,27 @@ impl Env {
 
         Self {
             moddir,
-            xr_data,
-            bb,
-            media,
-            rw_map_opt,
+            xr_data: path_var("XR_DATA", "/data/adb/xrouter"),
+            bb: path_var("BB", "/data/adb/ksu/bin/busybox"),
+            media: PathBuf::from(
+                var_nonempty("XR_MEDIA")
+                    .or_else(|| var_nonempty("MEDIA"))
+                    .unwrap_or_else(|| "/data/media/0".to_owned()),
+            ),
+            rw_map_opt: env::var("RW_MAP_OPT").unwrap_or_default(),
             sysbin,
-            proc_dir,
-            proc_base,
-            proc_uptime,
-            proc_mounts,
-            sysnet,
-            cgroup_root,
-            crosvm,
+            proc_dir: path_var("XR_PROC", "/proc"),
+            proc_base: path_var("XR_PROC_BASE", "/proc"),
+            proc_uptime: path_var("XR_PROC_UPTIME", "/proc/uptime"),
+            proc_mounts: path_var("XR_PROC_MOUNTS", "/proc/mounts"),
+            sysnet: path_var("XR_SYSNET", "/sys/class/net"),
+            cgroup_root: path_var("XR_CGROUP_ROOT", "/sys/fs/cgroup"),
+            crosvm: path_var("CROSVM", "/apex/com.android.virt/bin/crosvm"),
             notifier_jar,
             app_process,
             screen_override: var_nonempty("XR_SCREEN"),
             download_override: var_nonempty("XR_DOWNLOAD").map(PathBuf::from),
-            modules_update: PathBuf::from(
-                var_nonempty("XR_MODULES_UPDATE")
-                    .unwrap_or_else(|| "/data/adb/modules_update".to_owned()),
-            ),
+            modules_update: path_var("XR_MODULES_UPDATE", "/data/adb/modules_update"),
             tmpdir: var_nonempty("XR_TMPDIR").map(PathBuf::from),
             hs_any: var_nonempty("XR_HS_ANY").is_some(),
             ipv6_wait: var_u64("XR_IPV6_WAIT", 20),
