@@ -13,6 +13,7 @@ use crate::net::vpn_routes::is_default_route;
 use crate::sys::fsx;
 use crate::vm::{vm_running, vpn_sync_host};
 
+#[must_use]
 pub fn vpn_slug(name: &str) -> String {
     let mut out = String::new();
     let mut last_us = false;
@@ -161,6 +162,7 @@ pub fn vpn_rejected(env: &Env) -> Vec<String> {
     out
 }
 
+#[must_use]
 pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     let vn = fs::read_to_string(env.xr_data.join("config/openvpn.name"))
         .unwrap_or_default()
@@ -236,6 +238,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
     out
 }
 
+#[must_use]
 pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     vpn_migrate_legacy(env);
     let vpn_dir = env.vpn_dir();
@@ -346,6 +349,7 @@ fn valid_profile_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+#[must_use]
 pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String) {
     let src_s = env.canon_share_path(path_arg);
     let media_s = env.media.to_string_lossy();
@@ -457,6 +461,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     )
 }
 
+#[must_use]
 pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     let want = match act {
         "enable" => true,
@@ -617,6 +622,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
     (1, "{\"ok\":false,\"error\":\"未响应\"}".to_owned())
 }
 
+#[must_use]
 pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     vpn_migrate_legacy(env);
     if !valid_profile_id(did) {
@@ -648,6 +654,7 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     (0, "{\"ok\":true}".to_owned())
 }
 
+#[must_use]
 pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     if !vm_running(env) {
         return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
@@ -696,6 +703,7 @@ pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
     (1, "{\"ok\":false,\"error\":\"服务未响应\"}".to_owned())
 }
 
+#[must_use]
 pub fn list_dir(env: &Env, path_arg: &str, mode: &str) -> (i32, Vec<String>) {
     let raw = if path_arg.is_empty() {
         env.media.to_string_lossy().into_owned()

@@ -9,6 +9,7 @@ use crate::log::{log_err, log_info};
 use crate::sys::fsx;
 use crate::vm::vm_running;
 
+#[must_use]
 pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
     if vm_running(env) {
         log_err(env, "vm", "请先停止 VM");
@@ -49,6 +50,7 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
     0
 }
 
+#[must_use]
 pub fn disk_reset(env: &Env) -> i32 {
     if vm_running(env) {
         log_err(env, "vm", "请先停止 VM");

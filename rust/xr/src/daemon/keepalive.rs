@@ -20,6 +20,7 @@ use crate::sys::{is_pid_running, proc_cmdline, shutdown_note, sys_shutting_down}
 use crate::traffic::acct_total;
 use crate::vm::{run_net_hook, vm_running};
 
+#[must_use]
 pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
     let trimmed = pid.trim();
     if trimmed.is_empty() || !is_pid_running(env, trimmed) {
@@ -79,6 +80,7 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     }
 }
 
+#[must_use]
 pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     let content = fs::read_to_string(env.proc_base.join(pid.trim()).join("cgroup")).ok()?;
     for line in content.lines() {
@@ -93,6 +95,7 @@ pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
     None
 }
 
+#[must_use]
 pub fn cgroup_in_apps(env: &Env, pid: &str) -> bool {
     let Some(p) = cgroup_path(env, pid) else {
         return false;
@@ -104,6 +107,7 @@ pub fn cgroup_in_apps(env: &Env, pid: &str) -> bool {
         || p.contains("suki")
 }
 
+#[must_use]
 pub fn xr_vm_alive(env: &Env) -> bool {
     if vm_running(env) {
         return true;
@@ -119,6 +123,7 @@ pub fn xr_vm_alive(env: &Env) -> bool {
     proc_cmdline(env, p).is_some_and(|c| c.contains("crosvm"))
 }
 
+#[must_use]
 pub fn vm_stopping(env: &Env) -> bool {
     let st = env.run_dir().join("stopping");
     if !st.is_file() {
@@ -128,6 +133,7 @@ pub fn vm_stopping(env: &Env) -> bool {
     is_pid_running(env, sp.trim())
 }
 
+#[must_use]
 pub fn notify_state(env: &Env) -> &'static str {
     let s = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
     match s.trim() {
@@ -137,6 +143,7 @@ pub fn notify_state(env: &Env) -> &'static str {
     }
 }
 
+#[must_use]
 pub fn notify_payload(env: &Env, cfg: &Config) -> String {
     let m = cfg.notify_traffic();
     let ctx = NetCtx::new(env, cfg);
@@ -165,6 +172,7 @@ pub fn screen_on(env: &Env) -> bool {
     true
 }
 
+#[must_use]
 pub fn notifier_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("notifier.pid")).unwrap_or_default();
     let p = pid.trim();
@@ -255,6 +263,7 @@ fn notifier_wait(env: &Env, expected: &str) -> bool {
     false
 }
 
+#[must_use]
 pub fn notifier_post(env: &Env, payload: &str) -> bool {
     if !notifier_start(env) || !notifier_req(env, payload) {
         return false;
@@ -354,6 +363,7 @@ pub fn notify_update(env: &Env) {
 
 pub const VMM_RUN_MARKER: &str = "=== xr crosvm start ";
 
+#[must_use]
 pub fn vmm_last_run_slice(vmm: &str) -> &str {
     if let Some(idx) = vmm.rfind(VMM_RUN_MARKER) {
         let after = vmm.get(idx..).unwrap_or("");
@@ -365,11 +375,13 @@ pub fn vmm_last_run_slice(vmm: &str) -> &str {
     vmm
 }
 
+#[must_use]
 pub fn vmm_has_guest_reset(vmm: &str) -> bool {
     let cur = vmm_last_run_slice(vmm);
     cur.contains("vcpu requested reset") || cur.contains("system reset event")
 }
 
+#[must_use]
 pub fn vm_guest_reset_pending(env: &Env) -> bool {
     if vm_stopping(env) || xr_vm_alive(env) || sys_shutting_down(env) {
         return false;
@@ -381,6 +393,7 @@ pub fn vm_guest_reset_pending(env: &Env) -> bool {
     fs::read_to_string(env.vmm_log()).is_ok_and(|s| vmm_has_guest_reset(&s))
 }
 
+#[must_use]
 pub fn vm_exit_reason(env: &Env) -> String {
     let p = fs::read_to_string(env.run_dir().join("crosvm.pid"))
         .unwrap_or_default()
@@ -478,6 +491,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     notify_cancel(env);
 }
 
+#[must_use]
 pub fn stale_gateway(env: &Env) -> bool {
     let run = env.run_dir();
     if !run.join("net.gw").is_file() || vm_stopping(env) {

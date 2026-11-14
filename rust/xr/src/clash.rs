@@ -39,6 +39,7 @@ impl Default for ClashStatus {
     }
 }
 
+#[must_use]
 pub fn clash_status(env: &Env, alive: bool) -> ClashStatus {
     if !alive {
         return ClashStatus::default();
@@ -498,6 +499,7 @@ fn note_sock(env: &Env, what: &str, res: std::io::Result<()>) {
     }
 }
 
+#[must_use]
 pub fn run_clash_mux(env: &Env) -> i32 {
     let run = env.run_dir();
     let ctl_sock = run.join("clash-ctl.sock");
@@ -628,6 +630,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     0
 }
 
+#[must_use]
 pub fn run_clash_bridge(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(stream) = UnixStream::connect(&rpc_sock) else {
@@ -680,6 +683,7 @@ pub fn run_clash_bridge(env: &Env) -> i32 {
     0
 }
 
+#[must_use]
 pub fn run_clash_ping(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
     let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
@@ -749,6 +753,7 @@ fn render_rpc_line(line: &str) -> String {
     )
 }
 
+#[must_use]
 pub fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     let Ok(mut val) = serde_json::from_str::<Value>(req_json) else {
         return emit(
@@ -863,6 +868,7 @@ pub fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     0
 }
 
+#[must_use]
 pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i32 {
     if ws_id.is_empty() {
         return 2;
@@ -908,6 +914,7 @@ pub fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i
     }
 }
 
+#[must_use]
 pub fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     if ws_id.is_empty() {
         return 2;

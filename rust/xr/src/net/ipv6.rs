@@ -11,10 +11,12 @@ use crate::net::vpn_routes::tether_ifaces;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
 
+#[must_use]
 pub fn vm_v6(env: &Env) -> bool {
     fs::read_to_string(env.run_dir().join("guest/guest/ipv6")).is_ok_and(|s| s.trim() == "1")
 }
 
+#[must_use]
 pub fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     if iface.is_empty() {
         return Vec::new();
@@ -33,6 +35,7 @@ pub fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     res
 }
 
+#[must_use]
 pub fn v6_discover(ctx: &NetCtx<'_>, outs6: &[String]) -> Option<(String, String, Vec<String>)> {
     let run = ctx.env.run_dir();
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
@@ -196,6 +199,7 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
 }
 
+#[must_use]
 pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let run = ctx.env.run_dir();
     let Some((pfx, up_if, busy)) = v6_discover(ctx, outs6) else {
@@ -288,6 +292,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     true
 }
 
+#[must_use]
 pub fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
     let mut ifaces = outs6.to_vec();
     ifaces.extend(tether_ifaces(ctx));
@@ -349,6 +354,7 @@ fn nft_cmd(args: &[&str]) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+#[must_use]
 pub fn v6_nft_setup(env: &Env) -> bool {
     if !nft_cmd(&["list", "tables"]) {
         return false;

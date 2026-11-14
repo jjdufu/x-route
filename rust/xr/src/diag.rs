@@ -49,6 +49,7 @@ fn dsec(out: &mut String, title: &str, bin: &Path, args: &[&str]) {
     out.push('\n');
 }
 
+#[must_use]
 pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
     let mut hosts = BTreeSet::new();
     let mut files = vec![
@@ -87,6 +88,7 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
     hosts.into_iter().collect()
 }
 
+#[must_use]
 pub fn diag_redact(env: &Env, input: &str) -> String {
     let mut out = Vec::new();
     let mut in_pem = false;
@@ -178,6 +180,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
     text
 }
 
+#[must_use]
 pub fn diag_phone(env: &Env) -> String {
     let mut out = String::new();
     let ip_bin = env.sysbin_cmd("ip");
@@ -550,6 +553,7 @@ pub fn diag_snap_bg(env: &Env, reason: &str) {
     }
 }
 
+#[must_use]
 pub fn diag_logcat() -> String {
     let out = sys_cmd_output(
         Path::new("logcat"),
@@ -586,6 +590,7 @@ pub fn diag_logcat() -> String {
     filtered.get(skip..).unwrap_or(&[]).join("\n")
 }
 
+#[must_use]
 pub fn download_dir(env: &Env) -> Option<PathBuf> {
     if let Some(d) = &env.download_override {
         if fs::create_dir_all(d).is_ok() {
@@ -640,6 +645,7 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
     zw.finish().is_ok()
 }
 
+#[must_use]
 pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
     let Some(dest) = download_dir(env) else {
         return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();

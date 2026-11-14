@@ -16,6 +16,7 @@ const HS_TABLE: &str = "234";
 const HS_PREF: &str = "19050";
 const HS_PREF4: &str = "4790";
 
+#[must_use]
 pub fn vm_alive(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let trimmed = pid.trim();
@@ -25,6 +26,7 @@ pub fn vm_alive(env: &Env) -> bool {
     proc_cmdline(env, trimmed).map_or(true, |c| c.contains("crosvm"))
 }
 
+#[must_use]
 pub fn vm_is_ready(env: &Env) -> bool {
     if !vm_alive(env) {
         return false;
@@ -33,6 +35,7 @@ pub fn vm_is_ready(env: &Env) -> bool {
     matches!(st.trim(), "ready" | "stable")
 }
 
+#[must_use]
 pub fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     if !ctx.ip(&["link", "show", HS_TAP]).success()
         && !ctx.ip(&["tuntap", "add", HS_TAP, "mode", "tap"]).success()
@@ -56,6 +59,7 @@ pub fn hs_tap_down(ctx: &NetCtx<'_>) {
     ctx.ip_run(&["link", "del", HS_TAP]);
 }
 
+#[must_use]
 pub fn hs_master(env: &Env, iface: &str) -> String {
     fs::read_link(env.sysnet.join(iface).join("master"))
         .ok()
@@ -63,6 +67,7 @@ pub fn hs_master(env: &Env, iface: &str) -> String {
         .unwrap_or_default()
 }
 
+#[must_use]
 pub fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     let mut cands = Vec::new();
     if let Ok(prev) = fs::read_to_string(ctx.env.run_dir().join("net.hs_if")) {
@@ -92,10 +97,12 @@ pub fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     None
 }
 
+#[must_use]
 pub fn hs_guest_ok(env: &Env) -> bool {
     env.run_dir().join("guest/guest/hotspot").is_file()
 }
 
+#[must_use]
 pub fn hs_want(ctx: &NetCtx<'_>) -> bool {
     ctx.cfg.hotspot_bridge()
         && ctx.cfg.vm_net()
@@ -103,6 +110,7 @@ pub fn hs_want(ctx: &NetCtx<'_>) -> bool {
         && ctx.env.sysnet.join(HS_TAP).is_dir()
 }
 
+#[must_use]
 pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
@@ -178,6 +186,7 @@ pub fn hs_rules_clear(ctx: &NetCtx<'_>) {
     ctx.ip6_run(&["route", "flush", "table", HS_TABLE]);
 }
 
+#[must_use]
 pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
     let hf = ctx.cfg.hotspot_subnet();
     let clash_file = ctx.env.run_dir().join("net.hs_clash");

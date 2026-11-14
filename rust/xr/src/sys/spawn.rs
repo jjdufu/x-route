@@ -64,6 +64,7 @@ pub fn spawn_self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::
         .spawn()
 }
 
+#[must_use]
 pub fn exec_crosvm_trampoline(env: &Env, raw_args: &[String]) -> i32 {
     enter_detached_session(env);
     unlock_memlock_rlimit(env);

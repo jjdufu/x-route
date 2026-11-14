@@ -10,6 +10,7 @@ pub struct ShareSpec {
     pub wrap: Vec<String>,
 }
 
+#[must_use]
 pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
     let mut res = ShareSpec {
         mode: "off".to_owned(),

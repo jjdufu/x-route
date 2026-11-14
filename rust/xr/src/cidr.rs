@@ -2,10 +2,12 @@ use std::process::Command;
 
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF};
 
+#[must_use]
 pub fn is_uint(s: &str) -> bool {
     !s.is_empty() && s.len() <= 6 && s.bytes().all(|b| b.is_ascii_digit())
 }
 
+#[must_use]
 pub fn parse_uint(s: &str) -> Option<u32> {
     if !is_uint(s) {
         return None;
@@ -13,10 +15,12 @@ pub fn parse_uint(s: &str) -> Option<u32> {
     s.parse::<u32>().ok()
 }
 
+#[must_use]
 pub fn in_range(s: &str, min: u32, max: u32) -> bool {
     parse_uint(s).is_some_and(|v| v >= min && v <= max)
 }
 
+#[must_use]
 pub fn valid_ip4(raw: &str) -> bool {
     let mut parts = raw.split('.');
     let (Some(o1), Some(o2), Some(o3), Some(o4), None) = (
@@ -45,6 +49,7 @@ pub fn valid_ip4(raw: &str) -> bool {
     true
 }
 
+#[must_use]
 pub fn ip2int(raw: &str) -> Option<u32> {
     let mut parts = raw.split('.');
     let (Some(o1), Some(o2), Some(o3), Some(o4), None) = (
@@ -75,6 +80,7 @@ pub fn ip2int(raw: &str) -> Option<u32> {
     Some(out)
 }
 
+#[must_use]
 pub const fn prefix_mask(plen: u8) -> Option<u32> {
     if plen == 0 {
         Some(0)
@@ -86,6 +92,7 @@ pub const fn prefix_mask(plen: u8) -> Option<u32> {
     }
 }
 
+#[must_use]
 pub fn mask2len(s: &str) -> Option<u8> {
     if !valid_ip4(s) {
         return None;
@@ -108,6 +115,7 @@ fn collect_v6_groups(s: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
+#[must_use]
 pub fn ip6_expand(s: &str) -> Option<String> {
     if s.is_empty() {
         return None;
@@ -152,6 +160,7 @@ pub fn ip6_expand(s: &str) -> Option<String> {
     Some(out)
 }
 
+#[must_use]
 pub fn ip6_mask(hex32: &str, plen: u8) -> Option<String> {
     if hex32.len() != 32 || plen > 128 {
         return None;
@@ -168,6 +177,7 @@ pub fn ip6_mask(hex32: &str, plen: u8) -> Option<String> {
     Some(format!("{masked:032x}"))
 }
 
+#[must_use]
 pub fn ip6_format(hex32: &str) -> Option<String> {
     if hex32.len() != 32 || !hex32.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -181,6 +191,7 @@ pub fn ip6_format(hex32: &str) -> Option<String> {
     Some(groups.join(":"))
 }
 
+#[must_use]
 pub fn norm_route(raw: &str) -> Option<String> {
     if raw.is_empty() || raw == "default" {
         return None;
@@ -227,10 +238,12 @@ pub fn norm_route(raw: &str) -> Option<String> {
     None
 }
 
+#[must_use]
 pub fn valid_cidr(raw: &str) -> bool {
     norm_route(raw).is_some()
 }
 
+#[must_use]
 pub fn cidr_private(raw: &str) -> bool {
     let Some((addr, plen_s)) = raw.split_once('/') else {
         return false;
@@ -259,6 +272,7 @@ pub fn cidr_private(raw: &str) -> bool {
     }
 }
 
+#[must_use]
 pub fn cidr_aligned(raw: &str) -> bool {
     let Some(norm) = norm_route(raw) else {
         return false;
@@ -288,6 +302,7 @@ pub fn cidr_aligned(raw: &str) -> bool {
     }
 }
 
+#[must_use]
 pub fn cidr_overlap(a: &str, b: &str) -> bool {
     let (Some(ca), Some(cb)) = (norm_route(a), norm_route(b)) else {
         return false;
@@ -315,6 +330,7 @@ pub fn cidr_overlap(a: &str, b: &str) -> bool {
     }
 }
 
+#[must_use]
 pub fn cidr_net(raw: &str) -> Option<String> {
     let (addr, plen_s) = raw.split_once('/')?;
     let plen: u8 = plen_s.parse().ok()?;
@@ -330,6 +346,7 @@ pub fn cidr_net(raw: &str) -> Option<String> {
     ))
 }
 
+#[must_use]
 pub fn mac_eui64(mac: &str) -> Option<String> {
     let lower = mac.to_ascii_lowercase();
     let parts: Vec<&str> = lower.split(':').collect();
@@ -350,12 +367,14 @@ pub fn mac_eui64(mac: &str) -> Option<String> {
     ))
 }
 
+#[must_use]
 pub fn hs_mac(vm_mac: &str) -> Option<String> {
     let (prefix, last) = vm_mac.rsplit_once(':')?;
     let byte = u8::from_str_radix(last, 16).ok()?;
     Some(format!("{prefix}:{:02x}", byte ^ 0x01))
 }
 
+#[must_use]
 pub fn v6_is_ll(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
     ip6_expand(bare).is_some_and(|h| {
@@ -363,11 +382,13 @@ pub fn v6_is_ll(addr: &str) -> bool {
     })
 }
 
+#[must_use]
 pub fn v6_is_ula(addr: &str) -> bool {
     let bare = addr.split('/').next().unwrap_or(addr);
     ip6_expand(bare).is_some_and(|h| h.starts_with("fc") || h.starts_with("fd"))
 }
 
+#[must_use]
 pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
     let (addr, plen_s) = pfx.split_once('/')?;
     let plen: u8 = plen_s.parse().ok()?;
@@ -381,6 +402,7 @@ pub fn v6_compose(pfx: &str, iid16: &str) -> Option<String> {
     ip6_format(&full)
 }
 
+#[must_use]
 pub fn v6_addr_eq(a: &str, b: &str) -> bool {
     let aa = a.split('/').next().unwrap_or(a);
     let ba = b.split('/').next().unwrap_or(b);
@@ -390,6 +412,7 @@ pub fn v6_addr_eq(a: &str, b: &str) -> bool {
     ea == eb
 }
 
+#[must_use]
 pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
     let (_, plen_s) = pfx.split_once('/')?;
     let plen: u8 = plen_s.parse().ok()?;
@@ -415,6 +438,7 @@ pub fn v6_pick_addr(pfx: &str, busy: &[String], mac: &str) -> Option<String> {
     None
 }
 
+#[must_use]
 pub fn hs_subnet_valid(raw: &str) -> bool {
     let Some((addr, plen_s)) = raw.split_once('/') else {
         return false;
@@ -442,6 +466,7 @@ pub fn hs_subnet_valid(raw: &str) -> bool {
     host != 0 && host != bcast
 }
 
+#[must_use]
 pub fn hs_subnet_clash(
     env: &Env,
     net_prefix: &str,

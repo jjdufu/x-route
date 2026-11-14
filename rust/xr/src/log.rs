@@ -81,24 +81,29 @@ fn format_failures_line(fs_n: u64, exec_n: u64, log_n: u64) -> String {
     format!("best_effort_failures fs={fs_n} exec={exec_n} log={log_n}\n")
 }
 
+#[must_use]
 pub fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
 
+#[must_use]
 pub fn time_hms() -> String {
     Local::now().format("%H:%M:%S").to_string()
 }
 
+#[must_use]
 pub fn time_ymdhms_compact() -> String {
     Local::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
+#[must_use]
 pub fn time_full_tz() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S %z").to_string()
 }
 
+#[must_use]
 pub fn xr_now(env: &Env) -> String {
     if !env.fake_date_fail {
         let s = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -267,6 +272,7 @@ pub fn debug_expire(env: &Env) {
     }
 }
 
+#[must_use]
 pub fn boot_clean_run(env: &Env) -> bool {
     let run = env.run_dir();
     if !run.is_dir() {

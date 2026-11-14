@@ -24,10 +24,12 @@ pub const RESTART_KEYS: &[&str] = &[
     "VM_SHARE_PATH",
 ];
 
+#[must_use]
 pub fn needs_restart(env: &Env, key: &str) -> bool {
     RESTART_KEYS.contains(&key) && vm_running(env)
 }
 
+#[must_use]
 pub fn status_json(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
@@ -156,6 +158,7 @@ pub fn status_json(env: &Env) -> String {
     .to_string()
 }
 
+#[must_use]
 pub fn status_line(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();

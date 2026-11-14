@@ -8,10 +8,12 @@ use crate::log::{dlog, log_err};
 use crate::net::common::NetCtx;
 use crate::sys::fsx;
 
+#[must_use]
 pub fn guest_routes_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
     ctx.env.run_dir().join("guest/guest/openvpn.routes")
 }
 
+#[must_use]
 pub fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     let Ok(content) = fs::read_to_string(ctx.env.ctl_log()) else {
         return String::new();
@@ -38,6 +40,7 @@ pub fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
         .collect()
 }
 
+#[must_use]
 pub fn is_default_route(r: &str) -> bool {
     matches!(
         r,
@@ -45,10 +48,12 @@ pub fn is_default_route(r: &str) -> bool {
     )
 }
 
+#[must_use]
 pub fn is_ip6_cidr(r: &str) -> bool {
     r.contains(':')
 }
 
+#[must_use]
 pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     let out = ctx.ip(&["route", "show", "table", "local_network"]);
     let mut set = BTreeSet::new();
@@ -67,6 +72,7 @@ pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
+#[must_use]
 pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
     let up = up.trim();
@@ -183,6 +189,7 @@ pub fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
     ipx_run(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
 }
 
+#[must_use]
 pub fn cksum_crc_like(bytes: &[u8]) -> String {
     // Simple deterministic fingerprint matching cksum presence/absence semantics for net_watch
     let mut crc: u32 = 0;
@@ -192,6 +199,7 @@ pub fn cksum_crc_like(bytes: &[u8]) -> String {
     format!("{crc} {}", bytes.len())
 }
 
+#[must_use]
 pub fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
     match fs::read(guest_routes_file(ctx)) {
         Ok(bytes) => cksum_crc_like(&bytes),

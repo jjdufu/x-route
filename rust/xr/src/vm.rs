@@ -25,6 +25,7 @@ use crate::sys::spawn::spawn_self_detached;
 use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
 use crate::vm::share::share_prepare;
 
+#[must_use]
 pub fn vm_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let p = pid.trim();
@@ -77,6 +78,7 @@ pub fn fuse_arm(env: &Env) {
     thread::sleep(Duration::from_secs(1));
 }
 
+#[must_use]
 pub fn ready_seen(env: &Env) -> bool {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log()) {
         if ctl.lines().any(|l| l.starts_with("XR_READY")) {
@@ -92,6 +94,7 @@ pub fn ready_seen(env: &Env) -> bool {
     false
 }
 
+#[must_use]
 pub fn ready_channel(env: &Env) -> &'static str {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log()) {
         if ctl.lines().any(|l| l.starts_with("XR_READY")) {
@@ -107,6 +110,7 @@ pub fn ready_channel(env: &Env) -> &'static str {
     "null"
 }
 
+#[must_use]
 pub fn run_net_hook(env: &Env, op: &str) -> i32 {
     let net_sh = env.moddir.join("scripts/net.sh");
     if net_sh.is_file() {
@@ -121,6 +125,7 @@ pub fn run_net_hook(env: &Env, op: &str) -> i32 {
     run_net_cli(env, &[op.to_owned()])
 }
 
+#[must_use]
 pub fn mono_now(env: &Env) -> Option<u64> {
     let custom = env.proc_base.join("uptime");
     let raw = if custom.is_file() {
@@ -204,6 +209,7 @@ pub fn fuse_watch(env: &Env) {
     fsx::remove_logged(env, env.boot_log());
 }
 
+#[must_use]
 pub fn vpn_sync_host(env: &Env) -> Option<bool> {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
@@ -622,6 +628,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     0
 }
 
+#[must_use]
 pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
     let run = env.run_dir();
     fsx::write_logged(
@@ -699,6 +706,7 @@ pub struct VmStatusJson {
     pub error: String,
 }
 
+#[must_use]
 pub fn vm_status(env: &Env) -> VmStatusJson {
     let run = env.run_dir();
     let running = vm_running(env);
@@ -769,6 +777,7 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
     }
 }
 
+#[must_use]
 pub fn vm_status_json(env: &Env) -> String {
     serde_json::to_string(&vm_status(env))
         .unwrap_or_else(|_| "{\"running\":false,\"state\":\"stopped\"}".to_owned())

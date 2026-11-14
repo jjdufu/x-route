@@ -16,11 +16,13 @@ pub struct ExecResult {
 }
 
 impl ExecResult {
+    #[must_use]
     pub const fn success(&self) -> bool {
         self.code == 0
     }
 }
 
+#[must_use]
 pub fn is_mutating_args(args: &[&str]) -> bool {
     args.iter().any(|a| {
         matches!(
@@ -72,6 +74,7 @@ fn exit_code_from_output(out: &Output) -> i32 {
     }
 }
 
+#[must_use]
 pub fn xr_exec(
     env: &Env,
     cfg: &Config,
@@ -195,6 +198,7 @@ pub(crate) fn note_spawn(env: &Env, what: &str, res: std::io::Result<Child>) {
     }
 }
 
+#[must_use]
 pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> ExecResult {
     xr_exec(env, cfg, prog, args, false)
 }

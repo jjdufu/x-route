@@ -17,14 +17,17 @@ pub struct NetCtx<'a> {
 }
 
 impl<'a> NetCtx<'a> {
+    #[must_use]
     pub const fn new(env: &'a Env, cfg: &'a Config) -> Self {
         Self { env, cfg }
     }
 
+    #[must_use]
     pub fn ip(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
         crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ip"), args, true)
     }
 
+    #[must_use]
     pub fn ip6(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-6");
@@ -32,16 +35,19 @@ impl<'a> NetCtx<'a> {
         crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ip"), &full, true)
     }
 
+    #[must_use]
     pub fn ndc(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
         crate::sys::exec::xr_exec(self.env, self.cfg, &self.env.sysbin_cmd("ndc"), args, true)
     }
 
+    #[must_use]
     pub fn ndc_ok(&self, args: &[&str]) -> bool {
         let res = self.ndc(args);
         res.stdout.lines().any(|l| l.starts_with("200 "))
             || res.stderr.lines().any(|l| l.starts_with("200 "))
     }
 
+    #[must_use]
     pub fn ipt(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
@@ -55,6 +61,7 @@ impl<'a> NetCtx<'a> {
         )
     }
 
+    #[must_use]
     pub fn ip6t(&self, args: &[&str]) -> crate::sys::exec::ExecResult {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
@@ -93,6 +100,7 @@ impl<'a> NetCtx<'a> {
         crate::sys::exec::note_exec_result(&self.ndc(args));
     }
 
+    #[must_use]
     pub fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
         if is_mock {
@@ -130,6 +138,7 @@ impl<'a> NetCtx<'a> {
         }
     }
 
+    #[must_use]
     pub fn lnt(&self) -> &'static str {
         let mode = fs::read_to_string(self.env.run_dir().join("net.mode")).unwrap_or_default();
         if mode.trim() == "ndc" {
@@ -140,6 +149,7 @@ impl<'a> NetCtx<'a> {
     }
 }
 
+#[must_use]
 pub fn diag_snap_cmd_available(env: &Env) -> bool {
     is_executable(&env.moddir.join("bin/xr")) || std::env::current_exe().is_ok()
 }
@@ -176,6 +186,7 @@ pub struct TrafficSummary {
     pub ipv6: bool,
 }
 
+#[must_use]
 pub fn read_quad(path: &Path) -> [u64; 4] {
     let Ok(content) = fs::read_to_string(path) else {
         return [0; 4];
@@ -209,6 +220,7 @@ pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
     }
 }
 
+#[must_use]
 pub const fn combine_quad_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     [
         a[0].saturating_add(b[0]),
@@ -218,6 +230,7 @@ pub const fn combine_quad_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     ]
 }
 
+#[must_use]
 pub fn combine_quad_max(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     [
         a[0].max(b[0]),

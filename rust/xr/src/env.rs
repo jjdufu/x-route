@@ -129,86 +129,107 @@ impl Env {
         }
     }
 
+    #[must_use]
     pub fn config_dir(&self) -> PathBuf {
         self.xr_data.join("config")
     }
 
+    #[must_use]
     pub fn conf_file(&self) -> PathBuf {
         self.xr_data.join("config/config.conf")
     }
 
+    #[must_use]
     pub fn vpn_dir(&self) -> PathBuf {
         self.xr_data.join("config/vpn")
     }
 
+    #[must_use]
     pub fn run_dir(&self) -> PathBuf {
         self.xr_data.join("run")
     }
 
+    #[must_use]
     pub fn log_dir(&self) -> PathBuf {
         self.xr_data.join("log")
     }
 
+    #[must_use]
     pub fn img_dir(&self) -> PathBuf {
         self.xr_data.join("images")
     }
 
+    #[must_use]
     pub fn rootfs_img(&self) -> PathBuf {
         self.xr_data.join("images/openwrt-rootfs.img")
     }
 
+    #[must_use]
     pub fn kernel_img(&self) -> PathBuf {
         self.xr_data.join("images/Image")
     }
 
+    #[must_use]
     pub fn module_log(&self) -> PathBuf {
         self.xr_data.join("log/module.log")
     }
 
+    #[must_use]
     pub fn debug_log(&self) -> PathBuf {
         self.xr_data.join("log/debug.log")
     }
 
+    #[must_use]
     pub fn vmm_log(&self) -> PathBuf {
         self.xr_data.join("log/vmm.log")
     }
 
+    #[must_use]
     pub fn boot_log(&self) -> PathBuf {
         self.xr_data.join("run/boot.log")
     }
 
+    #[must_use]
     pub fn console_log(&self) -> PathBuf {
         self.xr_data.join("run/console.log")
     }
 
+    #[must_use]
     pub fn ctl_log(&self) -> PathBuf {
         self.xr_data.join("run/vm-ctl.log")
     }
 
+    #[must_use]
     pub fn fuse_file(&self) -> PathBuf {
         self.xr_data.join("config/vm_booting.fuse")
     }
 
+    #[must_use]
     pub fn tripped_file(&self) -> PathBuf {
         self.xr_data.join("config/tripped")
     }
 
+    #[must_use]
     pub fn last_good_file(&self) -> PathBuf {
         self.xr_data.join("config/last_good")
     }
 
+    #[must_use]
     pub fn debug_until_file(&self) -> PathBuf {
         self.xr_data.join("config/debug.until")
     }
 
+    #[must_use]
     pub fn acct_base_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.base")
     }
 
+    #[must_use]
     pub fn acct_snap_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.snap")
     }
 
+    #[must_use]
     pub fn acct_since_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.since")
     }
@@ -225,10 +246,12 @@ impl Env {
         Ok(())
     }
 
+    #[must_use]
     pub fn is_module_disabled(&self) -> bool {
         self.moddir.join("disable").is_file() || self.moddir.join("remove").is_file()
     }
 
+    #[must_use]
     pub fn canon_share_path(&self, raw: &str) -> String {
         let media_str = self.media.to_string_lossy();
         let media = media_str.trim_end_matches('/');
@@ -244,10 +267,12 @@ impl Env {
         raw.to_owned()
     }
 
+    #[must_use]
     pub fn sysbin_cmd(&self, name: &str) -> PathBuf {
         self.sysbin.join(name)
     }
 
+    #[must_use]
     pub fn self_exe(&self) -> PathBuf {
         let bin_xr = self.moddir.join("bin/xr");
         if is_executable(&bin_xr) {
@@ -257,6 +282,7 @@ impl Env {
     }
 }
 
+#[must_use]
 pub fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::metadata(path).is_ok_and(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)

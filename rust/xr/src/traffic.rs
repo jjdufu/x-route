@@ -80,14 +80,17 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
     (lan, wan)
 }
 
+#[must_use]
 pub fn acct_present(ctx: &NetCtx<'_>) -> bool {
     ctx.ipt(&["-S", "XR_ACCT_UP"]).success()
 }
 
+#[must_use]
 pub fn acct_present6(ctx: &NetCtx<'_>) -> bool {
     ctx.ip6t(&["-S", "XR_ACCT6_UP"]).success()
 }
 
+#[must_use]
 pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
     let (u_lan, u_wan) = acct_chain_bytes(ctx, false, "XR_ACCT_UP");
     let (d_lan, d_wan) = acct_chain_bytes(ctx, false, "XR_ACCT_DN");
@@ -106,6 +109,7 @@ pub fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
     ]
 }
 
+#[must_use]
 pub fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
     let base = read_quad(&ctx.env.acct_base_file());
     if acct_present(ctx) {
@@ -322,6 +326,7 @@ pub fn acct_reset(ctx: &NetCtx<'_>) {
     );
 }
 
+#[must_use]
 pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     let [wu, wd, lu, ld] = acct_total(ctx);
     let since = fs::read_to_string(ctx.env.acct_since_file())
@@ -341,6 +346,7 @@ pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     }
 }
 
+#[must_use]
 pub fn acct_json(ctx: &NetCtx<'_>) -> String {
     serde_json::to_string(&acct_summary(ctx)).unwrap_or_else(|_| "{}".to_owned())
 }

@@ -48,6 +48,7 @@ fn net_lock(env: &Env) -> DirLock<'_> {
     DirLock::acquire(env, env.run_dir().join(".net.lock"), 120, 500, true)
 }
 
+#[must_use]
 pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     let out = ctx.ip(&["rule"]);
     for line in out.stdout.lines() {
@@ -60,6 +61,7 @@ pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     String::new()
 }
 
+#[must_use]
 pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
         return Vec::new();
@@ -82,6 +84,7 @@ pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
+#[must_use]
 pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
         return Vec::new();
@@ -108,6 +111,7 @@ pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
+#[must_use]
 pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     let mut set = BTreeSet::new();
     match ctx.cfg.expose() {
@@ -129,6 +133,7 @@ pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().filter(|i| !is_cell_iface(i)).collect()
 }
 
+#[must_use]
 pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     let mut m: u32 = 1500;
     for o in outs {
@@ -310,6 +315,7 @@ fn fwd6_first(ctx: &NetCtx<'_>) {
     ctx.ip6t_run(&["-I", "FORWARD", "1", "-j", "XR_FWD6"]);
 }
 
+#[must_use]
 pub fn ip6_nat_ok(env: &Env) -> bool {
     let cache = env.run_dir().join("net.ip6nat");
     if let Ok(raw) = fs::read_to_string(&cache) {
@@ -880,6 +886,7 @@ pub fn net_sync(env: &Env) {
     sync_all_unlocked(env);
 }
 
+#[must_use]
 pub fn net_up(env: &Env) -> i32 {
     if env.ensure_dirs().is_err() {
         return 1;
@@ -990,6 +997,7 @@ pub fn net_up(env: &Env) -> i32 {
     0
 }
 
+#[must_use]
 pub fn net_watch(env: &Env) -> i32 {
     while env.sysnet.join(XR_IF).is_dir() {
         thread::sleep(Duration::from_secs(10));
@@ -1154,6 +1162,7 @@ pub fn net_watch(env: &Env) -> i32 {
     0
 }
 
+#[must_use]
 pub fn net_down(env: &Env) -> i32 {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
@@ -1300,6 +1309,7 @@ pub fn net_status(env: &Env) -> NetStatusJson {
     }
 }
 
+#[must_use]
 pub fn net_status_json(env: &Env) -> String {
     serde_json::to_string(&net_status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
 }

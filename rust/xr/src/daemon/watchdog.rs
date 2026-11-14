@@ -21,6 +21,7 @@ use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 use crate::sys::sys_shutting_down;
 
+#[must_use]
 pub fn watchdog_loop(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);

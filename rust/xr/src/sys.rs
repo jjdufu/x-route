@@ -105,10 +105,12 @@ impl Drop for DirLock<'_> {
     }
 }
 
+#[must_use]
 pub fn is_zombie_stat(stat_content: &str) -> bool {
     stat_content.contains(") Z ") || stat_content.contains(") X ") || stat_content.contains(") x ")
 }
 
+#[must_use]
 pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
@@ -146,6 +148,7 @@ pub fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     true
 }
 
+#[must_use]
 pub fn send_signal(pid_str: &str, sig: Signal) -> bool {
     let Ok(raw_pid) = pid_str.trim().parse::<i32>() else {
         return false;
@@ -170,6 +173,7 @@ pub(crate) fn send_signal_logged(env: &Env, pid_str: &str, sig: Signal) {
     }
 }
 
+#[must_use]
 pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() {
@@ -186,6 +190,7 @@ pub fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&mapped).to_string())
 }
 
+#[must_use]
 pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
     let trimmed = pid_str.trim();
     let stat_path = env.proc_base.join(trimmed).join("stat");
@@ -221,6 +226,7 @@ pub fn proc_uptime_secs_for_pid(env: &Env, pid_str: &str) -> u64 {
     now_secs.saturating_sub(started_secs)
 }
 
+#[must_use]
 pub fn getprop(name: &str) -> String {
     Command::new("getprop")
         .arg(name)
@@ -230,6 +236,7 @@ pub fn getprop(name: &str) -> String {
         .unwrap_or_default()
 }
 
+#[must_use]
 pub fn ce_ready() -> bool {
     getprop("sys.user.0.ce_available") == "true"
 }
@@ -240,6 +247,7 @@ pub fn wait_boot_completed() {
     }
 }
 
+#[must_use]
 pub fn sys_shutting_down(env: &Env) -> bool {
     let marker = env.run_dir().join("shutdown");
     if marker.is_file() {
@@ -308,6 +316,7 @@ fn write_existing_logged(env: &Env, path: &Path, text: &str) {
     }
 }
 
+#[must_use]
 pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     let cg_file = env.proc_base.join(pid_str.trim()).join("cgroup");
     let content = fs::read_to_string(cg_file).ok()?;
@@ -324,6 +333,7 @@ pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     None
 }
 
+#[must_use]
 pub fn cgroup_in_apps(env: &Env, pid_str: &str) -> bool {
     let Some(p) = cgroup_path(env, pid_str) else {
         return false;
@@ -349,6 +359,7 @@ fn is_uid_pid_cgroup(path: &str) -> bool {
     false
 }
 
+#[must_use]
 pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();
     if trimmed.is_empty() || !is_pid_running(env, trimmed) {

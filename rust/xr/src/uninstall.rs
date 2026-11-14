@@ -135,6 +135,7 @@ fn cancel_notifications(env: &Env) {
     }
 }
 
+#[must_use]
 pub fn uninstall_standard(env: &Env) -> i32 {
     let run = env.run_dir();
     note_rc(env, "vm_stop", vm_stop(env));
@@ -286,6 +287,7 @@ fn pick_stage_base(env: &Env) -> PathBuf {
     dev
 }
 
+#[must_use]
 pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
     if confirm_arg != "confirm" {
         return (2, "{\"ok\":false,\"error\":\"需要确认\"}".to_owned());
@@ -375,6 +377,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
     (0, "{\"ok\":true}".to_owned())
 }
 
+#[must_use]
 pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
     crate::sys::spawn::enter_detached_session(env);
     if let Err(err) = std::env::set_current_dir("/") {

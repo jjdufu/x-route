@@ -118,26 +118,32 @@ impl Config {
             .map_or(default, String::as_str)
     }
 
+    #[must_use]
     pub fn net_prefix(&self) -> &str {
         self.get_or("XR_NET_PREFIX", "172.29.233")
     }
 
+    #[must_use]
     pub fn vm_mac(&self) -> &str {
         self.get_or("XR_VM_MAC", "52:54:00:1d:e9:fe")
     }
 
+    #[must_use]
     pub fn dns(&self) -> &str {
         self.get_or("XR_DNS", "223.5.5.5 119.29.29.29")
     }
 
+    #[must_use]
     pub fn expose(&self) -> &str {
         self.get_or("XR_EXPOSE", "lan")
     }
 
+    #[must_use]
     pub fn mode(&self) -> &str {
         self.get_or("XR_MODE", "global")
     }
 
+    #[must_use]
     pub fn vm_cpus(&self) -> u32 {
         self.get_raw("VM_CPUS")
             .parse::<u32>()
@@ -146,11 +152,13 @@ impl Config {
             .unwrap_or(2)
     }
 
+    #[must_use]
     pub fn vm_mem_mb(&self) -> u32 {
         let raw = self.get_raw("VM_MEM_MB").parse::<u32>().unwrap_or(512);
         if raw < 384 { 512 } else { raw }
     }
 
+    #[must_use]
     pub fn vm_swiotlb_mb(&self) -> u32 {
         self.get_raw("VM_SWIOTLB_MB")
             .parse::<u32>()
@@ -158,14 +166,17 @@ impl Config {
             .unwrap_or(64)
     }
 
+    #[must_use]
     pub fn vm_net(&self) -> bool {
         self.get_or("VM_NET", "1") == "1"
     }
 
+    #[must_use]
     pub fn vm_disk_rw(&self) -> bool {
         self.get_raw("VM_DISK_RW") == "1"
     }
 
+    #[must_use]
     pub fn vm_disk_size_mb(&self) -> u64 {
         self.get_raw("VM_DISK_SIZE_MB")
             .parse::<u64>()
@@ -174,32 +185,39 @@ impl Config {
             .unwrap_or(1024)
     }
 
+    #[must_use]
     pub fn vm_wakelock(&self) -> bool {
         self.get_raw("VM_WAKELOCK") == "1"
     }
 
+    #[must_use]
     pub fn vm_share(&self) -> bool {
         self.get_raw("VM_SHARE") == "1"
     }
 
+    #[must_use]
     pub fn vm_share_mode(&self) -> &str {
         self.get_or("VM_SHARE_MODE", "ro")
     }
 
+    #[must_use]
     pub fn vm_share_path(&self) -> &str {
         self.get_raw("VM_SHARE_PATH")
     }
 
+    #[must_use]
     pub fn autostart(&self) -> bool {
         self.get_raw("AUTOSTART") == "1"
     }
 
+    #[must_use]
     pub fn autostart_delay_sec(&self) -> u64 {
         self.get_raw("AUTOSTART_DELAY_SEC")
             .parse::<u64>()
             .unwrap_or(60)
     }
 
+    #[must_use]
     pub fn ready_timeout_sec(&self) -> u64 {
         self.get_raw("READY_TIMEOUT_SEC")
             .parse::<u64>()
@@ -208,6 +226,7 @@ impl Config {
             .unwrap_or(180)
     }
 
+    #[must_use]
     pub fn stable_sec(&self) -> u64 {
         self.get_raw("STABLE_SEC")
             .parse::<u64>()
@@ -216,6 +235,7 @@ impl Config {
             .unwrap_or(180)
     }
 
+    #[must_use]
     pub fn notify_traffic(&self) -> &str {
         let m = self.get_or("XR_NOTIFY_TRAFFIC", "total");
         match m {
@@ -224,28 +244,34 @@ impl Config {
         }
     }
 
+    #[must_use]
     pub fn debug_on(&self) -> bool {
         self.get_or("XR_DEBUG", "0") == "1"
     }
 
+    #[must_use]
     pub fn debug_hours(&self) -> u64 {
         self.get_or("XR_DEBUG_HOURS", "0")
             .parse::<u64>()
             .unwrap_or(0)
     }
 
+    #[must_use]
     pub fn hotspot_bridge(&self) -> bool {
         self.get_or("XR_HOTSPOT_BRIDGE", "1") == "1"
     }
 
+    #[must_use]
     pub fn hotspot_subnet(&self) -> &str {
         self.get_raw("XR_HOTSPOT_SUBNET")
     }
 
+    #[must_use]
     pub fn clash_ui(&self) -> bool {
         self.get_or("XR_CLASH_UI", "0") == "1"
     }
 
+    #[must_use]
     pub fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         for key in HASH_KEYS {
@@ -294,6 +320,7 @@ fn valid_vm_mac(val: &str) -> bool {
         })
 }
 
+#[must_use]
 pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
     match key {
         "XR_NET_PREFIX" => valid_net_prefix(val),
@@ -359,6 +386,7 @@ pub fn valid_kv(env: &Env, cfg: &Config, key: &str, val: &str) -> bool {
     }
 }
 
+#[must_use]
 pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
     let cfg = Config::load(env);
     let sv = if key == "VM_SHARE_PATH" {
@@ -416,6 +444,7 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
     true
 }
 
+#[must_use]
 pub fn config_hash(env: &Env) -> String {
     Config::load(env).hash()
 }
