@@ -41,12 +41,12 @@ pub struct Env {
 }
 
 fn var_nonempty(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|v| !v.is_empty())
+    env::var(key).ok().filter(|value| !value.is_empty())
 }
 
 fn var_u64(key: &str, default: u64) -> u64 {
     var_nonempty(key)
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
 }
 
@@ -235,13 +235,13 @@ impl Env {
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
-        for d in [
+        for dir in [
             self.config_dir(),
             self.run_dir(),
             self.log_dir(),
             self.img_dir(),
         ] {
-            std::fs::create_dir_all(d)?;
+            std::fs::create_dir_all(dir)?;
         }
         Ok(())
     }
@@ -285,5 +285,6 @@ impl Env {
 #[must_use]
 pub fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+    std::fs::metadata(path)
+        .is_ok_and(|meta| meta.is_file() && (meta.permissions().mode() & 0o111) != 0)
 }
