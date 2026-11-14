@@ -111,7 +111,7 @@ fw4 的 fullcone 与 flow offloading 可以开启；内核日志无模块兼容�
 - 工具链由根目录 `rust-toolchain.toml` 锁定为 1.100.0（rustup 自动选择，不使用 `cargo +<版本>`），edition 2024。
 - Rust 门禁入口：`bash scripts/gate.sh`（工具链核对、`lint-guard.py`、fmt、clippy、文档、测试），另加交叉目标
   `cargo clippy --workspace --all-targets --all-features --locked --target aarch64-unknown-linux-musl -- -D warnings`。
-  标准是《门禁-Rust最严Lint.md》（门禁全绿后放入 `docs/`）；本项目额外开启 `clippy::cognitive_complexity`（阈值 15）。
+  标准见 [`docs/门禁-Rust最严Lint.md`](门禁-Rust最严Lint.md)。本项目额外开启 `clippy::cognitive_complexity = "deny"`（阈值 15，D3-B），这一项不写进门禁文档。
 - 不得用任何方式压制或降级告警（`allow`/`expect`/`cfg_attr`、降级 lint 级别的编译器参数、`RUSTFLAGS` 等）。
 - Rust 测试：`bash scripts/gate.sh` 已包含 `cargo test --workspace --all-targets --all-features --locked`。测试目录如下：
   - `rust/xr/src/**/tests.rs`：各模块单元测试，含属性测试。

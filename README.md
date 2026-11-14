@@ -30,4 +30,6 @@ bash scripts/package-module.sh
 sh scripts/lint.sh
 ```
 
+Rust 改动以 `bash scripts/gate.sh` 全绿为准，标准见 [`docs/门禁-Rust最严Lint.md`](docs/门禁-Rust最严Lint.md)。
+
 推送到 `main` 后由 CI 构建并发布正式版（标签 `<版本>-build.<序号>`）。
