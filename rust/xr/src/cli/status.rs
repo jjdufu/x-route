@@ -45,7 +45,7 @@ pub fn status_json(env: &Env) -> String {
             .env("XR_DATA", &env.xr_data)
             .output()
             .ok()
-            .map_or_default(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .map_or_default(|result| String::from_utf8_lossy(&result.stdout).into_owned())
     } else {
         net_status_json(env)
     };
@@ -81,10 +81,10 @@ pub fn status_json(env: &Env) -> String {
     let mut vst = "down".to_owned();
     let mut vaddr = String::new();
     if alive {
-        if let Ok(s) = fs::read_to_string(run.join("guest/guest/openvpn.status")) {
-            let t = s.trim();
-            if !t.is_empty() {
-                t.clone_into(&mut vst);
+        if let Ok(content) = fs::read_to_string(run.join("guest/guest/openvpn.status")) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                trimmed.clone_into(&mut vst);
             }
         }
         fs::read_to_string(run.join("guest/guest/openvpn.addr"))
@@ -97,8 +97,8 @@ pub fn status_json(env: &Env) -> String {
     let tun = vpn_tunnels(env, &vst);
 
     let v6: Value = if alive && run.join("guest/guest/ipv6").is_file() {
-        let v = fs::read_to_string(run.join("guest/guest/ipv6")).unwrap_or_default();
-        Value::Bool(v.trim() == "1")
+        let value = fs::read_to_string(run.join("guest/guest/ipv6")).unwrap_or_default();
+        Value::Bool(value.trim() == "1")
     } else {
         Value::Null
     };
@@ -109,14 +109,14 @@ pub fn status_json(env: &Env) -> String {
     if vpn_dir.is_dir() {
         if let Ok(rd) = fs::read_dir(&vpn_dir) {
             for ent in rd.flatten() {
-                let p = ent.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("ovpn")
-                    && fs::metadata(&p).is_ok_and(|m| m.len() > 0)
+                let file_path = ent.path();
+                if file_path.extension().and_then(|raw_name| raw_name.to_str()) == Some("ovpn")
+                    && fs::metadata(&file_path).is_ok_and(|meta| meta.len() > 0)
                 {
                     vcfg = true;
-                    if let Some(id) = p.file_stem().and_then(|s| s.to_str())
+                    if let Some(id) = file_path.file_stem().and_then(|os_str| os_str.to_str())
                         && fs::read_to_string(vpn_dir.join(format!("{id}.enabled")))
-                            .is_ok_and(|s| s.trim() == "1")
+                            .is_ok_and(|raw| raw.trim() == "1")
                     {
                         ven = true;
                     }
@@ -126,7 +126,7 @@ pub fn status_json(env: &Env) -> String {
     } else if env.xr_data.join("config/openvpn.ovpn").is_file() {
         vcfg = true;
         ven = fs::read_to_string(env.xr_data.join("config/openvpn.enabled"))
-            .map_or(true, |s| s.trim() != "0");
+            .map_or(true, |text| text.trim() != "0");
     }
 
     json!({
@@ -160,7 +160,7 @@ pub fn status_json(env: &Env) -> String {
 pub fn status_line(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
-    let (r, s) = if vm_running(env) {
+    let (vm_label, vm_detail) = if vm_running(env) {
         let st = fs::read_to_string(run.join("state")).unwrap_or_default();
         match st.trim() {
             "stable" => ("运行中", "运行中"),
@@ -173,7 +173,7 @@ pub fn status_line(env: &Env) -> String {
     let n = fs::read_to_string(run.join("routes.active"))
         .unwrap_or_default()
         .lines()
-        .filter(|l| !l.trim().is_empty())
+        .filter(|line| !line.trim().is_empty())
         .count();
     let trip = if env.tripped_file().is_file() {
         " / 熔断未确认"
@@ -181,7 +181,7 @@ pub fn status_line(env: &Env) -> String {
         ""
     };
     format!(
-        "{r} / {s} / {}.254 / 管理访问={} / VPN网段={n}{trip}",
+        "{vm_label} / {vm_detail} / {}.254 / 管理访问={} / VPN网段={n}{trip}",
         cfg.net_prefix(),
         cfg.expose()
     )
