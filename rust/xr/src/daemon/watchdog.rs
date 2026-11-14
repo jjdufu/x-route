@@ -11,8 +11,8 @@ use signal_hook::flag;
 
 use crate::daemon;
 use crate::daemon::keepalive::{
-    cgroup_escape, cgroup_escape_tree, emergency_teardown, stale_gateway, vm_exit_reason,
-    vm_guest_reset_pending,
+    StaleAction, StaleGuard, cgroup_escape, cgroup_escape_tree, emergency_teardown, stale_check,
+    vm_exit_reason,
 };
 use crate::diag;
 use crate::env::Env;
@@ -22,6 +22,18 @@ use crate::log::rotate_all_logs;
 use crate::sys;
 use crate::sys::fsx;
 use crate::sys::send_signal_logged;
+
+/// 处理网关残留：客机复位且守护进程在时发 `SIGUSR2` 交给重启流程；需要撤路由时调用 [`emergency_teardown`]；观察期内什么也不做。
+fn on_stale(env: &Env, guard: &mut StaleGuard) {
+    match stale_check(env, guard, daemon::running(env)) {
+        StaleAction::Wait => {}
+        StaleAction::GuestReboot => send_signal_logged(env, &daemon::pid(env), Signal::USR2),
+        StaleAction::Teardown => {
+            let reason = vm_exit_reason(env);
+            emergency_teardown(env, &format!("{reason}（看门狗）"));
+        }
+    }
+}
 
 /// 看门狗主循环：每隔 `XR_WATCHDOG_INTERVAL` 秒检查网关残留与守护进程，守护进程不在时重新拉起（模块被禁用时只等待）；收到 `TERM`/`INT` 或系统关机时返回 0。
 #[must_use]
@@ -47,6 +59,7 @@ pub(crate) fn main_loop(env: &Env) -> i32 {
     }
 
     log::info(env, "watchdog", &format!("已启动 pid={pid_s}"));
+    let mut guard = StaleGuard::new(env);
 
     loop {
         if term.load(Ordering::Relaxed) {
@@ -61,14 +74,7 @@ pub(crate) fn main_loop(env: &Env) -> i32 {
             thread::sleep(Duration::from_secs(15));
             continue;
         }
-        if stale_gateway(env) {
-            if daemon::running(env) && vm_guest_reset_pending(env) {
-                send_signal_logged(env, &daemon::pid(env), Signal::USR2);
-            } else {
-                let reason = vm_exit_reason(env);
-                emergency_teardown(env, &format!("{reason}（看门狗）"));
-            }
-        }
+        on_stale(env, &mut guard);
         if daemon::running(env) {
             cgroup_escape_tree(env, std::process::id());
         } else {

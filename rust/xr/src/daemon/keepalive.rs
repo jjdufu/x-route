@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::diag;
 use crate::env::Env;
 use crate::log;
+use crate::log::dlog_env;
 use crate::log::note_ok;
 use crate::log::note_rc;
 use crate::log::unix_now;
@@ -565,21 +566,197 @@ pub(crate) fn emergency_teardown(env: &Env, why: &str) {
     notify_cancel(env);
 }
 
-/// 网关规则残留需要撤销时返回 true：`net.gw` 存在且不在停止中，并且 `xr0` 无载波或虚拟机已不在。
+/// 网关残留的种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stale {
+    /// 无残留。
+    Clean,
+    /// `crosvm` 仍在运行但 `xr0` 无载波。
+    CarrierDown,
+    /// `crosvm` 已不在，规则仍在。
+    VmDead,
+}
+
+/// 网关残留分类：`net.gw` 存在且不在停止中时，`crosvm` 在而 `xr0` 无载波为 `CarrierDown`，`crosvm` 不在为 `VmDead`，其余为 `Clean`。
 #[must_use]
-pub(crate) fn stale_gateway(env: &Env) -> bool {
+pub(crate) fn stale_kind(env: &Env) -> Stale {
     let run = env.run_dir();
     if !run.join("net.gw").is_file() || vm_stopping(env) {
-        return false;
+        return Stale::Clean;
     }
     if xr_vm_alive(env) {
         let car = env.sysnet.join("xr0/carrier");
         if let Ok(carrier_text) = fs::read_to_string(car)
             && carrier_text.trim() == "0"
         {
-            return true;
+            return Stale::CarrierDown;
         }
+        return Stale::Clean;
+    }
+    Stale::VmDead
+}
+
+/// 本轮 `vmm.log` 已有客机复位标记、状态为 ready/stable、不在停止或关机中时返回 true（不要求 `crosvm` 已退出）。
+#[must_use]
+pub(crate) fn guest_reset_marked(env: &Env) -> bool {
+    if vm_stopping(env) || sys::shutting_down(env) {
         return false;
     }
-    true
+    let st = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
+    if !matches!(st.trim(), "ready" | "stable") {
+        return false;
+    }
+    fs::read_to_string(env.vmm_log()).is_ok_and(|text| vmm_has_guest_reset(&text))
+}
+
+/// 客机复位的观察结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResetState {
+    /// 本轮 `vmm.log` 中没有复位标记。
+    NotSeen,
+    /// 有复位标记、状态为 ready/stable、不在停止中，`crosvm` 仍在。
+    Marked,
+    /// 有复位标记且 `crosvm` 已退出（[`vm_guest_reset_pending`] 为真）。
+    Pending,
+}
+
+/// 合成复位观察：先看 [`vm_guest_reset_pending`]，再看 [`guest_reset_marked`]。
+#[must_use]
+pub(crate) fn reset_state(env: &Env) -> ResetState {
+    if vm_guest_reset_pending(env) {
+        ResetState::Pending
+    } else if guest_reset_marked(env) {
+        ResetState::Marked
+    } else {
+        ResetState::NotSeen
+    }
+}
+
+/// 看门狗 / 守护进程对残留网关的处理动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StaleAction {
+    /// 什么也不做（无残留或仍在宽限期内）。
+    Wait,
+    /// 客机重启已发生且 `crosvm` 已退出：交给守护进程的重启流程。
+    GuestReboot,
+    /// 记异常并撤路由（[`emergency_teardown`]）。
+    Teardown,
+}
+
+/// 一轮观察。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StaleObs {
+    /// 残留种类。
+    pub(crate) kind: Stale,
+    /// 复位观察。
+    pub(crate) reset: ResetState,
+    /// 守护进程是否在运行（守护进程自身传 true）。
+    pub(crate) daemon_up: bool,
+    /// 当前时刻（unix 秒）。
+    pub(crate) now: u64,
+}
+
+/// 载波丢失的宽限（秒）：普通情况。
+pub(crate) const CARRIER_GRACE: u64 = 15;
+/// 已看到客机复位标记时的宽限（秒）：`crosvm` 正在退出，等它退完。
+pub(crate) const RESET_GRACE: u64 = 30;
+
+/// 无载波的去抖状态（看门狗与守护进程各持一份）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StaleGuard {
+    /// 首次观察到 `CarrierDown` 的时刻。
+    since: Option<u64>,
+    /// 普通宽限（默认 [`CARRIER_GRACE`]，测试可由 `XR_CARRIER_GRACE` 覆盖）。
+    carrier_grace: u64,
+    /// 复位宽限（[`RESET_GRACE`]）。
+    reset_grace: u64,
+}
+
+impl StaleGuard {
+    /// 按 `Env` 中的宽限新建。
+    #[must_use]
+    pub(crate) const fn new(env: &Env) -> Self {
+        Self::with_grace(env.carrier_grace, RESET_GRACE)
+    }
+
+    /// 指定两种宽限新建。
+    #[must_use]
+    pub(crate) const fn with_grace(carrier_grace: u64, reset_grace: u64) -> Self {
+        Self {
+            since: None,
+            carrier_grace,
+            reset_grace,
+        }
+    }
+}
+
+/// 纯决策：`VmDead` 立即处理（守护进程在且复位待处理时交给重启流程，否则撤路由）；`CarrierDown` 先观察，
+/// 持续达到宽限（见到复位标记时用复位宽限）才撤路由；`Clean` 清除观察。
+#[must_use]
+pub(crate) fn stale_decide(obs: StaleObs, guard: &mut StaleGuard) -> StaleAction {
+    match obs.kind {
+        Stale::Clean => {
+            guard.since = None;
+            StaleAction::Wait
+        }
+        Stale::VmDead => {
+            guard.since = None;
+            if obs.daemon_up && obs.reset == ResetState::Pending {
+                StaleAction::GuestReboot
+            } else {
+                StaleAction::Teardown
+            }
+        }
+        Stale::CarrierDown => {
+            let Some(since) = guard.since else {
+                guard.since = Some(obs.now);
+                return StaleAction::Wait;
+            };
+            let grace = match obs.reset {
+                ResetState::Marked | ResetState::Pending => guard.reset_grace,
+                ResetState::NotSeen => guard.carrier_grace,
+            };
+            if obs.now.saturating_sub(since) >= grace {
+                StaleAction::Teardown
+            } else {
+                StaleAction::Wait
+            }
+        }
+    }
+}
+
+/// 观察一轮网关残留并决策；进入观察与观察中恢复时各写一行调试日志。
+pub(crate) fn stale_check(env: &Env, guard: &mut StaleGuard, daemon_up: bool) -> StaleAction {
+    let kind = stale_kind(env);
+    let reset = match kind {
+        Stale::Clean => ResetState::NotSeen,
+        Stale::CarrierDown | Stale::VmDead => reset_state(env),
+    };
+    let watching = guard.since.is_some();
+    let action = stale_decide(
+        StaleObs {
+            kind,
+            reset,
+            daemon_up,
+            now: unix_now(),
+        },
+        guard,
+    );
+    if !watching && guard.since.is_some() {
+        let mark = if reset == ResetState::NotSeen {
+            "无"
+        } else {
+            "有"
+        };
+        dlog_env(
+            env,
+            "watchdog",
+            &format!("xr0 无载波，crosvm 仍在运行，观察中（复位标记={mark}）"),
+        );
+    } else if watching && kind == Stale::Clean {
+        dlog_env(env, "watchdog", "xr0 载波恢复");
+    } else {
+        // 其余情况（持续观察、无残留、已处理）不写日志
+    }
+    action
 }

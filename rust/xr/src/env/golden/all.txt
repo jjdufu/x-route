@@ -30,6 +30,7 @@ Env {
     notify_wait: 3,
     notify_interval: 4,
     watchdog_interval: 5,
+    carrier_grace: 8,
     snap_min_bytes: 6,
     snap_max_age: 7,
     role: Watchdog,

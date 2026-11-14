@@ -18,9 +18,9 @@ use signal_hook::flag;
 
 use crate::config::Config;
 use crate::daemon::keepalive::{
-    NotifyMem, cgroup_escape, cgroup_escape_tree, cgroup_path, emergency_teardown, notify_cancel,
-    notify_update, routes_emergency_down, stale_gateway, vm_exit_reason, vm_guest_reset_pending,
-    vm_stopping, xr_vm_alive,
+    NotifyMem, StaleAction, StaleGuard, cgroup_escape, cgroup_escape_tree, cgroup_path,
+    emergency_teardown, notify_cancel, notify_update, routes_emergency_down, stale_check,
+    vm_exit_reason, vm_guest_reset_pending, vm_stopping, xr_vm_alive,
 };
 use crate::env::Env;
 use crate::log;
@@ -258,6 +258,8 @@ struct DaemonState {
     notify: NotifyMem,
     /// 流量快照上次落盘的内容与时间（内存）。
     snap: SnapMem,
+    /// 网关残留（无载波）的去抖状态。
+    stale: StaleGuard,
 }
 
 /// 把信号 `sig`（名字 `name`）登记为置位 `flag_val`；失败只记日志。
@@ -307,6 +309,7 @@ fn daemon_init(env: &Env) -> DaemonState {
         self_pid,
         notify: NotifyMem::default(),
         snap: SnapMem::default(),
+        stale: StaleGuard::new(env),
     }
 }
 
@@ -456,12 +459,15 @@ fn watch_vm(env: &Env, st: &mut DaemonState) {
 
 /// 每拍的例行工作：网关残留检查、更新通知、轮转日志；每 12 拍保存流量快照并检查调试模式到期。
 fn periodic(env: &Env, st: &mut DaemonState) {
-    if stale_gateway(env) {
-        let reason = vm_exit_reason(env);
-        emergency_teardown(
-            env,
-            &format!("{reason}（xr0 无载波或虚拟机已死，规则仍在）"),
-        );
+    match stale_check(env, &mut st.stale, true) {
+        StaleAction::Wait | StaleAction::GuestReboot => {}
+        StaleAction::Teardown => {
+            let reason = vm_exit_reason(env);
+            emergency_teardown(
+                env,
+                &format!("{reason}（xr0 无载波或虚拟机已死，规则仍在）"),
+            );
+        }
     }
     notify_update(env, &mut st.notify);
     rotate_all_logs(env);

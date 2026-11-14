@@ -112,6 +112,7 @@ const ALL_SET: &[(&str, &str)] = &[
     ("XR_NOTIFY_WAIT", "3"),
     ("XR_NOTIFY_INTERVAL", "4"),
     ("XR_WATCHDOG_INTERVAL", "5"),
+    ("XR_CARRIER_GRACE", "8"),
     ("XR_SNAP_MIN_BYTES", "6"),
     ("XR_SNAP_MAX_AGE", "7"),
     ("XR_IN_WATCHDOG", "1"),

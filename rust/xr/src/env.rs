@@ -5,6 +5,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use crate::daemon::keepalive::CARRIER_GRACE;
 use crate::traffic::SNAP_DEFAULT;
 
 #[cfg(test)]
@@ -74,6 +75,8 @@ pub struct Env {
     pub notify_interval: u64,
     /// 看门狗检查间隔秒数（`XR_WATCHDOG_INTERVAL`，默认 10）。
     pub watchdog_interval: u64,
+    /// `xr0` 无载波的普通宽限秒数（`XR_CARRIER_GRACE`，默认 15；仅供测试覆盖）。
+    pub carrier_grace: u64,
     /// 流量快照落盘的增量阈值字节数（`XR_SNAP_MIN_BYTES`，默认 64 MiB；仅供测试覆盖）。
     pub snap_min_bytes: u64,
     /// 流量快照有变化时的最长落盘间隔秒数（`XR_SNAP_MAX_AGE`，默认 1800；仅供测试覆盖）。
@@ -206,6 +209,7 @@ impl Env {
             notify_wait: var_u64("XR_NOTIFY_WAIT", 25),
             notify_interval: var_u64("XR_NOTIFY_INTERVAL", 10),
             watchdog_interval: var_u64("XR_WATCHDOG_INTERVAL", 10),
+            carrier_grace: var_u64("XR_CARRIER_GRACE", CARRIER_GRACE),
             snap_min_bytes: var_u64("XR_SNAP_MIN_BYTES", SNAP_DEFAULT.min_bytes),
             snap_max_age: var_u64("XR_SNAP_MAX_AGE", SNAP_DEFAULT.max_age),
             role: ProcRole::from_values(
