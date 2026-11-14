@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 /// 把 `i32` 退出码转成进程退出码：先限制在 0 到 255 之间。
 fn exit_from_i32(code: i32) -> ExitCode {
-    let byte = u8::try_from(code.clamp(0, 255)).unwrap_or(1);
+    let byte = u8::try_from(code.clamp(0_i32, 255_i32)).unwrap_or(1);
     ExitCode::from(byte)
 }
 
