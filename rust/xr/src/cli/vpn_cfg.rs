@@ -19,7 +19,7 @@ pub fn vpn_slug(name: &str) -> String {
     let mut last_us = false;
     for b in name.bytes() {
         if b.is_ascii_alphanumeric() || b == b'_' {
-            out.push(b as char);
+            out.push(char::from(b));
             last_us = false;
         } else if !last_us && !out.is_empty() {
             out.push('_');

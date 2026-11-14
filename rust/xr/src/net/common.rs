@@ -193,20 +193,71 @@ pub fn combine_quad_max(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     ]
 }
 
-#[allow(clippy::cast_precision_loss)]
+/// 1024 进制、一位小数的人类可读字节数（与 `notifier` 的 `Traffic.human`、`WebUI` 的 `fmtBytes` 同口径）。
+///
+/// 整数实现，结果与旧的浮点实现（`bytes as f64` 后逐级除以 1024、`{:.1}` 格式化）逐字节一致：
+/// 先按 `f64` 的 53 位有效数字舍入，再按十分位"四舍六入五成双"舍入。
+#[must_use]
 pub fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut val = bytes as f64;
+    if bytes < 1024_u64 {
+        return format!("{bytes} B");
+    }
+    let value = as_f64_value(bytes);
+    let (idx, div) = unit_of(value);
+    let tenths = round_tenths(value, div);
+    let unit = UNITS.get(idx).copied().unwrap_or("TB");
+    let whole = tenths.checked_div(10_u128).unwrap_or(0_u128);
+    let frac = tenths.checked_rem(10_u128).unwrap_or(0_u128);
+    format!("{whole}.{frac} {unit}")
+}
+
+/// 返回 `bytes` 转成 `f64` 后表示的精确整数值（就近舍入、平局取偶，与 `as f64` 相同）。
+fn as_f64_value(bytes: u64) -> u128 {
+    let width = 64_u32.saturating_sub(bytes.leading_zeros());
+    let shift = width.saturating_sub(53_u32);
+    if shift == 0 {
+        return u128::from(bytes);
+    }
+    let mantissa = bytes.checked_shr(shift).unwrap_or(0_u64);
+    let low_mask = 1_u64
+        .checked_shl(shift)
+        .map_or(u64::MAX, |bit| bit.saturating_sub(1_u64));
+    let rest = bytes & low_mask;
+    let half = 1_u64
+        .checked_shl(shift.saturating_sub(1_u32))
+        .unwrap_or(0_u64);
+    let round_up = rest > half || (rest == half && mantissa & 1_u64 == 1_u64);
+    let kept = if round_up {
+        u128::from(mantissa).saturating_add(1_u128)
+    } else {
+        u128::from(mantissa)
+    };
+    kept.checked_shl(shift).unwrap_or(u128::MAX)
+}
+
+/// 找到 `value` 对应的单位下标（最多到 TB）与该单位的字节数。
+const fn unit_of(value: u128) -> (usize, u128) {
     let mut idx = 0_usize;
-    while val >= 1024.0 && idx < 4 {
-        val /= 1024.0;
+    let mut div = 1_u128;
+    while idx < 4_usize && value >= div.saturating_mul(1024_u128) {
+        div = div.saturating_mul(1024_u128);
         idx = idx.saturating_add(1);
     }
-    if idx == 0 {
-        format!("{bytes} B")
+    (idx, div)
+}
+
+/// `value / div` 舍入到十分位后的"十分之一"个数（平局取偶，与 `{:.1}` 相同）。
+fn round_tenths(value: u128, div: u128) -> u128 {
+    let scaled = value.saturating_mul(10_u128);
+    let quot = scaled.checked_div(div).unwrap_or(0_u128);
+    let rem = scaled.checked_rem(div).unwrap_or(0_u128);
+    let twice = rem.saturating_mul(2_u128);
+    let round_up = twice > div || (twice == div && quot & 1_u128 == 1_u128);
+    if round_up {
+        quot.saturating_add(1_u128)
     } else {
-        let unit = UNITS.get(idx).copied().unwrap_or("TB");
-        format!("{val:.1} {unit}")
+        quot
     }
 }
 

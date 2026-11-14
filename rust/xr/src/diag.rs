@@ -1,4 +1,3 @@
-#![allow(clippy::format_push_string)]
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -182,7 +181,9 @@ pub fn diag_phone(env: &Env) -> String {
     let ip6t_bin = env.sysbin_cmd("ip6tables");
     let iw_bin = env.sysbin_cmd("iw");
     let now = Local::now().format("%Y-%m-%d %H:%M:%S");
-    out.push_str(&format!("### 手机网络快照 {now}\n"));
+    out.push_str("### 手机网络快照 ");
+    out.push_str(&now.to_string());
+    out.push('\n');
 
     let ip_s = ip_bin.to_string_lossy().into_owned();
     dsec(
@@ -296,7 +297,10 @@ pub fn diag_phone(env: &Env) -> String {
                 } else {
                     ports.join(" ")
                 };
-                out.push_str(&format!("{name}: 端口 {ps}\n"));
+                out.push_str(&name);
+                out.push_str(": 端口 ");
+                out.push_str(&ps);
+                out.push('\n');
             }
         }
     }
@@ -309,7 +313,10 @@ pub fn diag_phone(env: &Env) -> String {
     ] {
         let val = fs::read_to_string(path).unwrap_or_default();
         let key = path.strip_prefix("/proc/sys/").unwrap_or(path);
-        out.push_str(&format!("{key}={}\n", val.trim()));
+        out.push_str(key);
+        out.push('=');
+        out.push_str(val.trim());
+        out.push('\n');
     }
     let mut ifaces = vec!["xr0".to_string(), "xr1".to_string(), "xrbr1".to_string()];
     for tok in up.split_whitespace() {
@@ -324,7 +331,13 @@ pub fn diag_phone(env: &Env) -> String {
         for k in ["disable_ipv6", "forwarding", "proxy_ndp", "accept_ra"] {
             let p = format!("/proc/sys/net/ipv6/conf/{iface}/{k}");
             if let Ok(v) = fs::read_to_string(&p) {
-                out.push_str(&format!("ipv6.{iface}.{k}={}\n", v.trim()));
+                out.push_str("ipv6.");
+                out.push_str(&iface);
+                out.push('.');
+                out.push_str(k);
+                out.push('=');
+                out.push_str(v.trim());
+                out.push('\n');
             }
         }
     }
@@ -363,7 +376,9 @@ pub fn diag_phone(env: &Env) -> String {
         Path::new("settings"),
         &["get", "global", "tether_offload_disabled"],
     );
-    out.push_str(&format!("tether_offload_disabled={}\n", offload.trim()));
+    out.push_str("tether_offload_disabled=");
+    out.push_str(offload.trim());
+    out.push('\n');
     let tether = sys_cmd_output(Path::new("dumpsys"), &["tethering"]);
     let mut tcount = 0_usize;
     for l in tether.lines() {
@@ -408,7 +423,10 @@ pub fn diag_phone(env: &Env) -> String {
         Path::new("settings"),
         &["get", "global", "private_dns_mode"],
     );
-    out.push_str(&format!("private_dns_mode={}\n\n", pdns.trim()));
+    out.push_str("private_dns_mode=");
+    out.push_str(pdns.trim());
+    out.push('\n');
+    out.push('\n');
 
     out.push_str("## 运行状态\n");
     let run = env.run_dir();
@@ -435,7 +453,10 @@ pub fn diag_phone(env: &Env) -> String {
                     |_| f.to_string_lossy().into_owned(),
                     |p| p.to_string_lossy().into_owned(),
                 );
-                out.push_str(&format!("{rel}={val}\n"));
+                out.push_str(&rel);
+                out.push('=');
+                out.push_str(&val);
+                out.push('\n');
             }
         }
     }
@@ -479,7 +500,11 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     let lock = DirLock::acquire(lock_path, 600, 100, false);
     let mut raw = String::new();
     let now = Local::now().format("%Y-%m-%d %H:%M:%S");
-    raw.push_str(&format!("======== {now} 快照：{reason}\n"));
+    raw.push_str("======== ");
+    raw.push_str(&now.to_string());
+    raw.push_str(" 快照：");
+    raw.push_str(reason);
+    raw.push('\n');
     raw.push_str(&diag_phone(env));
     let state = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
     if matches!(state.trim(), "ready" | "stable") {
