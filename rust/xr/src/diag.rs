@@ -476,7 +476,7 @@ pub fn phone(env: &Env) -> String {
 /// # Errors
 ///
 /// 虚拟机未运行或共享目录不存在、或在等待时间内客体没有回应时，返回写入诊断包的说明文字。
-pub fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
+pub(crate) fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     let pid_raw = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let pid = pid_raw.trim();
     let host_dir = env.run_dir().join("guest/host");
@@ -503,7 +503,7 @@ pub fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     ))
 }
 
-pub fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
+pub(crate) fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
         return;
@@ -547,7 +547,7 @@ pub fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     rotate_debug(env);
 }
 
-pub fn snap_bg(env: &Env, reason: &str) {
+pub(crate) fn snap_bg(env: &Env, reason: &str) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
         return;
@@ -567,7 +567,7 @@ pub fn snap_bg(env: &Env, reason: &str) {
 }
 
 #[must_use]
-pub fn logcat() -> String {
+pub(crate) fn logcat() -> String {
     let out = sys_cmd_output(
         Path::new("logcat"),
         &["-d", "-v", "threadtime", "-t", "30000"],
@@ -604,7 +604,7 @@ pub fn logcat() -> String {
 }
 
 #[must_use]
-pub fn download_dir(env: &Env) -> Option<PathBuf> {
+pub(crate) fn download_dir(env: &Env) -> Option<PathBuf> {
     if let Some(dir) = &env.download_override {
         if fs::create_dir_all(dir).is_ok() {
             return Some(dir.clone());
@@ -659,7 +659,7 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
 }
 
 #[must_use]
-pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
+pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
     let Some(dest) = download_dir(env) else {
         return "{\"ok\":false,\"error\":\"no download dir\"}".to_owned();
     };
