@@ -20,7 +20,7 @@ import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
   labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  trafficLine, fmtRate, fmtSince, hsSubnetCheck, vpnProfiles, splitLines, clashView,
+  trafficLine, fmtSince, homeLive, trafficFromStatus, hsSubnetCheck, vpnProfiles, splitLines, clashView,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 import { createClashEmbed } from "./clash-embed.js";
@@ -430,15 +430,14 @@ function renderVpn(vpn) {
 }
 
 // 状态页实时数据位：速率（需求 7）、OpenWrt 负载与在线设备（需求 8）；数据缺失或未运行时显示 —
+// 负载与设备短暂超时时保留上次的值（最多 15 s），见 logic.js homeLive
+let homePrev = null;
 function renderHomeLive(d) {
-  const running = vmView(d, pending).phase === "running";
-  const t = d.traffic && d.traffic.rate, g = d.guest_stats;
-  txt($("v-rate-up"), running && t ? fmtRate(t.total.up) : "—");
-  txt($("v-rate-down"), running && t ? fmtRate(t.total.down) : "—");
-  txt($("v-load"), running && g && g.ok ? `${g.cpu_pct}% · ${g.mem_pct}%` : "—");
-  txt($("v-load-sub"), running && g && g.ok ? `负载 ${g.load1}` : "");
-  txt($("v-dev"), running && g && g.ok ? String(g.devices.total) : "—");
-  txt($("v-dev-sub"), running && g && g.ok ? `热点 ${g.devices.hotspot} · 本机 1` : "");
+  const v = homeLive(d, vmView(d, pending).phase === "running", homePrev, Date.now());
+  homePrev = v.keep;
+  txt($("v-rate-up"), v.up); txt($("v-rate-down"), v.down);
+  txt($("v-load"), v.load); txt($("v-load-sub"), v.loadSub);
+  txt($("v-dev"), v.dev); txt($("v-dev-sub"), v.devSub);
 }
 
 function render(d) {
@@ -594,6 +593,7 @@ async function refreshOnce() {
   overlay(d);
   render(d);
   saveCache(r.stdout);
+  const tj = trafficFromStatus(d); if (tj) renderTrafficData(tj);
 }
 
 const CACHE_KEY = "xr.status";
@@ -1044,7 +1044,7 @@ function goPage(i, fromPop = false) {
       { duration: PAGE_MS, easing: "cubic-bezier(.2,.8,.2,1)" }
     );
   }
-  if (i === 0) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
+  if (i === 0 && (!status || !status.traffic || status.traffic.source !== "daemon")) requestAnimationFrame(() => setTimeout(loadTraffic, 0));
 }
 
 function bindPager() {
@@ -1157,7 +1157,7 @@ function bind() {
 
   document.addEventListener("visibilitychange", () => {
     document.documentElement.classList.toggle("hid", document.hidden);
-    if (!document.hidden && !gone) { refresh(); if (page === 0) loadTraffic(); schedule(); }
+    if (!document.hidden && !gone) { refresh(); if (page === 0 && (!status || !status.traffic || status.traffic.source !== "daemon")) loadTraffic(); schedule(); }
   });
 }
 
@@ -1221,8 +1221,13 @@ function previewStatus(phase) {
     },
     share: { rw_supported: true },
     ipv6: running ? true : null,
-    traffic: { rate: { total: { up: 52_000, down: 1_830_000 } } },
-    guest_stats: { ok: true, cpu_pct: 7, mem_pct: 31, load1: "0.12", devices: { total: 3, hotspot: 2 } },
+    traffic: {
+      rate: running ? { total: { up: 52_000, down: 1_830_000 } } : null,
+      total: { wan: { up: 417_542_963, down: 3_328_599_654 }, lan: { up: 29_989_273, down: 327_680_000 }, total: { up: 447_532_236, down: 3_656_279_654 } },
+      since: 1762907400,
+      source: "daemon",
+    },
+    guest_stats: running ? { ok: true, age_s: 2, cpu_pct: 7, mem_pct: 31, load1: "0.12", devices: { total: 3, phone: 1, hotspot: 2, source: "openwrt" } } : { ok: false, reason: "stopped" },
   };
 }
 
@@ -1278,6 +1283,6 @@ window.__xrPreviewSet = (phase, pageIdx) => {
   }
   if (isPreview) return;
   await refresh();
-  loadTraffic();
+  if (!status || !status.traffic || status.traffic.source !== "daemon") loadTraffic();
   schedule();
 })();

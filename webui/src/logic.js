@@ -198,6 +198,31 @@ export function trafficLine(d, mode) {
   if (!t) return "—";
   return `↑${fmtBytes(t.up)} ↓${fmtBytes(t.down)}`;
 }
+// 状态页实时磁贴文本（需求 6b）。d = status-json；prev = 上次返回的 keep（{g, at}），
+// guest_stats 短暂超时（reason=timeout）时 15 s 内保留上次的负载与设备；未运行、旧系统盘（unsupported）时全部为 —
+export function homeLive(d, running, prev, nowMs) {
+  const out = { up: "—", down: "—", load: "—", loadSub: "", dev: "—", devSub: "", keep: prev || null };
+  if (!running) return { ...out, keep: null };
+  const r = d && d.traffic && d.traffic.rate;
+  if (r && r.total) { out.up = fmtRate(r.total.up); out.down = fmtRate(r.total.down); }
+  let g = d && d.guest_stats;
+  if (g && g.ok) out.keep = { g, at: nowMs };
+  else if (g && g.reason === "timeout" && prev && nowMs - prev.at <= 15000) g = prev.g;
+  else out.keep = null;
+  if (g && g.ok) {
+    if (g.cpu_pct != null) out.load = `${g.cpu_pct}%`;
+    out.loadSub = [g.mem_pct != null ? `内存 ${g.mem_pct}%` : "", g.load1 ? `load ${g.load1}` : ""].filter(Boolean).join(" · ");
+    const dv = g.devices || {};
+    out.dev = String(dv.total ?? "—");
+    out.devSub = `本机 ${dv.phone ?? 1} · 热点 ${dv.hotspot ?? 0}`;
+  }
+  return out;
+}
+// 累计流量随状态轮询刷新：守护进程在时取 status-json.traffic（格式同 xr traffic：{wan,lan,total,since}），否则 null（回退 xr traffic）
+export function trafficFromStatus(d) {
+  const t = d && d.traffic;
+  return t && t.source === "daemon" && t.total ? { ...t.total, since: t.since } : null;
+}
 export function fmtSince(ts) {
   const n = Number(ts) || 0;
   if (n < 1600000000) return "累计统计";

@@ -145,7 +145,25 @@ if (!/^自 \d\d-\d\d \d\d:\d\d$/.test(L.fmtSince(1731400000))) fail("fmtSince �
 
 // 累计流量不随 5 秒状态轮询反复刷新，仅在切回状态页、打开详情弹窗或清零时按需拉取
 if (/await refresh\(\);\s*if \(page === 0\) loadTraffic\(\)/.test(main)) fail("不应在定时轮询中实时刷新流量");
-if (!/openTrafficDetail/.test(main) || !/if \(i === 0\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("累计流量应支持按需打开详情与切回刷新");
+if (!/openTrafficDetail/.test(main) || !/if \(i === 0 && \(!status \|\| !status\.traffic \|\| status\.traffic\.source !== "daemon"\)\) requestAnimationFrame\(\(\) => setTimeout\(loadTraffic, 0\)\)/.test(main)) fail("累计流量应支持按需打开详情与切回刷新");
+// 需求 6b：累计流量随状态轮询刷新；切回状态页、切回前台、启动时三处 xr traffic 只在守护进程不可用时调用
+const ltCalls = main.split("\n").filter((l) => /loadTraffic\(\)|setTimeout\(loadTraffic,/.test(l) && !/async function loadTraffic|await loadTraffic\(\)/.test(l));
+eq(ltCalls.length, 3, "loadTraffic 轮询相关调用点数");
+for (const l of ltCalls) if (!l.includes('status.traffic.source !== "daemon"')) fail("loadTraffic 调用缺少 daemon 判断：" + l.trim());
+if (!/const tj = trafficFromStatus\(d\); if \(tj\) renderTrafficData\(tj\);/.test(main)) fail("refreshOnce 应随状态刷新累计流量");
+let hv = L.homeLive({ traffic: { rate: { total: { up: 0, down: 1_830_000 } } }, guest_stats: { ok: true, cpu_pct: 12, mem_pct: 43, load1: "0.15", devices: { total: 3, phone: 1, hotspot: 2 } } }, true, null, 1000);
+eq([hv.up, hv.down, hv.load, hv.loadSub, hv.dev, hv.devSub], ["0 B/s", "1.7 MB/s", "12%", "内存 43% · load 0.15", "3", "本机 1 · 热点 2"], "homeLive ok");
+const hv2 = L.homeLive({ guest_stats: { ok: false, reason: "timeout" } }, true, hv.keep, 10000);
+eq([hv2.load, hv2.dev, hv2.up], ["12%", "3", "—"], "超时 15 s 内保留");
+const hv3 = L.homeLive({ guest_stats: { ok: false, reason: "timeout" } }, true, hv.keep, 20000);
+eq([hv3.load, hv3.dev, hv3.keep], ["—", "—", null], "超时超过 15 s 清空");
+const hv4 = L.homeLive({ guest_stats: { ok: false, reason: "unsupported" } }, true, hv.keep, 2000);
+eq([hv4.load, hv4.keep], ["—", null], "旧系统盘");
+const hv5 = L.homeLive({}, false, hv.keep, 0);
+eq([hv5.up, hv5.load, hv5.keep], ["—", "—", null], "未运行");
+eq(L.homeLive({ traffic: { rate: null }, guest_stats: { ok: true, devices: {} } }, true, null, 0).load, "—", "首次采样无速率、无 cpu");
+eq(L.trafficFromStatus({ traffic: { source: "daemon", since: 9, total: { total: { up: 1, down: 2 } } } }), { total: { up: 1, down: 2 }, since: 9 }, "trafficFromStatus daemon");
+eq([L.trafficFromStatus({ traffic: { source: "none", total: null } }), L.trafficFromStatus({})], [null, null], "trafficFromStatus 回退");
 
 // 日志统一：系统页「日志」分组按调试模式切换「日志导出 / 诊断导出」
 if ("LOG_KINDS" in L || html.includes('id="page-logs"') || html.includes("log-kinds") || /xr\("log",|"log-clear"/.test(main)) fail("不应再有日志页与日志分类");
