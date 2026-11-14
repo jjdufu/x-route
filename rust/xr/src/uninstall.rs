@@ -1,3 +1,5 @@
+//! 卸载：标准清理流程（停止进程、撤销网络规则、撤销通知、删除数据），以及 `WebUI` 发起的立即卸载。
+
 use std::fs;
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
@@ -32,6 +34,7 @@ fn sys_run(env: &Env, bin: &Path, args: &[&str]) {
     note_status(env, &bin.to_string_lossy(), status);
 }
 
+/// 同步运行一条系统命令（丢弃输出），成功退出时返回 true。
 fn sys_ok(bin: &Path, args: &[&str]) -> bool {
     Command::new(bin)
         .args(args)
@@ -42,6 +45,7 @@ fn sys_ok(bin: &Path, args: &[&str]) -> bool {
         .is_ok_and(|exit_status| exit_status.success())
 }
 
+/// 向命令行属于本模块的进程（`crosvm`、模块脚本、`bin/xr`、通知器等）发送信号，跳过自己和卸载进程。
 fn kill_matching_procs(env: &Env, sig: Signal) {
     let self_pid = std::process::id().to_string();
     let xr_data_s = env.xr_data.to_string_lossy();
@@ -83,6 +87,7 @@ fn kill_matching_procs(env: &Env, sig: Signal) {
     }
 }
 
+/// 系统通知栏里还有本模块的常驻通知时返回 true。
 fn notify_present() -> bool {
     Command::new("dumpsys")
         .arg("notification")
@@ -90,6 +95,7 @@ fn notify_present() -> bool {
         .is_ok_and(|result| String::from_utf8_lossy(&result.stdout).contains("id=233 tag=xrouter"))
 }
 
+/// 撤销常驻通知：已开机时最多重试 3 次；未开机完成时复制通知器到临时目录，在后台等开机后再撤销。
 fn cancel_notifications(env: &Env) {
     let jar = env.notifier_jar.clone();
     let jar_fallback = env.moddir.join("bin/xrnotify.jar");
@@ -137,6 +143,7 @@ fn cancel_notifications(env: &Env) {
     }
 }
 
+/// 标准卸载：停止虚拟机与网络、结束本模块的所有进程、删除 `iptables`/`ip6tables` 链与策略路由、撤销通知、释放唤醒锁并删除数据目录；总是返回 0。
 #[must_use]
 pub(crate) fn standard(env: &Env) -> i32 {
     let run = env.run_dir();
@@ -272,6 +279,7 @@ pub(crate) fn standard(env: &Env) -> i32 {
     0
 }
 
+/// 选一个可写的临时暂存目录：依次尝试 `XR_TMPDIR`、`/data/local/tmp`、系统临时目录与 `/dev`。
 fn pick_stage_base(env: &Env) -> PathBuf {
     let name = format!(".xr-uninst-{}-{}", unix_now(), std::process::id());
     if let Some(tmp_dir) = &env.tmpdir {
@@ -293,6 +301,9 @@ fn pick_stage_base(env: &Env) -> PathBuf {
     dev
 }
 
+/// `xr uninstall-now confirm`：校验模块目录后把 `xr` 与 `uninstall.sh` 复制到暂存目录，启动后台卸载进程，再删除模块目录。
+///
+/// 返回（退出码, JSON 结果）；未确认时返回 2，模块目录异常或缺少 `uninstall.sh` 时返回 1。
 #[must_use]
 pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
     if confirm_arg != "confirm" {
@@ -383,6 +394,7 @@ pub fn now(env: &Env, confirm_arg: &str) -> (i32, String) {
     (0, "{\"ok\":true}".to_owned())
 }
 
+/// `xr internal uninstall-worker`：脱离会话后执行暂存的 `uninstall.sh`（缺失时执行内置的标准卸载），再删除模块、更新目录、数据与暂存目录；返回进程退出码。
 #[must_use]
 pub fn worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
     crate::sys::spawn::enter_detached_session(env);
