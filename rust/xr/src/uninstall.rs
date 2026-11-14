@@ -138,7 +138,7 @@ fn cancel_notifications(env: &Env) {
 }
 
 #[must_use]
-pub fn standard(env: &Env) -> i32 {
+pub(crate) fn standard(env: &Env) -> i32 {
     let run = env.run_dir();
     note_rc(env, "vm_stop", vm_stop(env));
     note_rc(env, "run_net_cli", run_net_cli(env, &["down".to_owned()]));
