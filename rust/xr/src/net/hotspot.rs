@@ -431,6 +431,58 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     true
 }
 
+/// 拼出热点网桥的 `IPv6` 拒绝规则参数：`head` 之后接 `-i xrbr1`，`tcp` 时回 `tcp-reset`，否则回 `icmp6-adm-prohibited`。
+fn hs_reject6<'a>(head: &[&'a str], tcp: bool) -> Vec<&'a str> {
+    let mut args = head.to_vec();
+    args.extend(["-i", HS_BR]);
+    if tcp {
+        args.extend(["-p", "tcp", "-j", "REJECT", "--reject-with", "tcp-reset"]);
+    } else {
+        args.extend(["-j", "REJECT", "--reject-with", "icmp6-adm-prohibited"]);
+    }
+    args
+}
+
+/// 把热点接口 `iface`（非空时）和 `xr1` 移出网桥，再删除网桥。
+fn hs_detach(ctx: &NetCtx<'_>, iface: &str) {
+    if !iface.is_empty() && hs_master(ctx.env, iface) == HS_BR {
+        ctx.ip_run(&["link", "set", iface, "nomaster"]);
+    }
+    if hs_master(ctx.env, HS_TAP) == HS_BR {
+        ctx.ip_run(&["link", "set", HS_TAP, "nomaster"]);
+    }
+    ctx.ip_run(&["link", "del", HS_BR]);
+}
+
+/// 接口仍在且 `busybox` 可用时，后台发两次免费 `ARP`，让已连设备尽快刷新安卓原网关 `cidr` 的地址。
+fn hs_arp_announce(ctx: &NetCtx<'_>, iface: &str, cidr: &str) {
+    if iface.is_empty()
+        || cidr.is_empty()
+        || !ctx.env.sysnet.join(iface).is_dir()
+        || !is_executable(&ctx.env.bb)
+    {
+        return;
+    }
+    let ip_only = cidr.split('/').next().unwrap_or(cidr);
+    let child = Command::new(&ctx.env.bb)
+        .args([
+            "arping", "-U", "-c", "2", "-I", iface, "-s", ip_only, ip_only,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    note_spawn(ctx.env, "arping", child);
+}
+
+/// 删除 `run/net.hs_if`、`net.hs_cidr`、`net.hs_gw` 与 `net.hs_fail`。
+fn hs_clear_state(ctx: &NetCtx<'_>) {
+    let run = ctx.env.run_dir();
+    for name in ["net.hs_if", "net.hs_cidr", "net.hs_gw", "net.hs_fail"] {
+        fsx::remove_logged(ctx.env, run.join(name));
+    }
+}
+
 /// 撤销热点桥接：通知客机停止、把接口移出网桥并恢复安卓原地址，删除规则与 `run/net.hs_*` 状态文件。
 pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
@@ -447,41 +499,9 @@ pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
         return;
     }
     hs_rules_clear(ctx);
-    while ctx
-        .ip6t(&[
-            "-D",
-            "XR_FWD6",
-            "-i",
-            HS_BR,
-            "-p",
-            "tcp",
-            "-j",
-            "REJECT",
-            "--reject-with",
-            "tcp-reset",
-        ])
-        .success()
-    {}
-    while ctx
-        .ip6t(&[
-            "-D",
-            "XR_FWD6",
-            "-i",
-            HS_BR,
-            "-j",
-            "REJECT",
-            "--reject-with",
-            "icmp6-adm-prohibited",
-        ])
-        .success()
-    {}
-    if !iface.is_empty() && hs_master(ctx.env, &iface) == HS_BR {
-        ctx.ip_run(&["link", "set", &iface, "nomaster"]);
-    }
-    if hs_master(ctx.env, HS_TAP) == HS_BR {
-        ctx.ip_run(&["link", "set", HS_TAP, "nomaster"]);
-    }
-    ctx.ip_run(&["link", "del", HS_BR]);
+    while ctx.ip6t(&hs_reject6(&["-D", "XR_FWD6"], true)).success() {}
+    while ctx.ip6t(&hs_reject6(&["-D", "XR_FWD6"], false)).success() {}
+    hs_detach(ctx, &iface);
     if vm_alive(ctx.env) && hs_guest_ok(ctx.env) && !hs_guest_cmd(ctx.env, "off", 5) {
         dlog(
             ctx.env,
@@ -490,26 +510,8 @@ pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
             "客机 5 秒内未确认关闭热点，继续拆桥",
         );
     }
-    if !iface.is_empty()
-        && !cidr.is_empty()
-        && ctx.env.sysnet.join(&iface).is_dir()
-        && is_executable(&ctx.env.bb)
-    {
-        let ip_only = cidr.split('/').next().unwrap_or(&cidr);
-        let child = Command::new(&ctx.env.bb)
-            .args([
-                "arping", "-U", "-c", "2", "-I", &iface, "-s", ip_only, ip_only,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        note_spawn(ctx.env, "arping", child);
-    }
-    fsx::remove_logged(ctx.env, run.join("net.hs_if"));
-    fsx::remove_logged(ctx.env, run.join("net.hs_cidr"));
-    fsx::remove_logged(ctx.env, run.join("net.hs_gw"));
-    fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
+    hs_arp_announce(ctx, &iface, &cidr);
+    hs_clear_state(ctx);
     if !iface.is_empty() {
         log::info(ctx.env, "hotspot", &format!("热点 {iface} 已交还安卓"));
     }
@@ -631,26 +633,6 @@ pub(crate) fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
     if !ctx.env.run_dir().join("net.hs_if").is_file() {
         return;
     }
-    ctx.ip6t_run(&[
-        "-A",
-        "XR_FWD6",
-        "-i",
-        HS_BR,
-        "-p",
-        "tcp",
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "tcp-reset",
-    ]);
-    ctx.ip6t_run(&[
-        "-A",
-        "XR_FWD6",
-        "-i",
-        HS_BR,
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "icmp6-adm-prohibited",
-    ]);
+    ctx.ip6t_run(&hs_reject6(&["-A", "XR_FWD6"], true));
+    ctx.ip6t_run(&hs_reject6(&["-A", "XR_FWD6"], false));
 }
