@@ -42,6 +42,22 @@ use crate::vm;
 use crate::vm::disk;
 use crate::vm::{fuse_watch, run_net_hook};
 
+/// 调试开关写入后记一条开启或关闭的日志；开启时附带自动关闭说明，并在后台抓一次诊断快照。
+fn announce_debug(env: &Env, cfg: &Config) {
+    if cfg.debug_on() {
+        let hours = cfg.debug_hours();
+        let dur = if hours == 0 {
+            "不自动关闭".to_owned()
+        } else {
+            format!("{hours} 小时后自动关闭")
+        };
+        log::info(env, "debug", &format!("调试模式已开启（{dur}）"));
+        diag::snap_bg(env, "调试模式开启");
+    } else {
+        log::info(env, "debug", "调试模式已关闭");
+    }
+}
+
 /// 配置键写入后的联动：网络类键在虚拟机运行时触发规则同步，自启类键检查前置条件。
 ///
 /// # Errors
@@ -76,23 +92,11 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
         "XR_NOTIFY_TRAFFIC" => {
             fsx::write_logged(env, env.run_dir().join("notify.force"), "");
         }
-        "XR_DEBUG" | "XR_DEBUG_HOURS" => {
+        "XR_DEBUG" => {
             debug_arm(env);
-            if key == "XR_DEBUG" {
-                if cfg.debug_on() {
-                    let hours = cfg.debug_hours();
-                    let dur = if hours == 0 {
-                        "不自动关闭".to_owned()
-                    } else {
-                        format!("{hours} 小时后自动关闭")
-                    };
-                    log::info(env, "debug", &format!("调试模式已开启（{dur}）"));
-                    diag::snap_bg(env, "调试模式开启");
-                } else {
-                    log::info(env, "debug", "调试模式已关闭");
-                }
-            }
+            announce_debug(env, &cfg);
         }
+        "XR_DEBUG_HOURS" => debug_arm(env),
         "AUTOSTART" if cfg.autostart() => {
             if env.tripped_file().is_file() {
                 note_ok(env, "set_kv AUTOSTART=0", set_kv(env, "AUTOSTART", "0"));
