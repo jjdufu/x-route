@@ -1,3 +1,7 @@
+//! `OpenClash` 控制通道：手机侧的复用进程（`clash-mux`）把客机 `hvc1` 控制口与多个本地 RPC 客户端相连，并提供 `xr clash-*` 子命令。
+//!
+//! 请求的 `id` 与 ws 的 `ws_id` 在复用进程内改写成不冲突的编号，应答再按登记表改回并发给原客户端。
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead as _, BufReader, BufWriter, Write as _};
@@ -24,10 +28,14 @@ use crate::sys::{is_pid_running, send_signal_logged};
 use crate::vm;
 use crate::vm::reap_in_background;
 
+/// 客机上报的 `OpenClash` 状态（来自 `guest/guest/openclash.status`），用于 `xr status` 的 `clash` 字段。
 #[derive(Debug, Clone, Copy, Serialize)]
 pub(crate) struct Status {
+    /// `OpenClash` 是否已安装。
     pub(crate) installed: bool,
+    /// `OpenClash` 是否在运行。
     pub(crate) running: bool,
+    /// 控制面板端口，默认 9090。
     pub(crate) port: u16,
 }
 
@@ -41,6 +49,7 @@ impl Default for Status {
     }
 }
 
+/// 读取 `OpenClash` 状态；虚拟机不在（`alive` 为 false）或状态文件读不到时返回默认值。
 #[must_use]
 pub(crate) fn status(env: &Env, alive: bool) -> Status {
     if !alive {
@@ -72,6 +81,7 @@ pub(crate) fn status(env: &Env, alive: bool) -> Status {
     st
 }
 
+/// 停止复用进程：先 `TERM`，1 秒内未退出再 `KILL`，然后删除其进程号、就绪标记与两个套接字。
 pub(crate) fn stop_clash_mux(env: &Env) {
     let run = env.run_dir();
     if let Ok(pid_raw) = fs::read_to_string(run.join("clash_mux.pid")) {
@@ -99,6 +109,7 @@ pub(crate) fn stop_clash_mux(env: &Env) {
     }
 }
 
+/// 重启复用进程：先停止旧的，再后台启动 `xr internal clash-mux`，最多等 2 秒出现就绪标记（未就绪只记 INFO）。
 pub(crate) fn start_clash_mux(env: &Env) {
     stop_clash_mux(env);
     let run = env.run_dir();
@@ -119,8 +130,11 @@ pub(crate) fn start_clash_mux(env: &Env) {
     log::info(env, "clash", "clash-mux 未在预期时间内就绪");
 }
 
+/// 一个已连接的 RPC 客户端。
 struct ClientHandle {
+    /// 发往该客户端写线程的应答行。
     tx: mpsc::Sender<String>,
+    /// 该客户端打开的 ws 在复用进程内的编号。
     ws_ids: HashSet<String>,
 }
 
@@ -132,16 +146,24 @@ enum WsMiss {
     Unknown,
 }
 
+/// 复用进程的共享状态。
 struct MuxState {
+    /// 客机控制口连接（未连接时为 `None`）。
     hvc_writer: Mutex<Option<UnixStream>>,
+    /// 已连接的 RPC 客户端，键为客户端号。
     clients: Mutex<HashMap<u64, ClientHandle>>,
+    /// 已转发、等待客机应答的请求：复用编号 -> (客户端号, 原 `id`)。
     pending_reqs: Mutex<HashMap<String, (u64, Value)>>,
+    /// 已打开的 ws：复用编号 -> (客户端号, 原 `ws_id`)。
     active_ws: Mutex<HashMap<String, (u64, String)>>,
+    /// 外部客户端打开的 ws：原 `ws_id` -> (客户端号, 复用编号)，供其它连接按原编号发送或关闭。
     ws_by_key: Mutex<HashMap<String, (u64, String)>>,
+    /// 生成复用编号的递增序号。
     seq: AtomicU64,
 }
 
 impl MuxState {
+    /// 空状态：客机未连接、没有客户端，序号从 1 开始。
     fn new() -> Self {
         Self {
             hvc_writer: Mutex::new(None),
@@ -153,10 +175,12 @@ impl MuxState {
         }
     }
 
+    /// 取下一个复用序号。
     fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// 向客机控制口写一行并 flush；未连接或写失败时返回 false（写失败会断开该连接）。
     fn write_hvc_line(&self, line: &str) -> bool {
         let Ok(mut guard) = self.hvc_writer.lock() else {
             return false;
@@ -174,6 +198,7 @@ impl MuxState {
         true
     }
 
+    /// 把一行应答交给客户端的写线程；客户端已断开时只计数。
     fn send_to_client(&self, client_id: u64, line: String) {
         if let Ok(clients) = self.clients.lock()
             && let Some(ch) = clients.get(&client_id)
@@ -184,6 +209,7 @@ impl MuxState {
         }
     }
 
+    /// 登记新客户端及其应答通道。
     fn register_client(&self, client_id: u64, tx: mpsc::Sender<String>) {
         if let Ok(mut clients) = self.clients.lock() {
             let replaced: Option<ClientHandle> = clients.insert(
@@ -200,6 +226,7 @@ impl MuxState {
         }
     }
 
+    /// 注销客户端：清掉它的等待请求与 ws 登记，并通知客机关闭这些 ws。
     fn unregister_client(&self, client_id: u64) {
         let orphaned_ws: Vec<String> = self.clients.lock().map_or_else(
             |_| Vec::new(),
@@ -269,6 +296,7 @@ impl MuxState {
         }
     }
 
+    /// 处理客机发来的一行：按登记表把复用 `id`/`ws_id` 改回原值并发给对应客户端，`ws_close` 时同时注销该 ws。
     fn handle_guest_line(&self, raw: &str) {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -325,6 +353,9 @@ impl MuxState {
         }
     }
 
+    /// 处理客户端发来的一行：改写 `id` 与 `ws_id` 并登记后转发给客机。
+    ///
+    /// 客机未连接时直接回复 503 错误；发送或关闭外部客户端打开的 ws 时由复用进程直接回复 ok。
     fn handle_client_line(&self, client_id: u64, ws_map: &mut HashMap<String, String>, raw: &str) {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -475,6 +506,7 @@ impl MuxState {
     }
 }
 
+/// 服务一个 RPC 客户端连接：后台线程写应答，当前线程逐行读请求并交给 [`MuxState::handle_client_line`]，断开后注销。
 fn serve_rpc_client(env: &Env, state: &MuxState, stream: UnixStream, client_id: u64) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
@@ -532,6 +564,7 @@ fn note_sock(env: &Env, what: &str, res: std::io::Result<()>) {
     }
 }
 
+/// `xr internal clash-mux`：监听 `clash-ctl.sock`（客机控制口）和 `clash-rpc.sock`（RPC 客户端），转发双方消息直到收到 `TERM`/`INT`；返回进程退出码。
 #[must_use]
 pub(crate) fn run_clash_mux(env: &Env) -> i32 {
     let run = env.run_dir();
@@ -665,6 +698,7 @@ pub(crate) fn run_clash_mux(env: &Env) -> i32 {
     0
 }
 
+/// `xr clash-bridge`：把标准输入的请求行转发给复用进程，并把应答逐行写到标准输出；通道不可用时输出错误 JSON 并返回 1。
 #[must_use]
 pub(crate) fn run_clash_bridge(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
@@ -718,6 +752,7 @@ pub(crate) fn run_clash_bridge(env: &Env) -> i32 {
     0
 }
 
+/// `xr clash-ping`：向客机发 `ping` 并输出应答；应答含 `"ok":true` 时返回 0，否则返回 1。
 #[must_use]
 pub(crate) fn run_clash_ping(env: &Env) -> i32 {
     let rpc_sock = env.run_dir().join("clash-rpc.sock");
@@ -792,6 +827,9 @@ fn render_rpc_line(line: &str) -> String {
     )
 }
 
+/// `xr clash-call <json>`：发送一个 RPC 请求（缺 `id` 时补 `c1`）并输出应答，最多等 20 秒。
+///
+/// 参数不是 JSON 对象时返回 2，通道不可用或超时返回 1。
 #[must_use]
 pub(crate) fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     let Ok(mut val) = serde_json::from_str::<Value>(req_json) else {
@@ -852,6 +890,9 @@ pub(crate) fn run_clash_call(env: &Env, req_json: &str) -> i32 {
     }
 }
 
+/// `xr clash-stream <ws_id> <path>`：打开一个到 `OpenClash` 接口的 ws，并把收到的消息逐行输出直到关闭。
+///
+/// 参数非法时返回 2。
 pub(crate) fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     if ws_id.is_empty() || !path.starts_with('/') {
         return emit(
@@ -907,6 +948,9 @@ pub(crate) fn run_clash_stream(env: &Env, ws_id: &str, path: &str) -> i32 {
     0
 }
 
+/// `xr clash-ws-send <ws_id> <mode> <payload>`：向已打开的 ws 发送一条文本或 base64 二进制消息并输出应答。
+///
+/// `ws_id` 为空时返回 2。
 #[must_use]
 pub(crate) fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &str) -> i32 {
     if ws_id.is_empty() {
@@ -953,6 +997,9 @@ pub(crate) fn run_clash_ws_send(env: &Env, ws_id: &str, mode: &str, payload: &st
     }
 }
 
+/// `xr clash-ws-close <ws_id>`：关闭已打开的 ws；通道不可用时视为已关闭，输出 `{"ok":true}`。
+///
+/// `ws_id` 为空时返回 2。
 #[must_use]
 pub(crate) fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     if ws_id.is_empty() {
