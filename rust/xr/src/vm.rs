@@ -590,7 +590,7 @@ pub fn start_exec(env: &Env) -> i32 {
     };
     let pid_str = ch.id().to_string();
     fsx::write_logged(env, run.join("crosvm.pid"), format!("{pid_str}\n"));
-    let notify_daemon = env.in_daemon.then(|| std::process::id().to_string());
+    let notify_daemon = env.role.is_daemon().then(|| std::process::id().to_string());
     let env_t = env.clone();
     // 分离线程：显式丢弃句柄即 detach，与原来不 join 的语义相同
     drop(thread::spawn(move || {
@@ -617,7 +617,7 @@ pub fn start_exec(env: &Env) -> i32 {
 
     if let Ok(fw) = spawn::self_detached(env, &["internal", "fuse-watch"]) {
         fsx::write_logged(env, run.join("fuse_watch.pid"), format!("{}\n", fw.id()));
-        if env.in_daemon {
+        if env.role.is_daemon() {
             reap_in_background(fw);
         }
     }

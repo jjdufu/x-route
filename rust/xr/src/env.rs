@@ -1,6 +1,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod tests;
+
 pub const XR_NET6: &str = "fd7a:7872:e9";
 pub const XR_IF: &str = "xr0";
 pub const HS_TAP: &str = "xr1";
@@ -33,11 +36,72 @@ pub struct Env {
     pub notify_wait: u64,
     pub notify_interval: u64,
     pub watchdog_interval: u64,
-    pub in_daemon: bool,
-    pub daemon_foreground: bool,
-    pub in_watchdog: bool,
-    pub in_watch: bool,
+    pub role: ProcRole,
+    pub daemon_mode: DaemonMode,
     pub fake_date_fail: bool,
+}
+
+/// 当前 `xr` 进程的角色：普通命令行、守护进程或看门狗（三者互斥）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcRole {
+    /// 普通命令行调用。
+    Cli,
+    /// `xr internal daemon` 守护进程。
+    Daemon,
+    /// `xr internal watchdog` 看门狗。
+    Watchdog,
+}
+
+impl ProcRole {
+    /// 由 `XR_IN_DAEMON`、`XR_IN_WATCHDOG` 两个环境变量的值得到角色：值为 `"1"` 视为设置；
+    /// 两者都设置时取守护进程（与旧代码先判断守护进程标志一致）。
+    #[must_use]
+    pub fn from_values(in_daemon: Option<&str>, in_watchdog: Option<&str>) -> Self {
+        match (in_daemon == Some("1"), in_watchdog == Some("1")) {
+            (true, _) => Self::Daemon,
+            (false, true) => Self::Watchdog,
+            (false, false) => Self::Cli,
+        }
+    }
+
+    /// 是否为守护进程。
+    #[must_use]
+    pub const fn is_daemon(self) -> bool {
+        matches!(self, Self::Daemon)
+    }
+
+    /// 是否为看门狗。
+    #[must_use]
+    pub const fn is_watchdog(self) -> bool {
+        matches!(self, Self::Watchdog)
+    }
+}
+
+/// 守护进程的运行方式：`XR_DAEMON_FOREGROUND=1`（测试用）时在前台同步执行，否则交给后台守护进程。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonMode {
+    /// 正常部署：命令交给后台守护进程。
+    Detached,
+    /// 前台模式：在当前进程内直接执行。
+    Foreground,
+}
+
+impl DaemonMode {
+    /// 由 `XR_DAEMON_FOREGROUND` 的值得到运行方式：`"1"` 为前台，其余（含未设置）为后台。
+    #[must_use]
+    pub fn from_value(foreground: Option<&str>) -> Self {
+        if foreground == Some("1") {
+            Self::Foreground
+        } else {
+            Self::Detached
+        }
+    }
+
+    /// 是否为前台模式。
+    #[must_use]
+    pub const fn is_foreground(self) -> bool {
+        matches!(self, Self::Foreground)
+    }
 }
 
 fn var_nonempty(key: &str) -> Option<String> {
@@ -121,10 +185,11 @@ impl Env {
             notify_wait: var_u64("XR_NOTIFY_WAIT", 25),
             notify_interval: var_u64("XR_NOTIFY_INTERVAL", 10),
             watchdog_interval: var_u64("XR_WATCHDOG_INTERVAL", 10),
-            in_daemon: env::var("XR_IN_DAEMON").as_deref() == Ok("1"),
-            daemon_foreground: env::var("XR_DAEMON_FOREGROUND").as_deref() == Ok("1"),
-            in_watchdog: env::var("XR_IN_WATCHDOG").as_deref() == Ok("1"),
-            in_watch: env::var("XR_IN_WATCH").as_deref() == Ok("1"),
+            role: ProcRole::from_values(
+                env::var("XR_IN_DAEMON").ok().as_deref(),
+                env::var("XR_IN_WATCHDOG").ok().as_deref(),
+            ),
+            daemon_mode: DaemonMode::from_value(env::var("XR_DAEMON_FOREGROUND").ok().as_deref()),
             fake_date_fail: env::var("XR_FAKE_DATE_FAIL").as_deref() == Ok("1"),
         }
     }

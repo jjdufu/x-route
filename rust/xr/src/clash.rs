@@ -107,7 +107,7 @@ pub fn start_clash_mux(env: &Env) {
         log::info(env, "clash", "clash-mux 启动失败");
         return;
     };
-    if env.in_daemon {
+    if env.role.is_daemon() {
         reap_in_background(mux);
     }
     for _ in 0_i32..100_i32 {

@@ -20,7 +20,7 @@ use crate::daemon::watchdog;
 use crate::daemon::{ensure_watchdog, vm_start, vm_stop};
 use crate::diag;
 use crate::diag::export_pack;
-use crate::env::Env;
+use crate::env::{Env, ProcRole};
 use crate::log;
 use crate::log::{blog, boot_clean_run, debug_arm, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
@@ -488,12 +488,12 @@ pub fn run(args: &[String]) -> i32 {
             },
             Some("daemon") => {
                 let mut daemon_env = env;
-                daemon_env.in_daemon = true;
+                daemon_env.role = ProcRole::Daemon;
                 daemon::main_loop(&daemon_env)
             }
             Some("watchdog") => {
                 let mut role_env = env;
-                role_env.in_watchdog = true;
+                role_env.role = ProcRole::Watchdog;
                 watchdog::main_loop(&role_env)
             }
             Some("fuse-watch") => {

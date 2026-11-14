@@ -103,7 +103,7 @@ pub fn running(env: &Env) -> bool {
 
 #[must_use]
 pub fn ensure_watchdog(env: &Env) -> bool {
-    if env.in_watchdog || env.daemon_foreground {
+    if env.role.is_watchdog() || env.daemon_mode.is_foreground() {
         return true;
     }
     let run = env.run_dir();
@@ -139,7 +139,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
 
 #[must_use]
 pub fn ensure(env: &Env) -> bool {
-    if env.daemon_foreground {
+    if env.daemon_mode.is_foreground() {
         return true;
     }
     if let Err(err) = env.ensure_dirs() {
@@ -171,7 +171,7 @@ pub fn ensure(env: &Env) -> bool {
 
 #[must_use]
 pub fn send(env: &Env, cmd: &str) -> i32 {
-    if env.daemon_foreground {
+    if env.daemon_mode.is_foreground() {
         return 0;
     }
     if !ensure(env) {
@@ -198,7 +198,7 @@ pub fn send(env: &Env, cmd: &str) -> i32 {
 
 #[must_use]
 pub fn vm_start(env: &Env) -> i32 {
-    if env.in_daemon || env.daemon_foreground {
+    if env.role.is_daemon() || env.daemon_mode.is_foreground() {
         return vm::start_exec(env);
     }
     send(env, "start")
@@ -206,7 +206,7 @@ pub fn vm_start(env: &Env) -> i32 {
 
 #[must_use]
 pub fn vm_stop(env: &Env) -> i32 {
-    if env.in_daemon || env.daemon_foreground {
+    if env.role.is_daemon() || env.daemon_mode.is_foreground() {
         return vm::stop_exec(env, false);
     }
     if running(env) {
