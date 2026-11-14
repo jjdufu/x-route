@@ -18,11 +18,19 @@ use crate::env::Env;
 use crate::log;
 use crate::log::{FAILURES, note_failure};
 
+/// 基于 `flock(LOCK_EX)` 的进程间排他锁，文件句柄释放即解锁。
+#[derive(Debug)]
 pub struct FileLock {
+    /// 持有锁的文件句柄。
     _file: File,
 }
 
 impl FileLock {
+    /// 打开（必要时创建）`lock_path` 并阻塞等待排他锁。
+    ///
+    /// # Errors
+    ///
+    /// 锁文件无法打开或 `flock` 失败时返回 I/O 错误。
     pub fn acquire(env: &Env, lock_path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = lock_path.parent() {
             fsx::mkdirs_logged(env, parent);

@@ -37,6 +37,11 @@ use crate::vm;
 use crate::vm::disk;
 use crate::vm::{fuse_watch, run_net_hook};
 
+/// 配置键写入后的联动：网络类键在虚拟机运行时触发规则同步，自启类键检查前置条件。
+///
+/// # Errors
+///
+/// 开启自启（`AUTOSTART`）时存在未确认的熔断，或当前配置还没有手动启动成功过，返回给用户看的原因。
 fn after_set(env: &Env, key: &str) -> Result<(), String> {
     let cfg = Config::load(env);
     match key {

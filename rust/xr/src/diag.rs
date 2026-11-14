@@ -471,6 +471,11 @@ pub fn phone(env: &Env) -> String {
     out
 }
 
+/// 向 `OpenWrt` 客体请求一次诊断快照，最多等待 `wait_secs` 秒。
+///
+/// # Errors
+///
+/// 虚拟机未运行或共享目录不存在、或在等待时间内客体没有回应时，返回写入诊断包的说明文字。
 pub fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     let pid_raw = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let pid = pid_raw.trim();

@@ -30,6 +30,11 @@ pub fn unlock_memlock_rlimit(env: &Env) {
     }
 }
 
+/// 以新进程组分离启动本 `xr`，标准输入输出全部丢弃。
+///
+/// # Errors
+///
+/// 进程无法创建（可执行文件缺失、资源不足等）时返回 I/O 错误。
 pub fn self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
     let exe = env.self_exe();
     Command::new(exe)
@@ -43,6 +48,11 @@ pub fn self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
         .spawn()
 }
 
+/// 启动本 `xr`，标准输出与标准错误追加到 `log_path`。
+///
+/// # Errors
+///
+/// 日志文件无法打开或复制句柄失败、或进程无法创建时返回 I/O 错误。
 pub fn self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::Result<Child> {
     if let Some(parent) = log_path.parent() {
         fsx::mkdirs_logged(env, parent);

@@ -299,6 +299,11 @@ impl Env {
         self.xr_data.join("config/traffic.since")
     }
 
+    /// 创建 config、run、log、images 四个数据目录（已存在则跳过）。
+    ///
+    /// # Errors
+    ///
+    /// 任一目录创建失败（权限、只读文件系统、路径被文件占用等）时返回该 I/O 错误。
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         for dir in [
             self.config_dir(),
