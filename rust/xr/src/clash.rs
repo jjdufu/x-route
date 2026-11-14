@@ -634,96 +634,107 @@ fn note_sock(env: &Env, what: &str, res: std::io::Result<()>) {
     }
 }
 
-/// `xr internal clash-mux`：监听 `clash-ctl.sock`（客机控制口）和 `clash-rpc.sock`（RPC 客户端），转发双方消息直到收到 `TERM`/`INT`；返回进程退出码。
-#[must_use]
-pub(crate) fn run_clash_mux(env: &Env) -> i32 {
+/// 复用进程监听的两个套接字。
+struct MuxSockets {
+    /// `clash-ctl.sock`：客机控制口。
+    ctl: UnixListener,
+    /// `clash-rpc.sock`：RPC 客户端。
+    rpc: UnixListener,
+}
+
+/// 删掉旧的套接字与就绪标记后绑定两个套接字，权限设为 0600、设为非阻塞；绑定失败时返回 `None`（已绑定的控制口文件会删掉）。
+fn bind_sockets(env: &Env) -> Option<MuxSockets> {
     let run = env.run_dir();
     let ctl_sock = run.join("clash-ctl.sock");
     let rpc_sock = run.join("clash-rpc.sock");
-    let pid_file = run.join("clash_mux.pid");
-    let ready_file = run.join("clash_mux.ready");
-
     fsx::remove_logged(env, &ctl_sock);
     fsx::remove_logged(env, &rpc_sock);
-    fsx::remove_logged(env, &ready_file);
+    fsx::remove_logged(env, run.join("clash_mux.ready"));
 
-    let Ok(ctl_listener) = UnixListener::bind(&ctl_sock) else {
-        return 1;
-    };
-    let Ok(rpc_listener) = UnixListener::bind(&rpc_sock) else {
+    let ctl = UnixListener::bind(&ctl_sock).ok()?;
+    let Ok(rpc) = UnixListener::bind(&rpc_sock) else {
         fsx::remove_logged(env, &ctl_sock);
-        return 1;
+        return None;
     };
     fsx::chmod_logged(env, &ctl_sock, 0o600);
     fsx::chmod_logged(env, &rpc_sock, 0o600);
-    note_sock(
-        env,
-        "clash-ctl.sock 设为非阻塞",
-        ctl_listener.set_nonblocking(true),
-    );
-    note_sock(
-        env,
-        "clash-rpc.sock 设为非阻塞",
-        rpc_listener.set_nonblocking(true),
-    );
+    note_sock(env, "clash-ctl.sock 设为非阻塞", ctl.set_nonblocking(true));
+    note_sock(env, "clash-rpc.sock 设为非阻塞", rpc.set_nonblocking(true));
+    Some(MuxSockets { ctl, rpc })
+}
 
-    let stop = Arc::new(AtomicBool::new(false));
-    if let Err(err) = flag::register(SIGTERM, Arc::clone(&stop)) {
+/// 登记 `TERM`/`INT` 到停止标志；登记失败记 ERROR。
+fn register_stop(env: &Env, stop: &Arc<AtomicBool>) {
+    if let Err(err) = flag::register(SIGTERM, Arc::clone(stop)) {
         log::err(env, "clash", &format!("信号注册失败 SIGTERM: {err}"));
     }
-    if let Err(err) = flag::register(SIGINT, Arc::clone(&stop)) {
+    if let Err(err) = flag::register(SIGINT, Arc::clone(stop)) {
         log::err(env, "clash", &format!("信号注册失败 SIGINT: {err}"));
     }
+}
 
-    fsx::write_logged(env, &pid_file, format!("{}\n", std::process::id()));
-    fsx::write_logged(env, &ready_file, "ready\n");
+/// 服务一次客机控制口连接：登记为写端，逐行交给 [`MuxState::handle_guest_line`]，断开或停止后清空写端。
+fn serve_guest(env: &Env, state: &MuxState, stop: &AtomicBool, stream: UnixStream) {
+    note_sock(env, "客机连接设为阻塞", stream.set_nonblocking(false));
+    let Ok(reader_stream) = stream.try_clone() else {
+        return;
+    };
+    if let Ok(mut guard) = state.hvc_writer.lock() {
+        *guard = Some(stream);
+    }
+    let mut br = BufReader::new(reader_stream);
+    let mut line = String::new();
+    while !stop.load(Ordering::Relaxed) {
+        line.clear();
+        match br.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => state.handle_guest_line(&line),
+        }
+    }
+    drop(br);
+    if let Ok(mut guard) = state.hvc_writer.lock() {
+        *guard = None;
+    }
+}
 
-    let state = Arc::new(MuxState::new());
-
-    let s_ctl = Arc::clone(&state);
-    let stop_ctl = Arc::clone(&stop);
+/// 客机控制口监听线程：非阻塞轮询接入（无连接时睡 50 ms），每次只服务一个连接，直到停止或监听出错。
+fn spawn_ctl_thread(
+    env: &Env,
+    state: &Arc<MuxState>,
+    stop: &Arc<AtomicBool>,
+    listener: UnixListener,
+) -> thread::JoinHandle<()> {
+    let s_ctl = Arc::clone(state);
+    let stop_ctl = Arc::clone(stop);
     let env_ctl = env.clone();
-    let ctl_thread = thread::spawn(move || {
+    thread::spawn(move || {
         while !stop_ctl.load(Ordering::Relaxed) {
-            let accepted = ctl_listener.accept();
+            let accepted = listener.accept();
             match accepted {
-                Ok((stream, _)) => {
-                    note_sock(&env_ctl, "客机连接设为阻塞", stream.set_nonblocking(false));
-                    let Ok(reader_stream) = stream.try_clone() else {
-                        continue;
-                    };
-                    if let Ok(mut guard) = s_ctl.hvc_writer.lock() {
-                        *guard = Some(stream);
-                    }
-                    let mut br = BufReader::new(reader_stream);
-                    let mut line = String::new();
-                    while !stop_ctl.load(Ordering::Relaxed) {
-                        line.clear();
-                        match br.read_line(&mut line) {
-                            Ok(0) | Err(_) => break,
-                            Ok(_) => s_ctl.handle_guest_line(&line),
-                        }
-                    }
-                    drop(br);
-                    if let Ok(mut guard) = s_ctl.hvc_writer.lock() {
-                        *guard = None;
-                    }
-                }
+                Ok((stream, _)) => serve_guest(&env_ctl, &s_ctl, &stop_ctl, stream),
                 Err(read_err) if read_err.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => break,
             }
         }
-    });
+    })
+}
 
-    let s_rpc = Arc::clone(&state);
-    let stop_rpc = Arc::clone(&stop);
+/// RPC 监听线程：非阻塞轮询接入，给每个客户端分配递增的客户端号并在分离线程里服务，直到停止或监听出错。
+fn spawn_rpc_thread(
+    env: &Env,
+    state: &Arc<MuxState>,
+    stop: &Arc<AtomicBool>,
+    listener: UnixListener,
+) -> thread::JoinHandle<()> {
+    let s_rpc = Arc::clone(state);
+    let stop_rpc = Arc::clone(stop);
     let env_rpc = env.clone();
-    let rpc_thread = thread::spawn(move || {
+    thread::spawn(move || {
         let mut next_cid = 1_u64;
         while !stop_rpc.load(Ordering::Relaxed) {
-            let accepted = rpc_listener.accept();
+            let accepted = listener.accept();
             match accepted {
                 Ok((stream, _)) => {
                     note_sock(&env_rpc, "RPC 连接设为阻塞", stream.set_nonblocking(false));
@@ -737,8 +748,11 @@ pub(crate) fn run_clash_mux(env: &Env) -> i32 {
                 Err(_) => break,
             }
         }
-    });
+    })
+}
 
+/// 每 300 ms 检查一次，直到收到停止信号，或虚拟机（出现过、或启动后已过 10 秒宽限期）不在且 fuse 文件已删除。
+fn wait_vm_gone(env: &Env, stop: &AtomicBool) {
     let started = Instant::now();
     let mut saw_vm = false;
     while !stop.load(Ordering::Relaxed) {
@@ -753,6 +767,29 @@ pub(crate) fn run_clash_mux(env: &Env) -> i32 {
         }
         thread::sleep(Duration::from_millis(300));
     }
+}
+
+/// `xr internal clash-mux`：监听 `clash-ctl.sock`（客机控制口）和 `clash-rpc.sock`（RPC 客户端），转发双方消息直到收到 `TERM`/`INT`；返回进程退出码。
+#[must_use]
+pub(crate) fn run_clash_mux(env: &Env) -> i32 {
+    let run = env.run_dir();
+    let Some(socks) = bind_sockets(env) else {
+        return 1;
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    register_stop(env, &stop);
+
+    fsx::write_logged(
+        env,
+        run.join("clash_mux.pid"),
+        format!("{}\n", std::process::id()),
+    );
+    fsx::write_logged(env, run.join("clash_mux.ready"), "ready\n");
+
+    let state = Arc::new(MuxState::new());
+    let ctl_thread = spawn_ctl_thread(env, &state, &stop, socks.ctl);
+    let rpc_thread = spawn_rpc_thread(env, &state, &stop, socks.rpc);
+    wait_vm_gone(env, &stop);
 
     stop.store(true, Ordering::Relaxed);
     note_join(env, "clash 客机通道线程", &ctl_thread.join());
