@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod tests;
 
-pub const XR_NET6: &str = "fd7a:7872:e9";
-pub const XR_IF: &str = "xr0";
-pub const HS_TAP: &str = "xr1";
-pub const HS_BR: &str = "xrbr1";
+pub(crate) const XR_NET6: &str = "fd7a:7872:e9";
+pub(crate) const XR_IF: &str = "xr0";
+pub(crate) const HS_TAP: &str = "xr1";
+pub(crate) const HS_BR: &str = "xrbr1";
 
 #[derive(Debug, Clone)]
 pub struct Env {
@@ -56,7 +56,7 @@ impl ProcRole {
     /// 由 `XR_IN_DAEMON`、`XR_IN_WATCHDOG` 两个环境变量的值得到角色：值为 `"1"` 视为设置；
     /// 两者都设置时取守护进程（与旧代码先判断守护进程标志一致）。
     #[must_use]
-    pub fn from_values(in_daemon: Option<&str>, in_watchdog: Option<&str>) -> Self {
+    pub(crate) fn from_values(in_daemon: Option<&str>, in_watchdog: Option<&str>) -> Self {
         match (in_daemon == Some("1"), in_watchdog == Some("1")) {
             (true, _) => Self::Daemon,
             (false, true) => Self::Watchdog,
@@ -66,13 +66,13 @@ impl ProcRole {
 
     /// 是否为守护进程。
     #[must_use]
-    pub const fn is_daemon(self) -> bool {
+    pub(crate) const fn is_daemon(self) -> bool {
         matches!(self, Self::Daemon)
     }
 
     /// 是否为看门狗。
     #[must_use]
-    pub const fn is_watchdog(self) -> bool {
+    pub(crate) const fn is_watchdog(self) -> bool {
         matches!(self, Self::Watchdog)
     }
 }
@@ -89,7 +89,7 @@ pub enum DaemonMode {
 impl DaemonMode {
     /// 由 `XR_DAEMON_FOREGROUND` 的值得到运行方式：`"1"` 为前台，其余（含未设置）为后台。
     #[must_use]
-    pub fn from_value(foreground: Option<&str>) -> Self {
+    pub(crate) fn from_value(foreground: Option<&str>) -> Self {
         if foreground == Some("1") {
             Self::Foreground
         } else {
@@ -99,7 +99,7 @@ impl DaemonMode {
 
     /// 是否为前台模式。
     #[must_use]
-    pub const fn is_foreground(self) -> bool {
+    pub(crate) const fn is_foreground(self) -> bool {
         matches!(self, Self::Foreground)
     }
 }
@@ -195,7 +195,7 @@ impl Env {
     }
 
     #[must_use]
-    pub fn config_dir(&self) -> PathBuf {
+    pub(crate) fn config_dir(&self) -> PathBuf {
         self.xr_data.join("config")
     }
 
@@ -205,7 +205,7 @@ impl Env {
     }
 
     #[must_use]
-    pub fn vpn_dir(&self) -> PathBuf {
+    pub(crate) fn vpn_dir(&self) -> PathBuf {
         self.xr_data.join("config/vpn")
     }
 
@@ -220,18 +220,13 @@ impl Env {
     }
 
     #[must_use]
-    pub fn img_dir(&self) -> PathBuf {
+    pub(crate) fn img_dir(&self) -> PathBuf {
         self.xr_data.join("images")
     }
 
     #[must_use]
-    pub fn rootfs_img(&self) -> PathBuf {
+    pub(crate) fn rootfs_img(&self) -> PathBuf {
         self.xr_data.join("images/openwrt-rootfs.img")
-    }
-
-    #[must_use]
-    pub fn kernel_img(&self) -> PathBuf {
-        self.xr_data.join("images/Image")
     }
 
     #[must_use]
@@ -240,7 +235,7 @@ impl Env {
     }
 
     #[must_use]
-    pub fn debug_log(&self) -> PathBuf {
+    pub(crate) fn debug_log(&self) -> PathBuf {
         self.xr_data.join("log/debug.log")
     }
 
@@ -260,42 +255,42 @@ impl Env {
     }
 
     #[must_use]
-    pub fn ctl_log(&self) -> PathBuf {
+    pub(crate) fn ctl_log(&self) -> PathBuf {
         self.xr_data.join("run/vm-ctl.log")
     }
 
     #[must_use]
-    pub fn fuse_file(&self) -> PathBuf {
+    pub(crate) fn fuse_file(&self) -> PathBuf {
         self.xr_data.join("config/vm_booting.fuse")
     }
 
     #[must_use]
-    pub fn tripped_file(&self) -> PathBuf {
+    pub(crate) fn tripped_file(&self) -> PathBuf {
         self.xr_data.join("config/tripped")
     }
 
     #[must_use]
-    pub fn last_good_file(&self) -> PathBuf {
+    pub(crate) fn last_good_file(&self) -> PathBuf {
         self.xr_data.join("config/last_good")
     }
 
     #[must_use]
-    pub fn debug_until_file(&self) -> PathBuf {
+    pub(crate) fn debug_until_file(&self) -> PathBuf {
         self.xr_data.join("config/debug.until")
     }
 
     #[must_use]
-    pub fn acct_base_file(&self) -> PathBuf {
+    pub(crate) fn acct_base_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.base")
     }
 
     #[must_use]
-    pub fn acct_snap_file(&self) -> PathBuf {
+    pub(crate) fn acct_snap_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.snap")
     }
 
     #[must_use]
-    pub fn acct_since_file(&self) -> PathBuf {
+    pub(crate) fn acct_since_file(&self) -> PathBuf {
         self.xr_data.join("config/traffic.since")
     }
 
@@ -317,12 +312,12 @@ impl Env {
     }
 
     #[must_use]
-    pub fn is_module_disabled(&self) -> bool {
+    pub(crate) fn is_module_disabled(&self) -> bool {
         self.moddir.join("disable").is_file() || self.moddir.join("remove").is_file()
     }
 
     #[must_use]
-    pub fn canon_share_path(&self, raw: &str) -> String {
+    pub(crate) fn canon_share_path(&self, raw: &str) -> String {
         let media_str = self.media.to_string_lossy();
         let media = media_str.trim_end_matches('/');
         if raw == "/sdcard" || raw == "/storage/emulated/0" {
@@ -338,12 +333,12 @@ impl Env {
     }
 
     #[must_use]
-    pub fn sysbin_cmd(&self, name: &str) -> PathBuf {
+    pub(crate) fn sysbin_cmd(&self, name: &str) -> PathBuf {
         self.sysbin.join(name)
     }
 
     #[must_use]
-    pub fn self_exe(&self) -> PathBuf {
+    pub(crate) fn self_exe(&self) -> PathBuf {
         let bin_xr = self.moddir.join("bin/xr");
         if is_executable(&bin_xr) {
             return bin_xr;
@@ -353,7 +348,7 @@ impl Env {
 }
 
 #[must_use]
-pub fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::metadata(path)
         .is_ok_and(|meta| meta.is_file() && (meta.permissions().mode() & 0o111) != 0)
