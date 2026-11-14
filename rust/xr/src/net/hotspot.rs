@@ -9,7 +9,8 @@ use crate::log::{dlog, log_err, log_info, unix_now};
 use crate::net::common::{NetCtx, trigger_diag_snap_bg};
 use crate::net::ipv6::v6_tether_offload_off;
 use crate::net::vpn_routes::tether_ifaces;
-use crate::sys::{is_pid_running, proc_cmdline};
+use crate::sys::exec::note_spawn;
+use crate::sys::{fsx, is_pid_running, proc_cmdline};
 
 const HS_TABLE: &str = "234";
 const HS_PREF: &str = "19050";
@@ -39,20 +40,20 @@ pub fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
         log_err(ctx.env, "hotspot", &format!("创建 {HS_TAP} 失败"));
         return false;
     }
-    let _ = ctx.ip(&["addr", "flush", "dev", HS_TAP]);
-    ctx.sysw(
+    ctx.ip_run(&["addr", "flush", "dev", HS_TAP]);
+    ctx.sysw_run(
         &ctx.env
             .proc_dir
             .join(format!("sys/net/ipv6/conf/{HS_TAP}/disable_ipv6")),
         "1",
     );
-    let _ = ctx.ip(&["link", "set", HS_TAP, "up"]);
+    ctx.ip_run(&["link", "set", HS_TAP, "up"]);
     true
 }
 
 pub fn hs_tap_down(ctx: &NetCtx<'_>) {
     hs_unbridge(ctx);
-    let _ = ctx.ip(&["link", "del", HS_TAP]);
+    ctx.ip_run(&["link", "del", HS_TAP]);
 }
 
 pub fn hs_master(env: &Env, iface: &str) -> String {
@@ -104,9 +105,9 @@ pub fn hs_want(ctx: &NetCtx<'_>) -> bool {
 
 pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     let host_dir = env.run_dir().join("guest/host");
-    let _ = fs::create_dir_all(&host_dir);
+    fsx::mkdirs_logged(env, &host_dir);
     let ts = unix_now();
-    let _ = fs::write(host_dir.join("hotspot.cmd"), format!("{cmd} {ts}\n"));
+    fsx::write_logged(env, host_dir.join("hotspot.cmd"), format!("{cmd} {ts}\n"));
 
     let mut parts = cmd.split_whitespace();
     let expect = match (parts.next(), parts.next()) {
@@ -125,18 +126,18 @@ pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
 }
 
 pub fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
-    let _ = ctx.ipt(&["-N", "XR_HS"]);
-    let _ = ctx.ipt(&["-F", "XR_HS"]);
-    let _ = ctx.ipt(&[
+    ctx.ipt_run(&["-N", "XR_HS"]);
+    ctx.ipt_run(&["-F", "XR_HS"]);
+    ctx.ipt_run(&[
         "-A", "XR_HS", "-o", iface, "-p", "udp", "--sport", "67", "-j", "DROP",
     ]);
     if !ctx.ipt(&["-C", "OUTPUT", "-j", "XR_HS"]).success() {
-        let _ = ctx.ipt(&["-I", "OUTPUT", "1", "-j", "XR_HS"]);
+        ctx.ipt_run(&["-I", "OUTPUT", "1", "-j", "XR_HS"]);
     }
 
-    let _ = ctx.ip6t(&["-N", "XR_HS6"]);
-    let _ = ctx.ip6t(&["-F", "XR_HS6"]);
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&["-N", "XR_HS6"]);
+    ctx.ip6t_run(&["-F", "XR_HS6"]);
+    ctx.ip6t_run(&[
         "-A",
         "XR_HS6",
         "-o",
@@ -148,33 +149,33 @@ pub fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
         "-j",
         "DROP",
     ]);
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&[
         "-A", "XR_HS6", "-o", iface, "-p", "udp", "--sport", "547", "-j", "DROP",
     ]);
     if !ctx.ip6t(&["-C", "OUTPUT", "-j", "XR_HS6"]).success() {
-        let _ = ctx.ip6t(&["-I", "OUTPUT", "1", "-j", "XR_HS6"]);
+        ctx.ip6t_run(&["-I", "OUTPUT", "1", "-j", "XR_HS6"]);
     }
 
     while ctx.ip6(&["rule", "del", "pref", HS_PREF]).success() {}
-    let _ = ctx.ip6(&[
+    ctx.ip6_run(&[
         "route", "replace", "default", "dev", XR_IF, "table", HS_TABLE,
     ]);
-    let _ = ctx.ip6(&[
+    ctx.ip6_run(&[
         "rule", "add", "pref", HS_PREF, "iif", HS_BR, "lookup", HS_TABLE,
     ]);
 }
 
 pub fn hs_rules_clear(ctx: &NetCtx<'_>) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
-    let _ = ctx.ip(&["route", "flush", "table", HS_TABLE]);
+    ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
     while ctx.ipt(&["-D", "OUTPUT", "-j", "XR_HS"]).success() {}
-    let _ = ctx.ipt(&["-F", "XR_HS"]);
-    let _ = ctx.ipt(&["-X", "XR_HS"]);
+    ctx.ipt_run(&["-F", "XR_HS"]);
+    ctx.ipt_run(&["-X", "XR_HS"]);
     while ctx.ip6t(&["-D", "OUTPUT", "-j", "XR_HS6"]).success() {}
-    let _ = ctx.ip6t(&["-F", "XR_HS6"]);
-    let _ = ctx.ip6t(&["-X", "XR_HS6"]);
+    ctx.ip6t_run(&["-F", "XR_HS6"]);
+    ctx.ip6t_run(&["-X", "XR_HS6"]);
     while ctx.ip6(&["rule", "del", "pref", HS_PREF]).success() {}
-    let _ = ctx.ip6(&["route", "flush", "table", HS_TABLE]);
+    ctx.ip6_run(&["route", "flush", "table", HS_TABLE]);
 }
 
 pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
@@ -189,20 +190,20 @@ pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
                     "hotspot",
                     &format!("固定热点网段 {hf} 与 {hc} 冲突，本次热点网段跟随安卓"),
                 );
-                let _ = fs::write(&clash_file, format!("{expected}\n"));
+                fsx::write_logged(ctx.env, &clash_file, format!("{expected}\n"));
             }
             return android_cidr.to_string();
         }
-        let _ = fs::remove_file(&clash_file);
+        fsx::remove_logged(ctx.env, &clash_file);
         return hf.to_string();
     }
-    let _ = fs::remove_file(&clash_file);
+    fsx::remove_logged(ctx.env, &clash_file);
     android_cidr.to_string()
 }
 
 pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
-    let _ = ctx.ip(&["route", "flush", "table", HS_TABLE]);
+    ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
     if gw == android_cidr {
         return;
     }
@@ -210,10 +211,10 @@ pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
         return;
     };
     let via = format!("{}.254", ctx.cfg.net_prefix());
-    let _ = ctx.ip(&[
+    ctx.ip_run(&[
         "route", "replace", &hn, "via", &via, "dev", XR_IF, "table", HS_TABLE,
     ]);
-    let _ = ctx.ip(&[
+    ctx.ip_run(&[
         "rule", "add", "pref", HS_PREF4, "to", &hn, "lookup", HS_TABLE,
     ]);
 }
@@ -289,7 +290,11 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
                 resp.trim()
             ),
         );
-        let _ = fs::write(run.join("net.hs_fail"), format!("{iface} {cidr} {gw}\n"));
+        fsx::write_logged(
+            ctx.env,
+            run.join("net.hs_fail"),
+            format!("{iface} {cidr} {gw}\n"),
+        );
         return false;
     }
 
@@ -297,10 +302,12 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         && !ctx.ip(&["link", "add", HS_BR, "type", "bridge"]).success()
     {
         log_err(ctx.env, "hotspot", "创建网桥失败");
-        hs_guest_cmd(ctx.env, "off", 5);
+        if !hs_guest_cmd(ctx.env, "off", 5) {
+            dlog(ctx.env, ctx.cfg, "hotspot", "客机 5 秒内未确认关闭热点");
+        }
         return false;
     }
-    let _ = ctx.ip(&[
+    ctx.ip_run(&[
         "link",
         "set",
         HS_BR,
@@ -312,39 +319,39 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         "0",
     ]);
     let proc = &ctx.env.proc_dir;
-    ctx.sysw(
+    ctx.sysw_run(
         &proc.join(format!("sys/net/ipv4/conf/{HS_BR}/arp_ignore")),
         "1",
     );
-    ctx.sysw(
+    ctx.sysw_run(
         &proc.join(format!("sys/net/ipv4/conf/{HS_BR}/rp_filter")),
         "0",
     );
-    ctx.sysw(
+    ctx.sysw_run(
         &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/accept_ra")),
         "0",
     );
-    ctx.sysw(
+    ctx.sysw_run(
         &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/disable_ipv6")),
         "0",
     );
-    let _ = ctx.ip(&["link", "set", HS_BR, "up"]);
-    let _ = ctx.ip(&["link", "set", HS_TAP, "master", HS_BR]);
+    ctx.ip_run(&["link", "set", HS_BR, "up"]);
+    ctx.ip_run(&["link", "set", HS_TAP, "master", HS_BR]);
     if !ctx.ip(&["link", "set", iface, "master", HS_BR]).success() {
         log_err(ctx.env, "hotspot", &format!("{iface} 无法加入网桥"));
         hs_unbridge(ctx);
         return false;
     }
-    ctx.sysw(
+    ctx.sysw_run(
         &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/forwarding")),
         "1",
     );
     if !ll.is_empty() {
-        let _ = ctx.ip6(&["addr", "replace", &ll, "dev", HS_BR, "nodad"]);
+        ctx.ip6_run(&["addr", "replace", &ll, "dev", HS_BR, "nodad"]);
     }
     hs_rules(ctx, iface);
     hs_route4(ctx, &gw, &cidr);
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&[
         "-I",
         "XR_FWD6",
         "1",
@@ -355,7 +362,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         "--reject-with",
         "icmp6-adm-prohibited",
     ]);
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&[
         "-I",
         "XR_FWD6",
         "1",
@@ -368,11 +375,11 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         "--reject-with",
         "tcp-reset",
     ]);
-    v6_tether_offload_off();
-    let _ = fs::write(run.join("net.hs_if"), format!("{iface}\n"));
-    let _ = fs::write(run.join("net.hs_cidr"), format!("{cidr}\n"));
-    let _ = fs::write(run.join("net.hs_gw"), format!("{gw}\n"));
-    let _ = fs::remove_file(run.join("net.hs_fail"));
+    v6_tether_offload_off(ctx);
+    fsx::write_logged(ctx.env, run.join("net.hs_if"), format!("{iface}\n"));
+    fsx::write_logged(ctx.env, run.join("net.hs_cidr"), format!("{cidr}\n"));
+    fsx::write_logged(ctx.env, run.join("net.hs_gw"), format!("{gw}\n"));
+    fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
     if gw == cidr {
         log_info(
             ctx.env,
@@ -403,7 +410,7 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
         .trim()
         .to_string();
     if iface.is_empty() && !ctx.env.sysnet.join(HS_BR).is_dir() {
-        let _ = fs::remove_file(run.join("net.hs_fail"));
+        fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
         return;
     }
     hs_rules_clear(ctx);
@@ -436,14 +443,21 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
         .success()
     {}
     if !iface.is_empty() && hs_master(ctx.env, &iface) == HS_BR {
-        let _ = ctx.ip(&["link", "set", &iface, "nomaster"]);
+        ctx.ip_run(&["link", "set", &iface, "nomaster"]);
     }
     if hs_master(ctx.env, HS_TAP) == HS_BR {
-        let _ = ctx.ip(&["link", "set", HS_TAP, "nomaster"]);
+        ctx.ip_run(&["link", "set", HS_TAP, "nomaster"]);
     }
-    let _ = ctx.ip(&["link", "del", HS_BR]);
+    ctx.ip_run(&["link", "del", HS_BR]);
     if vm_alive(ctx.env) && hs_guest_ok(ctx.env) {
-        let _ = hs_guest_cmd(ctx.env, "off", 5);
+        if !hs_guest_cmd(ctx.env, "off", 5) {
+            dlog(
+                ctx.env,
+                ctx.cfg,
+                "hotspot",
+                "客机 5 秒内未确认关闭热点，继续拆桥",
+            );
+        }
     }
     if !iface.is_empty()
         && !cidr.is_empty()
@@ -451,7 +465,7 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
         && is_executable(&ctx.env.bb)
     {
         let ip_only = cidr.split('/').next().unwrap_or(&cidr);
-        let _ = Command::new(&ctx.env.bb)
+        let child = Command::new(&ctx.env.bb)
             .args([
                 "arping", "-U", "-c", "2", "-I", &iface, "-s", ip_only, ip_only,
             ])
@@ -459,11 +473,12 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
+        note_spawn(ctx.env, ctx.cfg, "arping", child);
     }
-    let _ = fs::remove_file(run.join("net.hs_if"));
-    let _ = fs::remove_file(run.join("net.hs_cidr"));
-    let _ = fs::remove_file(run.join("net.hs_gw"));
-    let _ = fs::remove_file(run.join("net.hs_fail"));
+    fsx::remove_logged(ctx.env, run.join("net.hs_if"));
+    fsx::remove_logged(ctx.env, run.join("net.hs_cidr"));
+    fsx::remove_logged(ctx.env, run.join("net.hs_gw"));
+    fsx::remove_logged(ctx.env, run.join("net.hs_fail"));
     if !iface.is_empty() {
         log_info(ctx.env, "hotspot", &format!("热点 {iface} 已交还安卓"));
     }
@@ -482,7 +497,7 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
                 "hotspot",
                 "当前系统盘不支持热点接管（请重置系统盘或使用新版完整包），热点保持由安卓分配",
             );
-            let _ = fs::File::create(run.join("net.hs_old"));
+            fsx::touch_logged(ctx.env, run.join("net.hs_old"));
         }
     }
     let have = fs::read_to_string(run.join("net.hs_if"))
@@ -565,14 +580,22 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
         );
         hs_unbridge(ctx);
     }
-    hs_bridge(ctx, &want_if);
+    if !hs_bridge(ctx, &want_if) {
+        // 失败原因已由 hs_bridge 写入 module.log；下次 sync 会重新尝试
+        dlog(
+            ctx.env,
+            ctx.cfg,
+            "hotspot",
+            &format!("{want_if} 本次未桥接"),
+        );
+    }
 }
 
 pub fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
     if !ctx.env.run_dir().join("net.hs_if").is_file() {
         return;
     }
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&[
         "-A",
         "XR_FWD6",
         "-i",
@@ -584,7 +607,7 @@ pub fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
         "--reject-with",
         "tcp-reset",
     ]);
-    let _ = ctx.ip6t(&[
+    ctx.ip6t_run(&[
         "-A",
         "XR_FWD6",
         "-i",
