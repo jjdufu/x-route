@@ -43,8 +43,8 @@ impl<'a> NetCtx<'a> {
     #[must_use]
     pub fn ndc_ok(&self, args: &[&str]) -> bool {
         let res = self.ndc(args);
-        res.stdout.lines().any(|l| l.starts_with("200 "))
-            || res.stderr.lines().any(|l| l.starts_with("200 "))
+        res.stdout.lines().any(|row| row.starts_with("200 "))
+            || res.stderr.lines().any(|line| line.starts_with("200 "))
     }
 
     #[must_use]
@@ -103,15 +103,15 @@ impl<'a> NetCtx<'a> {
     #[must_use]
     pub fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
-        if is_mock && let Some(p) = path.parent() {
-            fsx::mkdirs_logged(self.env, p);
+        if is_mock && let Some(file_path) = path.parent() {
+            fsx::mkdirs_logged(self.env, file_path);
         }
         let ok = OpenOptions::new()
             .write(true)
             .create(is_mock)
             .truncate(true)
             .open(path)
-            .and_then(|mut f| writeln!(f, "{val}"))
+            .and_then(|mut file| writeln!(file, "{val}"))
             .is_ok();
         let proc_prefix = format!(
             "{}/",
@@ -196,7 +196,7 @@ pub fn read_quad(path: &Path) -> [u64; 4] {
     let mut parts = first_line.split_whitespace();
     for slot in &mut vals {
         if let Some(tok) = parts.next()
-            && tok.bytes().all(|b| b.is_ascii_digit())
+            && tok.bytes().all(|byte| byte.is_ascii_digit())
         {
             *slot = tok.parse::<u64>().unwrap_or(0);
         }
@@ -219,22 +219,22 @@ pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
 }
 
 #[must_use]
-pub const fn combine_quad_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+pub const fn combine_quad_add(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     [
-        a[0].saturating_add(b[0]),
-        a[1].saturating_add(b[1]),
-        a[2].saturating_add(b[2]),
-        a[3].saturating_add(b[3]),
+        lhs[0].saturating_add(rhs[0]),
+        lhs[1].saturating_add(rhs[1]),
+        lhs[2].saturating_add(rhs[2]),
+        lhs[3].saturating_add(rhs[3]),
     ]
 }
 
 #[must_use]
-pub fn combine_quad_max(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+pub fn combine_quad_max(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     [
-        a[0].max(b[0]),
-        a[1].max(b[1]),
-        a[2].max(b[2]),
-        a[3].max(b[3]),
+        lhs[0].max(rhs[0]),
+        lhs[1].max(rhs[1]),
+        lhs[2].max(rhs[2]),
+        lhs[3].max(rhs[3]),
     ]
 }
 
