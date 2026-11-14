@@ -1007,3 +1007,6 @@ mod tests {
         assert_eq!(resp.get("status"), Some(&Value::from(503)));
     }
 }
+
+#[cfg(test)]
+mod edition_tests;
