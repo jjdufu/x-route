@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-use crate::cli::vpn_cfg::{vpn_profiles, vpn_rejected, vpn_tunnels};
+use crate::cli::vpn_cfg::{vpn_local_routes, vpn_profiles, vpn_rejected, vpn_tunnels};
 use crate::config::{Config, KEYS, RESTART_KEYS};
 use crate::env::Env;
 use crate::net;
@@ -155,6 +155,7 @@ fn vpn_section(env: &Env, alive: bool) -> Value {
         "addr": vaddr,
         "routes_active": act,
         "routes_rejected": vpn_rejected(env),
+        "routes_local": vpn_local_routes(env),
         "tunnels": tun,
         "profiles": profs,
         "configured": conf.configured,

@@ -14,6 +14,7 @@ cat > "$T/mod/scripts/net.sh" <<EOS
 echo "net \$*" >> "$T/net.calls"
 [ "\$1" = status ] && printf '{"mode":"ndc","up_if":"wlan0","expose":"lan","expose_if":["wlan1"],"vm_ip":"172.29.233.254","host_ip":"172.29.233.1"}\n'
 [ "\$1" = sync ] && printf '10.8.0.0/24\n' > "$T/data/run/routes.active"
+[ "\$1" = sync ] && printf '192.168.9.0/24\treserved\t192.168.9.1/24\n' > "$T/data/run/routes.rejected"
 exit 0
 EOS
 export XR_DAEMON_FOREGROUND=1 PATH="$T/bin:$PATH" XR_DATA="$T/data" MODDIR="$T/mod" CROSVM="$ROOT/tests-sh/mock/crosvm" FAKE_ARGS="$T/args"
@@ -77,6 +78,11 @@ $XR sync >/dev/null
 chk 'grep -qx "net sync" "$T/net.calls"'
 s="$($XR status-json)"
 chk 'echo "$s" | J "d[\"vpn\"][\"status\"]==\"up\" and d[\"vpn\"][\"addr\"]==\"10.8.0.5\" and d[\"vpn\"][\"routes_active\"]==[\"10.8.0.0/24\"] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"] and d[\"vm\"][\"running\"] is True and d[\"vm\"][\"last_good_match\"] is True" | grep -qx True'
+chk 'echo "$s" | J "d[\"vpn\"][\"routes_local\"]==[]" | grep -qx True'
+# 与当前网络同网段的路由单列为 routes_local（本地直连），不算在 routes_rejected 里
+printf '192.168.31.0/24\tlocal\t192.168.31.205/24\n192.168.9.0/24\treserved\t192.168.9.1/24\n' > "$RUN/routes.rejected"
+chk '$XR status-json | J "d[\"vpn\"][\"routes_local\"]==[{\"route\":\"192.168.31.0/24\",\"with\":\"192.168.31.205/24\"}] and d[\"vpn\"][\"routes_rejected\"]==[\"192.168.9.0/24\"]" | grep -qx True'
+printf '192.168.9.0/24\treserved\t192.168.9.1/24\n' > "$RUN/routes.rejected"
 # IPv6：客侧未上报时为 null 且不能切换；上报后读实际状态；切换写控制命令、等客侧确认、再同步手机侧
 chk 'echo "$s" | J "d[\"ipv6\"] is None" | grep -qx True'
 out="$(XR_IPV6_WAIT=1 $XR ipv6 on)"; chk '[ $? -ne 0 ] && echo "$out" | grep -q "服务未就绪"'

@@ -1,6 +1,5 @@
 //! `VPN` 配置管理：多配置的导入、启用停用与删除，隧道和配置列表，旧版单文件配置的迁移与镜像，以及分流流量查询和目录浏览。
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -8,11 +7,10 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::cidr::norm_route;
 use crate::env::Env;
 use crate::log;
 use crate::log::{dlog_env, unix_now};
-use crate::net::vpn_routes::is_default_route;
+use crate::net::vpn_routes::{RejectKind, Rejected, parse_rejected};
 use crate::sys::fsx;
 use crate::vm;
 use crate::vm::vpn_sync_host;
@@ -141,35 +139,30 @@ pub(crate) fn vpn_mirror_legacy(env: &Env) {
     }
 }
 
-/// 客机推送了但手机侧未生效的 `VPN` 路由（规范化后不在 `routes.active` 中，忽略默认路由）；虚拟机不在时为空。
-pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
+/// 虚拟机在运行时读 `run/routes.rejected` 的拒绝记录；虚拟机不在或文件缺失时为空。
+fn rejected_records(env: &Env) -> Vec<Rejected> {
     if !vm::running(env) {
         return Vec::new();
     }
-    let act_raw = fs::read_to_string(env.run_dir().join("routes.active")).unwrap_or_default();
-    let act_set: BTreeSet<&str> = act_raw.lines().map(str::trim).collect();
-    let gf = env.run_dir().join("guest/guest/openvpn.routes");
-    let Ok(raw) = fs::read_to_string(gf) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for tok in raw.split(|ch: char| ch == ',' || ch.is_whitespace()) {
-        if tok.is_empty() || is_default_route(tok) {
-            continue;
-        }
-        match norm_route(tok) {
-            Some(nc) => {
-                if is_default_route(&nc) {
-                    continue;
-                }
-                if !act_set.contains(nc.as_str()) {
-                    out.push(nc);
-                }
-            }
-            None => out.push(tok.to_owned()),
-        }
-    }
-    out
+    parse_rejected(&fs::read_to_string(env.run_dir().join("routes.rejected")).unwrap_or_default())
+}
+
+/// 客机推送了但被拒绝、且不是"本地直连"的 `VPN` 路由（格式错误、主机位、保留网段、超限）；虚拟机不在或无记录时为空。
+pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
+    rejected_records(env)
+        .into_iter()
+        .filter(|item| item.kind != RejectKind::Local)
+        .map(|item| item.route)
+        .collect()
+}
+
+/// 与当前网络同网段、本地直连优先而暂不经 `VPN` 的路由：`[{route, with}]`；虚拟机不在或无记录时为空。
+pub(crate) fn vpn_local_routes(env: &Env) -> Vec<Value> {
+    rejected_records(env)
+        .into_iter()
+        .filter(|item| item.kind == RejectKind::Local)
+        .map(|item| json!({"route": item.route, "with": item.with}))
+        .collect()
 }
 
 /// 隧道显示名：旧版单份配置的 `xrouter` 隧道用 `openvpn.name`（非空时），其余用 `config/vpn/<名>.name`，都没有时用原名。

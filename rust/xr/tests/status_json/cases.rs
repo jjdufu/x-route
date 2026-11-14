@@ -76,6 +76,10 @@ fn running_layout(root: &Path) -> Result<(), Failure> {
     put(&run.join("state"), "stable\n")?;
     put(&run.join("ready_at"), "100\n")?;
     put(&run.join("routes.active"), "10.8.0.0/24\n")?;
+    put(
+        &run.join("routes.rejected"),
+        "10.9.0.0/24\treserved\t10.9.0.1/24\n192.168.31.0/24\tlocal\t192.168.31.205/24\n",
+    )?;
     put(&run.join("share.mode"), "ro\n")?;
     put(
         &run.join("guest/guest/openclash.status"),
