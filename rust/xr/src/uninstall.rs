@@ -372,7 +372,7 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
 }
 
 pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
-    crate::sys::spawn::enter_detached_session();
+    crate::sys::spawn::enter_detached_session(env);
     let _ = std::env::set_current_dir("/");
     let _ = cgroup_escape(env, &std::process::id().to_string());
 

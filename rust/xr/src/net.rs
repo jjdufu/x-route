@@ -40,8 +40,8 @@ fn is_cell_iface(name: &str) -> bool {
         || name.starts_with("v4-ccmni")
 }
 
-fn net_lock(env: &Env) -> DirLock {
-    DirLock::acquire(env.run_dir().join(".net.lock"), 120, 500, true)
+fn net_lock(env: &Env) -> DirLock<'_> {
+    DirLock::acquire(env, env.run_dir().join(".net.lock"), 120, 500, true)
 }
 
 pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {

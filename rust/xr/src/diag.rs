@@ -497,7 +497,7 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
         return;
     }
     let lock_path = env.run_dir().join(".snap.lock");
-    let lock = DirLock::acquire(lock_path, 600, 100, false);
+    let lock = DirLock::acquire(env, lock_path, 600, 100, false);
     let mut raw = String::new();
     let now = Local::now().format("%Y-%m-%d %H:%M:%S");
     raw.push_str("======== ");
@@ -660,11 +660,12 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     let cfg = Config::load(env);
     let dbg_label = if cfg.debug_on() { "开" } else { "关" };
     let now = Local::now().format("%Y-%m-%d %H:%M:%S %z");
-    let summary = format!(
+    let mut summary = format!(
         "XRouter {ver} / {} / Android {}\n导出时间 {now}\n调试模式 {dbg_label}\n{status_json_str}\n",
         model.trim(),
         rel.trim()
     );
+    summary.push_str(&crate::log::failures_summary_line());
     let _ = fs::write(raw_dir.join("summary.txt"), summary);
 
     let log_files = [

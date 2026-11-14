@@ -531,7 +531,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 }
                 0
             }
-            Some("exec-crosvm") => exec_crosvm_trampoline(rest.get(1..).unwrap_or(&[])),
+            Some("exec-crosvm") => exec_crosvm_trampoline(&env, rest.get(1..).unwrap_or(&[])),
             Some("uninstall") => uninstall_standard(&env),
             Some("uninstall-worker") => {
                 let (Some(stage), Some(moddir), Some(upd)) =

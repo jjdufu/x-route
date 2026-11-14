@@ -6,20 +6,28 @@ use std::process::{Child, Command, Stdio};
 use rustix::process::{Resource, Rlimit, setrlimit, setsid};
 
 use crate::env::Env;
+use crate::log::record_setup_failure;
+use crate::sys::fsx;
 
-pub fn enter_detached_session() {
-    let _ = setsid();
+pub fn enter_detached_session(env: &Env) {
+    if let Err(err) = setsid() {
+        record_setup_failure(env, "setsid", &err);
+    }
     // Register a no-op handler for SIGHUP so terminal/WebUI hangup does not terminate us.
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _ = signal_hook::flag::register(signal_hook::consts::SIGHUP, flag);
+    if let Err(err) = signal_hook::flag::register(signal_hook::consts::SIGHUP, flag) {
+        record_setup_failure(env, "SIGHUP handler", &err);
+    }
 }
 
-pub fn unlock_memlock_rlimit() {
+pub fn unlock_memlock_rlimit(env: &Env) {
     let unlim = Rlimit {
         current: None,
         maximum: None,
     };
-    let _ = setrlimit(Resource::Memlock, unlim);
+    if let Err(err) = setrlimit(Resource::Memlock, unlim) {
+        record_setup_failure(env, "setrlimit memlock", &err);
+    }
 }
 
 pub fn spawn_self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
@@ -37,7 +45,7 @@ pub fn spawn_self_detached(env: &Env, args: &[&str]) -> std::io::Result<Child> {
 
 pub fn spawn_self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::Result<Child> {
     if let Some(parent) = log_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        fsx::mkdirs_logged(env, parent);
     }
     let out_file = OpenOptions::new()
         .create(true)
@@ -56,9 +64,9 @@ pub fn spawn_self_to_log(env: &Env, args: &[&str], log_path: &Path) -> std::io::
         .spawn()
 }
 
-pub fn exec_crosvm_trampoline(raw_args: &[String]) -> i32 {
-    enter_detached_session();
-    unlock_memlock_rlimit();
+pub fn exec_crosvm_trampoline(env: &Env, raw_args: &[String]) -> i32 {
+    enter_detached_session(env);
+    unlock_memlock_rlimit(env);
 
     let Some((prog, rest)) = raw_args.split_first() else {
         return 2;

@@ -1,16 +1,71 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Local;
 
 use crate::config::{Config, set_kv};
 use crate::env::{Env, is_executable};
+use crate::sys::fsx;
+
+#[cfg(test)]
+pub(crate) mod tests;
 
 const LOG_ROTATE_BYTES: u64 = 524_288;
 const DEBUG_ROTATE_BYTES: u64 = 2_097_152;
+
+/// 尽力而为操作的失败计数（文件、命令、日志自身）。只增不减，进程内有效。
+#[derive(Debug)]
+pub(crate) struct Failures {
+    /// 文件操作失败次数。
+    pub(crate) fs: AtomicU64,
+    /// 外部命令非 0 退出或无法执行的次数（只计 `xr_run` 发起的），以及进程设置类系统调用的失败次数。
+    pub(crate) exec: AtomicU64,
+    /// 日志行（以及转发给终端的命令输出）写入失败次数。
+    pub(crate) log: AtomicU64,
+}
+
+/// 全局失败计数。
+pub(crate) static FAILURES: Failures = Failures {
+    fs: AtomicU64::new(0),
+    exec: AtomicU64::new(0),
+    log: AtomicU64::new(0),
+};
+
+/// 给 `counter` 记一次失败。计数到 `u64::MAX` 后保持上限，不回绕到 0。
+pub(crate) fn note_failure(counter: &AtomicU64) {
+    let before = counter.fetch_add(1, Ordering::Relaxed);
+    if before == u64::MAX {
+        counter.store(u64::MAX, Ordering::Relaxed);
+    }
+}
+
+/// 记录一次进程设置类系统调用（`setsid`、`setrlimit`、信号处理注册）的失败：计数到 `FAILURES.exec`，
+/// 调试开关打开时写调试日志。调用方继续执行。
+pub(crate) fn record_setup_failure(env: &Env, what: &str, err: &dyn std::fmt::Display) {
+    note_failure(&FAILURES.exec);
+    dlog_env(env, "proc", &format!("{what} 失败：{err}"));
+}
+
+/// 诊断包 `summary.txt` 的失败计数行：三个计数全为 0 时返回空串，否则返回带换行的一行。
+pub(crate) fn failures_summary_line() -> String {
+    format_failures_line(
+        FAILURES.fs.load(Ordering::Relaxed),
+        FAILURES.exec.load(Ordering::Relaxed),
+        FAILURES.log.load(Ordering::Relaxed),
+    )
+}
+
+/// 按给定计数生成失败计数行；全为 0 时返回空串。
+fn format_failures_line(fs_n: u64, exec_n: u64, log_n: u64) -> String {
+    if fs_n == 0 && exec_n == 0 && log_n == 0 {
+        return String::new();
+    }
+    format!("best_effort_failures fs={fs_n} exec={exec_n} log={log_n}\n")
+}
 
 pub fn unix_now() -> u64 {
     SystemTime::now()
@@ -55,7 +110,7 @@ pub fn xr_now(env: &Env) -> String {
     format!("uptime+{up}s")
 }
 
-pub fn rotate_file(path: &Path, use_mv: bool) {
+pub fn rotate_file(env: &Env, path: &Path, use_mv: bool) {
     let Ok(meta) = fs::metadata(path) else {
         return;
     };
@@ -66,10 +121,10 @@ pub fn rotate_file(path: &Path, use_mv: bool) {
     bak.push(".1");
     let bak_path = std::path::PathBuf::from(bak);
     if use_mv {
-        let _ = fs::rename(path, &bak_path);
+        fsx::rename_logged(env, path, &bak_path);
     } else {
-        let _ = fs::copy(path, &bak_path);
-        let _ = fs::File::create(path);
+        fsx::copy_logged(env, path, &bak_path);
+        fsx::touch_logged(env, path);
     }
 }
 
@@ -80,34 +135,52 @@ pub fn rotate_debug(env: &Env) {
     };
     if meta.is_file() && meta.len() > DEBUG_ROTATE_BYTES {
         let bak = env.log_dir().join("debug.log.1");
-        let _ = fs::rename(&dlog, bak);
+        fsx::rename_logged(env, &dlog, &bak);
     }
 }
 
 pub fn rotate_all_logs(env: &Env) {
-    rotate_file(&env.module_log(), true);
+    rotate_file(env, &env.module_log(), true);
     rotate_debug(env);
-    rotate_file(&env.vmm_log(), false);
-    rotate_file(&env.console_log(), false);
-    rotate_file(&env.ctl_log(), false);
+    rotate_file(env, &env.vmm_log(), false);
+    rotate_file(env, &env.console_log(), false);
+    rotate_file(env, &env.ctl_log(), false);
 }
 
-fn append_line(path: &Path, line: &str) {
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{line}");
+/// 以追加方式写一行到日志文件（文件不存在时创建）。
+///
+/// # Errors
+///
+/// 打开或写入失败时返回对应的 I/O 错误，由调用方计数。
+pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(file, "{line}")
+}
+
+/// 写一行日志；失败时只计数（`FAILURES.log`），不再尝试写别的日志，避免递归。
+fn append_line_counted(path: &Path, line: &str) {
+    if append_line(path, line).is_err() {
+        note_failure(&FAILURES.log);
+    }
+}
+
+/// 日志目录的创建：失败时只计数（`FAILURES.fs`），不写调试日志（调试日志也在该目录下）。
+fn ensure_log_dir(dir: &Path) {
+    if fs::create_dir_all(dir).is_err() {
+        note_failure(&FAILURES.fs);
     }
 }
 
 pub fn log_msg(env: &Env, level: &str, module: &str, msg: &str) {
-    let _ = fs::create_dir_all(env.log_dir());
+    ensure_log_dir(&env.log_dir());
     let log_path = env.module_log();
-    rotate_file(&log_path, true);
+    rotate_file(env, &log_path, true);
     let ts = xr_now(env);
-    append_line(&log_path, &format!("{ts} [{level}] [{module}] {msg}"));
+    append_line_counted(&log_path, &format!("{ts} [{level}] [{module}] {msg}"));
     let boot_log = env.boot_log();
     if boot_log.is_file() {
         let short_ts = ts.split_once(' ').map_or(ts.as_str(), |(_, rhs)| rhs);
-        append_line(&boot_log, &format!("{short_ts} [{module}] {msg}"));
+        append_line_counted(&boot_log, &format!("{short_ts} [{module}] {msg}"));
     }
 }
 
@@ -124,17 +197,25 @@ pub fn blog(env: &Env, module: &str, msg: &str) {
     if !boot_log.is_file() {
         return;
     }
-    append_line(&boot_log, &format!("{} [{module}] {msg}", time_hms()));
+    append_line_counted(&boot_log, &format!("{} [{module}] {msg}", time_hms()));
 }
 
 pub fn dlog(env: &Env, cfg: &Config, module: &str, msg: &str) {
     if !cfg.debug_on() {
         return;
     }
-    let _ = fs::create_dir_all(env.log_dir());
+    ensure_log_dir(&env.log_dir());
     let pid = std::process::id();
     let ts = Local::now().format("%Y-%m-%d %H:%M:%S");
-    append_line(&env.debug_log(), &format!("{ts} [{pid}] [{module}] {msg}"));
+    append_line_counted(&env.debug_log(), &format!("{ts} [{pid}] [{module}] {msg}"));
+}
+
+/// 在没有现成 `Config` 的失败分支里写调试日志：先读配置，调试开关关闭时什么都不写。
+///
+/// 只应在失败路径调用；成功路径不读配置。
+pub(crate) fn dlog_env(env: &Env, module: &str, msg: &str) {
+    let cfg = Config::load(env);
+    dlog(env, &cfg, module, msg);
 }
 
 pub fn debug_arm(env: &Env) {
@@ -143,10 +224,10 @@ pub fn debug_arm(env: &Env) {
     if cfg.debug_on() && cfg.debug_hours() != 0 {
         let secs = cfg.debug_hours().saturating_mul(3600);
         let until = unix_now().saturating_add(secs);
-        let _ = fs::create_dir_all(env.config_dir());
-        let _ = fs::write(&until_file, format!("{until}\n"));
+        fsx::mkdirs_logged(env, &env.config_dir());
+        fsx::write_logged(env, &until_file, format!("{until}\n").as_bytes());
     } else {
-        let _ = fs::remove_file(&until_file);
+        fsx::remove_logged(env, &until_file);
     }
 }
 
@@ -167,7 +248,7 @@ pub fn debug_expire(env: &Env) {
         return;
     }
     if set_kv(env, "XR_DEBUG", "0") {
-        let _ = fs::remove_file(&until_file);
+        fsx::remove_logged(env, &until_file);
         log_info(env, "debug", "调试模式已到期，自动关闭");
     }
 }
@@ -189,18 +270,18 @@ pub fn boot_clean_run(env: &Env) -> bool {
             return false;
         }
     }
-    let _ = fs::create_dir_all(env.log_dir());
+    fsx::mkdirs_logged(env, &env.log_dir());
     let con = env.console_log();
     if fs::metadata(&con).is_ok_and(|m| m.is_file() && m.len() > 0) {
-        let _ = fs::rename(&con, env.log_dir().join("console.prev.log"));
+        fsx::rename_logged(env, &con, &env.log_dir().join("console.prev.log"));
     }
     if let Ok(entries) = fs::read_dir(&run) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                let _ = fs::remove_dir_all(&p);
+                fsx::remove_tree_logged(env, &p);
             } else {
-                let _ = fs::remove_file(&p);
+                fsx::remove_logged(env, &p);
             }
         }
     }

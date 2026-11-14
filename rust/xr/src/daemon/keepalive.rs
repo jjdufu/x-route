@@ -420,7 +420,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             let _ = fs::remove_file(p);
         }
         routes_emergency_down(env);
-        crate::sys::wakelock_off();
+        crate::sys::wakelock_off(env);
         let _ = fs::remove_file(run.join("net.gw"));
         return;
     }
@@ -446,7 +446,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             let _ = fs::remove_file(p);
         }
         routes_emergency_down(env);
-        crate::sys::wakelock_off();
+        crate::sys::wakelock_off(env);
         notify_cancel(env);
         return;
     }
@@ -466,7 +466,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     let _ = fs::remove_file(run.join("crosvm.pid"));
     let _ = fs::remove_file(run.join("guest/guest/openclash.status"));
     routes_emergency_down(env);
-    crate::sys::wakelock_off();
+    crate::sys::wakelock_off(env);
     notify_cancel(env);
 }
 

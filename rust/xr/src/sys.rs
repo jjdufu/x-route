@@ -1,4 +1,5 @@
 pub mod exec;
+pub(crate) mod fsx;
 pub mod spawn;
 
 use std::fs::{self, File, OpenOptions};
@@ -19,9 +20,9 @@ pub struct FileLock {
 }
 
 impl FileLock {
-    pub fn acquire(lock_path: &Path) -> std::io::Result<Self> {
+    pub fn acquire(env: &Env, lock_path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = lock_path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fsx::mkdirs_logged(env, parent);
         }
         let file = OpenOptions::new()
             .create(true)
@@ -35,14 +36,22 @@ impl FileLock {
     }
 }
 
-pub struct DirLock {
+pub struct DirLock<'env> {
+    /// 释放锁时记录失败用的环境。
+    env: &'env Env,
     path: PathBuf,
 }
 
-impl DirLock {
-    pub fn acquire(path: PathBuf, max_iters: u32, sleep_ms: u64, check_pid: bool) -> Self {
+impl<'env> DirLock<'env> {
+    pub fn acquire(
+        env: &'env Env,
+        path: PathBuf,
+        max_iters: u32,
+        sleep_ms: u64,
+        check_pid: bool,
+    ) -> Self {
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fsx::mkdirs_logged(env, parent);
         }
         let mut n = 0_u32;
         while fs::create_dir(&path).is_err() {
@@ -61,27 +70,38 @@ impl DirLock {
                 false
             };
             if stale_pid {
-                let _ = fs::remove_dir_all(&path);
+                fsx::remove_tree_logged(env, &path);
                 continue;
             }
             if n >= max_iters {
-                let _ = fs::remove_dir_all(&path);
-                let _ = fs::create_dir(&path);
+                force_take_dir_lock(env, &path);
                 break;
             }
             thread::sleep(Duration::from_millis(sleep_ms));
             n = n.saturating_add(1);
         }
         if check_pid && path.is_dir() {
-            let _ = fs::write(path.join("pid"), format!("{}\n", std::process::id()));
+            fsx::write_logged(
+                env,
+                &path.join("pid"),
+                format!("{}\n", std::process::id()).as_bytes(),
+            );
         }
-        Self { path }
+        Self { env, path }
     }
 }
 
-impl Drop for DirLock {
+/// 等待目录锁超时后强行接管：删掉旧锁目录再新建。失败时计数并记录，调用方照常继续（与原行为一致）。
+fn force_take_dir_lock(env: &Env, path: &Path) {
+    fsx::remove_tree_logged(env, path);
+    if let Err(err) = fs::create_dir(path) {
+        fsx::record_failure(env, "mkdir", path, &err);
+    }
+}
+
+impl Drop for DirLock<'_> {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        fsx::remove_tree_logged(self.env, &self.path);
     }
 }
 
@@ -212,8 +232,8 @@ pub fn sys_shutting_down(env: &Env) -> bool {
         return true;
     }
     if !getprop("sys.powerctl").is_empty() || !getprop("sys.shutdown.requested").is_empty() {
-        let _ = fs::create_dir_all(env.run_dir());
-        let _ = File::create(marker);
+        fsx::mkdirs_logged(env, &env.run_dir());
+        fsx::touch_logged(env, &marker);
         return true;
     }
     false
@@ -224,37 +244,54 @@ pub fn shutdown_note(env: &Env, module: &str) {
     if noted.is_file() {
         return;
     }
-    let _ = fs::create_dir_all(env.run_dir());
-    let _ = File::create(noted);
+    fsx::mkdirs_logged(env, &env.run_dir());
+    fsx::touch_logged(env, &noted);
     let m = if module.is_empty() { "daemon" } else { module };
     log_info(env, m, "系统关机，服务随之停止");
 }
 
-pub fn wakelock_on() {
-    if let Ok(mut f) = OpenOptions::new().write(true).open("/sys/power/wake_lock") {
-        let _ = writeln!(f, "xrouter");
+pub fn wakelock_on(env: &Env) {
+    wakelock_write(env, Path::new("/sys/power/wake_lock"));
+}
+
+pub fn wakelock_off(env: &Env) {
+    wakelock_write(env, Path::new("/sys/power/wake_unlock"));
+}
+
+/// 向内核唤醒锁节点写入本模块的锁名。节点打不开（非 Android 或无权限）时静默跳过，与原行为一致；
+/// 打开后写入失败则计数并记录。
+fn wakelock_write(env: &Env, node: &Path) {
+    if let Ok(mut file) = OpenOptions::new().write(true).open(node)
+        && let Err(err) = writeln!(file, "xrouter")
+    {
+        fsx::record_failure(env, "write", node, &err);
     }
 }
 
-pub fn wakelock_off() {
-    if let Ok(mut f) = OpenOptions::new()
-        .write(true)
-        .open("/sys/power/wake_unlock")
-    {
-        let _ = writeln!(f, "xrouter");
+/// 文件存在时覆盖写入 `text`；文件不存在时返回 `None`（不创建）。
+fn write_if_exists(path: &Path, text: &str) -> Option<std::io::Result<()>> {
+    if !path.is_file() {
+        return None;
     }
+    Some(
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(text.as_bytes())),
+    )
 }
 
 fn write_existing(path: &Path, text: &str) -> bool {
-    if !path.is_file() {
-        return false;
+    matches!(write_if_exists(path, text), Some(Ok(())))
+}
+
+/// 尽力写入已存在的控制文件：文件不存在时跳过（不同内核的节点不同，属正常情况）；
+/// 存在但写入失败时计数并记录。
+fn write_existing_logged(env: &Env, path: &Path, text: &str) {
+    if let Some(Err(err)) = write_if_exists(path, text) {
+        fsx::record_failure(env, "write", path, &err);
     }
-    OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .and_then(|mut f| f.write_all(text.as_bytes()))
-        .is_ok()
 }
 
 pub fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
@@ -303,6 +340,20 @@ pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
     if trimmed.is_empty() || !is_pid_running(env, trimmed) {
         return false;
     }
+    escape_pid(env, trimmed);
+    true
+}
+
+/// 与 [`cgroup_escape`] 相同，但不关心进程是否在运行（不在运行时什么都不做）。
+fn escape_if_running(env: &Env, pid_str: &str) {
+    let trimmed = pid_str.trim();
+    if !trimmed.is_empty() && is_pid_running(env, trimmed) {
+        escape_pid(env, trimmed);
+    }
+}
+
+/// 把已确认在运行的进程移出应用 cgroup，并调低其 OOM 优先级。
+fn escape_pid(env: &Env, trimmed: &str) {
     let line = format!("{trimmed}\n");
     let mut v2_ok = false;
     for rel in ["cgroup.procs", "system/cgroup.procs"] {
@@ -311,7 +362,8 @@ pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
         }
     }
     if !v2_ok {
-        let _ = write_existing(&env.cgroup_root.join("uid_0/cgroup.procs"), &line);
+        let uid0 = env.cgroup_root.join("uid_0/cgroup.procs");
+        write_existing_logged(env, &uid0, &line);
     }
     for legacy in [
         "/dev/memcg/system/cgroup.procs",
@@ -322,17 +374,16 @@ pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
         "/dev/stune/background/cgroup.procs",
         "/dev/stune/background/tasks",
     ] {
-        let _ = write_existing(Path::new(legacy), &line);
+        write_existing_logged(env, Path::new(legacy), &line);
     }
     let oom_path = env.proc_base.join(trimmed).join("oom_score_adj");
-    let _ = write_existing(&oom_path, "-1000\n");
-    true
+    write_existing_logged(env, &oom_path, "-1000\n");
 }
 
 pub fn cgroup_escape_tree(env: &Env, self_pid: Option<&str>) {
     let own = std::process::id().to_string();
     let target = self_pid.filter(|s| !s.is_empty()).unwrap_or(&own);
-    let _ = cgroup_escape(env, target);
+    escape_if_running(env, target);
     let run = env.run_dir();
     for name in [
         "crosvm.pid",
@@ -345,7 +396,7 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: Option<&str>) {
         if let Ok(p) = fs::read_to_string(run.join(name)) {
             let trimmed = p.trim();
             if !trimmed.is_empty() {
-                let _ = cgroup_escape(env, trimmed);
+                escape_if_running(env, trimmed);
             }
         }
     }

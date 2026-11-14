@@ -67,6 +67,31 @@ impl<'a> NetCtx<'a> {
         )
     }
 
+    /// 与 [`Self::ip`] 相同，只关心成败：失败时计数，不返回结果。
+    pub fn ip_run(&self, args: &[&str]) {
+        crate::sys::exec::note_exec_result(&self.ip(args));
+    }
+
+    /// 与 [`Self::ip6`] 相同，只关心成败：失败时计数，不返回结果。
+    pub fn ip6_run(&self, args: &[&str]) {
+        crate::sys::exec::note_exec_result(&self.ip6(args));
+    }
+
+    /// 与 [`Self::ipt`] 相同，只关心成败：失败时计数，不返回结果。
+    pub fn ipt_run(&self, args: &[&str]) {
+        crate::sys::exec::note_exec_result(&self.ipt(args));
+    }
+
+    /// 与 [`Self::ip6t`] 相同，只关心成败：失败时计数，不返回结果。
+    pub fn ip6t_run(&self, args: &[&str]) {
+        crate::sys::exec::note_exec_result(&self.ip6t(args));
+    }
+
+    /// 与 [`Self::ndc`] 相同，只关心成败：失败时计数，不返回结果。
+    pub fn ndc_run(&self, args: &[&str]) {
+        crate::sys::exec::note_exec_result(&self.ndc(args));
+    }
+
     pub fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
         if is_mock {

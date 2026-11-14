@@ -6,7 +6,7 @@ use std::process::{Command, Output, Stdio};
 
 use crate::config::Config;
 use crate::env::Env;
-use crate::log::dlog;
+use crate::log::{FAILURES, dlog, note_failure};
 
 #[derive(Debug, Clone)]
 pub struct ExecResult {
@@ -83,8 +83,10 @@ pub fn xr_exec(
     let boot_log = env.boot_log();
     if boot_log.is_file() && mutating {
         let cmd_str = format_cmd_for_log(env, prog, args);
-        if let Ok(mut f) = OpenOptions::new().append(true).open(&boot_log) {
-            let _ = writeln!(f, "  $ {cmd_str}");
+        if let Ok(mut f) = OpenOptions::new().append(true).open(&boot_log)
+            && writeln!(f, "  $ {cmd_str}").is_err()
+        {
+            note_failure(&FAILURES.log);
         }
     }
 
@@ -132,8 +134,12 @@ pub fn xr_exec(
         }
     }
 
-    if pass_stderr && !stderr.is_empty() {
-        let _ = std::io::stderr().write_all(stderr.as_bytes());
+    if pass_stderr
+        && !stderr.is_empty()
+        && let Err(err) = std::io::stderr().write_all(stderr.as_bytes())
+    {
+        note_failure(&FAILURES.log);
+        dlog(env, cfg, "cmd", &format!("stderr 转发失败：{err}"));
     }
 
     ExecResult {
@@ -141,6 +147,20 @@ pub fn xr_exec(
         stdout,
         stderr,
     }
+}
+
+/// 读取一次命令结果的成败：非 0 退出或无法执行时计数到 `FAILURES.exec`。
+///
+/// 调试日志已由 [`xr_exec`] 写过，这里不重复写。
+pub(crate) fn note_exec_result(res: &ExecResult) {
+    if !res.success() {
+        note_failure(&FAILURES.exec);
+    }
+}
+
+/// 执行命令，只关心成败：非 0 退出或无法执行时计数，调用方不会得到结果。
+pub fn xr_run(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) {
+    note_exec_result(&xr_exec(env, cfg, prog, args, pass_stderr));
 }
 
 pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> ExecResult {

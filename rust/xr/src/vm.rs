@@ -454,7 +454,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     crate::clash::start_clash_mux(env);
     blog(env, "vm", "熔断已布防，启动 crosvm（gunyah）");
     if cfg.vm_wakelock() {
-        wakelock_on();
+        wakelock_on(env);
     }
 
     let mut tramp_args: Vec<String> = vec!["internal".to_string(), "exec-crosvm".to_string()];
@@ -549,7 +549,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         vm_fail(env, "无法拉起 crosvm", "无法启动");
         let _ = fs::remove_file(env.fuse_file());
         crate::clash::stop_clash_mux(env);
-        wakelock_off();
+        wakelock_off(env);
         if vm_net {
             let _ = run_net_hook(env, "down");
         }
@@ -571,7 +571,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         let _ = fs::remove_file(env.fuse_file());
         let _ = fs::remove_file(run.join("crosvm.pid"));
         crate::clash::stop_clash_mux(env);
-        wakelock_off();
+        wakelock_off(env);
         if vm_net {
             let _ = run_net_hook(env, "down");
         }
@@ -653,7 +653,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         let _ = fs::remove_file(p);
     }
     let _ = run_net_hook(env, "down");
-    wakelock_off();
+    wakelock_off(env);
     let _ = fs::remove_file(run.join("stopping"));
     log_info(env, "vm", "已停止");
     0
