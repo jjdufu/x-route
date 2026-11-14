@@ -172,6 +172,73 @@ pub(crate) fn vpn_rejected(env: &Env) -> Vec<String> {
     out
 }
 
+/// 隧道显示名：旧版单份配置的 `xrouter` 隧道用 `openvpn.name`（非空时），其余用 `config/vpn/<名>.name`，都没有时用原名。
+fn tunnel_name(env: &Env, raw_nm: &str, vn: &str) -> String {
+    if raw_nm == "xrouter" && !vn.is_empty() {
+        return vn.to_owned();
+    }
+    let nf = env.vpn_dir().join(format!("{raw_nm}.name"));
+    if nf.is_file() {
+        fs::read_to_string(nf)
+            .unwrap_or_else(|_| raw_nm.to_owned())
+            .trim()
+            .to_owned()
+    } else {
+        raw_nm.to_owned()
+    }
+}
+
+/// `openvpn.tunnels` 的一行（`设备|名字|地址|MTU|路由`）转成隧道 JSON；设备为空时返回 `None`。
+fn tunnel_entry(env: &Env, line: &str, vn: &str) -> Option<Value> {
+    let mut parts = line.splitn(5, '|');
+    let dev = parts.next().unwrap_or("");
+    if dev.is_empty() {
+        return None;
+    }
+    let raw_nm = parts.next().unwrap_or("");
+    let ad = parts.next().unwrap_or("");
+    let mt = parts
+        .next()
+        .unwrap_or("0")
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    let rt = parts.next().unwrap_or("");
+    let nm = tunnel_name(env, raw_nm, vn);
+    let routes: Vec<&str> = rt
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .filter(|text| !text.is_empty())
+        .collect();
+    Some(json!({
+        "dev": dev,
+        "name": nm,
+        "status": "up",
+        "addr": ad,
+        "mtu": mt,
+        "routes": routes,
+    }))
+}
+
+/// 没有已连接隧道时旧版单份配置的占位项：虚拟机未运行为 `down`，汇总状态为 `up` 时为 `connecting`，否则沿用汇总状态。
+fn tunnel_placeholder(alive: bool, summary_st: &str, vn: &str) -> Value {
+    let st = if !alive {
+        "down"
+    } else if summary_st == "up" {
+        "connecting"
+    } else {
+        summary_st
+    };
+    let nm = if vn.is_empty() { "OpenVPN" } else { vn };
+    json!({
+        "dev": "",
+        "name": nm,
+        "status": st,
+        "addr": "",
+        "mtu": 0_i32,
+        "routes": [],
+    })
+}
+
 /// `VPN` 隧道列表（JSON）：取自客机的 `openvpn.tunnels`；没有已连接隧道但有配置时给出一条按 `summary_st` 推断状态的占位项。
 #[must_use]
 pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
@@ -186,65 +253,14 @@ pub(crate) fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
         && fs::metadata(&tun_file).is_ok_and(|meta| meta.len() > 0)
         && let Ok(content) = fs::read_to_string(&tun_file)
     {
-        for line in content.lines() {
-            let mut parts = line.splitn(5, '|');
-            let dev = parts.next().unwrap_or("");
-            if dev.is_empty() {
-                continue;
-            }
-            let raw_nm = parts.next().unwrap_or("");
-            let ad = parts.next().unwrap_or("");
-            let mt = parts
-                .next()
-                .unwrap_or("0")
-                .trim()
-                .parse::<u64>()
-                .unwrap_or(0);
-            let rt = parts.next().unwrap_or("");
-            let nm = if raw_nm == "xrouter" && !vn.is_empty() {
-                vn.clone()
-            } else {
-                let nf = env.vpn_dir().join(format!("{raw_nm}.name"));
-                if nf.is_file() {
-                    fs::read_to_string(nf)
-                        .unwrap_or_else(|_| raw_nm.to_owned())
-                        .trim()
-                        .to_owned()
-                } else {
-                    raw_nm.to_owned()
-                }
-            };
-            let routes: Vec<&str> = rt
-                .split(|ch: char| ch == ',' || ch.is_whitespace())
-                .filter(|text| !text.is_empty())
-                .collect();
-            out.push(json!({
-                "dev": dev,
-                "name": nm,
-                "status": "up",
-                "addr": ad,
-                "mtu": mt,
-                "routes": routes,
-            }));
-        }
+        out.extend(
+            content
+                .lines()
+                .filter_map(|line| tunnel_entry(env, line, &vn)),
+        );
     }
     if out.is_empty() && env.xr_data.join("config/openvpn.ovpn").is_file() {
-        let st = if !alive {
-            "down"
-        } else if summary_st == "up" {
-            "connecting"
-        } else {
-            summary_st
-        };
-        let nm = if vn.is_empty() { "OpenVPN" } else { &vn };
-        out.push(json!({
-            "dev": "",
-            "name": nm,
-            "status": st,
-            "addr": "",
-            "mtu": 0_i32,
-            "routes": [],
-        }));
+        out.push(tunnel_placeholder(alive, summary_st, &vn));
     }
     out
 }
