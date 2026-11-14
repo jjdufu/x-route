@@ -14,6 +14,8 @@ use xr_test_support::{Failure, ensure, ensure_eq, ensure_ok};
 const STOPPED: &str = include_str!("../fixtures/status_stopped.json");
 /// "运行中"状态的金样。
 const RUNNING: &str = include_str!("../fixtures/status_running.json");
+/// 只有旧版单份 `OpenVPN` 配置（没有 `config/vpn/` 目录）时的金样。
+const LEGACY: &str = include_str!("../fixtures/status_legacy_vpn.json");
 
 /// 写一个文件，先建好父目录。
 ///
@@ -175,4 +177,21 @@ fn running_matches_golden() -> Result<(), Failure> {
     running_layout(tmp.path())?;
     let got = status_json(tmp.path())?;
     check_golden(&got, RUNNING, "status_running.json")
+}
+
+/// 只有旧版单份 `config/openvpn.ovpn`、没有 `openvpn.enabled` 时，`status-json` 与金样一致。
+///
+/// # Errors
+///
+/// 准备失败或输出与金样不一致时返回 [`Failure`]。
+#[test]
+fn legacy_vpn_matches_golden() -> Result<(), Failure> {
+    let tmp = ensure_ok(TempDir::new(), "建临时目录")?;
+    base_layout(tmp.path())?;
+    put(
+        &tmp.path().join("data/config/openvpn.ovpn"),
+        "client\nremote old.example.com 1194\n",
+    )?;
+    let got = status_json(tmp.path())?;
+    check_golden(&got, LEGACY, "status_legacy_vpn.json")
 }
