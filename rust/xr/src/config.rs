@@ -9,6 +9,9 @@ use crate::cidr::{hs_subnet_clash, hs_subnet_valid, in_range, valid_ip4};
 use crate::env::Env;
 use crate::sys::fsx;
 
+#[cfg(test)]
+mod tests;
+
 pub const KEYS: [&str; 25] = [
     "XR_NET_PREFIX",
     "XR_VM_MAC",
@@ -37,7 +40,7 @@ pub const KEYS: [&str; 25] = [
     "XR_CLASH_UI",
 ];
 
-pub const HASH_KEYS: [&str; 8] = [
+pub(crate) const HASH_KEYS: [&str; 8] = [
     "XR_NET_PREFIX",
     "VM_CPUS",
     "VM_MEM_MB",
@@ -48,7 +51,7 @@ pub const HASH_KEYS: [&str; 8] = [
     "VM_SHARE_MODE",
 ];
 
-pub const RESTART_KEYS: [&str; 11] = [
+pub(crate) const RESTART_KEYS: [&str; 11] = [
     "XR_NET_PREFIX",
     "XR_VM_MAC",
     "XR_DNS",
@@ -110,11 +113,11 @@ impl Config {
         Self { values }
     }
 
-    pub fn get_raw(&self, key: &str) -> &str {
+    pub(crate) fn get_raw(&self, key: &str) -> &str {
         self.values.get(key).map_or("", String::as_str)
     }
 
-    pub fn get_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+    pub(crate) fn get_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
         self.values
             .get(key)
             .filter(|value| !value.is_empty())
@@ -122,17 +125,17 @@ impl Config {
     }
 
     #[must_use]
-    pub fn net_prefix(&self) -> &str {
+    pub(crate) fn net_prefix(&self) -> &str {
         self.get_or("XR_NET_PREFIX", "172.29.233")
     }
 
     #[must_use]
-    pub fn vm_mac(&self) -> &str {
+    pub(crate) fn vm_mac(&self) -> &str {
         self.get_or("XR_VM_MAC", "52:54:00:1d:e9:fe")
     }
 
     #[must_use]
-    pub fn dns(&self) -> &str {
+    pub(crate) fn dns(&self) -> &str {
         self.get_or("XR_DNS", "223.5.5.5 119.29.29.29")
     }
 
@@ -142,12 +145,12 @@ impl Config {
     }
 
     #[must_use]
-    pub fn mode(&self) -> &str {
+    pub(crate) fn mode(&self) -> &str {
         self.get_or("XR_MODE", "global")
     }
 
     #[must_use]
-    pub fn vm_cpus(&self) -> u32 {
+    pub(crate) fn vm_cpus(&self) -> u32 {
         self.get_raw("VM_CPUS")
             .parse::<u32>()
             .ok()
@@ -156,13 +159,13 @@ impl Config {
     }
 
     #[must_use]
-    pub fn vm_mem_mb(&self) -> u32 {
+    pub(crate) fn vm_mem_mb(&self) -> u32 {
         let raw = self.get_raw("VM_MEM_MB").parse::<u32>().unwrap_or(512);
         if raw < 384 { 512 } else { raw }
     }
 
     #[must_use]
-    pub fn vm_swiotlb_mb(&self) -> u32 {
+    pub(crate) fn vm_swiotlb_mb(&self) -> u32 {
         self.get_raw("VM_SWIOTLB_MB")
             .parse::<u32>()
             .ok()
@@ -170,17 +173,17 @@ impl Config {
     }
 
     #[must_use]
-    pub fn vm_net(&self) -> bool {
+    pub(crate) fn vm_net(&self) -> bool {
         self.get_or("VM_NET", "1") == "1"
     }
 
     #[must_use]
-    pub fn vm_disk_rw(&self) -> bool {
+    pub(crate) fn vm_disk_rw(&self) -> bool {
         self.get_raw("VM_DISK_RW") == "1"
     }
 
     #[must_use]
-    pub fn vm_disk_size_mb(&self) -> u64 {
+    pub(crate) fn vm_disk_size_mb(&self) -> u64 {
         self.get_raw("VM_DISK_SIZE_MB")
             .parse::<u64>()
             .ok()
@@ -189,39 +192,39 @@ impl Config {
     }
 
     #[must_use]
-    pub fn vm_wakelock(&self) -> bool {
+    pub(crate) fn vm_wakelock(&self) -> bool {
         self.get_raw("VM_WAKELOCK") == "1"
     }
 
     #[must_use]
-    pub fn vm_share(&self) -> bool {
+    pub(crate) fn vm_share(&self) -> bool {
         self.get_raw("VM_SHARE") == "1"
     }
 
     #[must_use]
-    pub fn vm_share_mode(&self) -> &str {
+    pub(crate) fn vm_share_mode(&self) -> &str {
         self.get_or("VM_SHARE_MODE", "ro")
     }
 
     #[must_use]
-    pub fn vm_share_path(&self) -> &str {
+    pub(crate) fn vm_share_path(&self) -> &str {
         self.get_raw("VM_SHARE_PATH")
     }
 
     #[must_use]
-    pub fn autostart(&self) -> bool {
+    pub(crate) fn autostart(&self) -> bool {
         self.get_raw("AUTOSTART") == "1"
     }
 
     #[must_use]
-    pub fn autostart_delay_sec(&self) -> u64 {
+    pub(crate) fn autostart_delay_sec(&self) -> u64 {
         self.get_raw("AUTOSTART_DELAY_SEC")
             .parse::<u64>()
             .unwrap_or(60)
     }
 
     #[must_use]
-    pub fn ready_timeout_sec(&self) -> u64 {
+    pub(crate) fn ready_timeout_sec(&self) -> u64 {
         self.get_raw("READY_TIMEOUT_SEC")
             .parse::<u64>()
             .ok()
@@ -230,7 +233,7 @@ impl Config {
     }
 
     #[must_use]
-    pub fn stable_sec(&self) -> u64 {
+    pub(crate) fn stable_sec(&self) -> u64 {
         self.get_raw("STABLE_SEC")
             .parse::<u64>()
             .ok()
@@ -239,7 +242,7 @@ impl Config {
     }
 
     #[must_use]
-    pub fn notify_traffic(&self) -> &str {
+    pub(crate) fn notify_traffic(&self) -> &str {
         let mode = self.get_or("XR_NOTIFY_TRAFFIC", "total");
         match mode {
             "total" | "wan" | "lan" => mode,
@@ -248,34 +251,29 @@ impl Config {
     }
 
     #[must_use]
-    pub fn debug_on(&self) -> bool {
+    pub(crate) fn debug_on(&self) -> bool {
         self.get_or("XR_DEBUG", "0") == "1"
     }
 
     #[must_use]
-    pub fn debug_hours(&self) -> u64 {
+    pub(crate) fn debug_hours(&self) -> u64 {
         self.get_or("XR_DEBUG_HOURS", "0")
             .parse::<u64>()
             .unwrap_or(0)
     }
 
     #[must_use]
-    pub fn hotspot_bridge(&self) -> bool {
+    pub(crate) fn hotspot_bridge(&self) -> bool {
         self.get_or("XR_HOTSPOT_BRIDGE", "1") == "1"
     }
 
     #[must_use]
-    pub fn hotspot_subnet(&self) -> &str {
+    pub(crate) fn hotspot_subnet(&self) -> &str {
         self.get_raw("XR_HOTSPOT_SUBNET")
     }
 
     #[must_use]
-    pub fn clash_ui(&self) -> bool {
-        self.get_or("XR_CLASH_UI", "0") == "1"
-    }
-
-    #[must_use]
-    pub fn hash(&self) -> String {
+    pub(crate) fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         for key in HASH_KEYS {
             hasher.update(key.as_bytes());

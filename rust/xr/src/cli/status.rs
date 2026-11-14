@@ -4,33 +4,19 @@ use std::process::Command;
 use serde_json::{Map, Value, json};
 
 use crate::cli::vpn_cfg::{vpn_profiles, vpn_rejected, vpn_tunnels};
-use crate::config::{Config, KEYS};
+use crate::config::{Config, KEYS, RESTART_KEYS};
 use crate::env::Env;
 use crate::net;
 use crate::sys::ce_ready;
 use crate::vm;
 
-pub const RESTART_KEYS: &[&str] = &[
-    "XR_NET_PREFIX",
-    "XR_VM_MAC",
-    "XR_DNS",
-    "VM_CPUS",
-    "VM_MEM_MB",
-    "VM_SWIOTLB_MB",
-    "VM_NET",
-    "VM_DISK_RW",
-    "VM_SHARE",
-    "VM_SHARE_MODE",
-    "VM_SHARE_PATH",
-];
-
 #[must_use]
-pub fn needs_restart(env: &Env, key: &str) -> bool {
+pub(crate) fn needs_restart(env: &Env, key: &str) -> bool {
     RESTART_KEYS.contains(&key) && vm::running(env)
 }
 
 #[must_use]
-pub fn json(env: &Env) -> String {
+pub(crate) fn json(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let vm_st = vm::status(env);
@@ -159,7 +145,7 @@ pub fn json(env: &Env) -> String {
 }
 
 #[must_use]
-pub fn line(env: &Env) -> String {
+pub(crate) fn line(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let (vm_label, vm_detail) = if vm::running(env) {
