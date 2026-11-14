@@ -33,14 +33,15 @@ use crate::sys::spawn::exec_crosvm_trampoline;
 use crate::sys::{ce_ready, wait_boot_completed};
 use crate::traffic::{acct_hooks, acct_json, acct_reset, acct_setup, acct_snapshot, acct_teardown};
 use crate::uninstall;
-use crate::vm::disk::{disk_expand, disk_reset};
-use crate::vm::{fuse_watch, run_net_hook, vm_running};
+use crate::vm;
+use crate::vm::disk;
+use crate::vm::{fuse_watch, run_net_hook};
 
 fn after_set(env: &Env, key: &str) -> Result<(), String> {
     let cfg = Config::load(env);
     match key {
         "XR_EXPOSE" | "XR_MODE" | "XR_HOTSPOT_BRIDGE" | "XR_HOTSPOT_SUBNET" => {
-            if vm_running(env) && cfg.vm_net() {
+            if vm::running(env) && cfg.vm_net() {
                 let net_sh = env.moddir.join("scripts/net.sh");
                 if net_sh.is_file() {
                     let net_sync = Command::new("sh")
@@ -110,7 +111,7 @@ fn ipv6_set(env: &Env, arg: &str) -> (i32, String) {
         }
     };
     let v6_file = env.run_dir().join("guest/guest/ipv6");
-    if !vm_running(env) || !v6_file.is_file() {
+    if !vm::running(env) || !v6_file.is_file() {
         return (1, "{\"ok\":false,\"error\":\"服务未就绪\"}".to_owned());
     }
     fsx::write_logged(
@@ -141,7 +142,7 @@ fn bg_run(env: &Env, action: &str) -> i32 {
     let run = env.run_dir();
     fsx::remove_logged(env, run.join("bg.rc"));
     fsx::remove_logged(env, run.join("bg.rc.tmp"));
-    if action == "start" && !vm_running(env) {
+    if action == "start" && !vm::running(env) {
         fsx::write_logged(env, env.console_log(), "");
         fsx::write_logged(env, env.boot_log(), "");
         blog(env, "xr", "收到启动请求");
@@ -220,7 +221,7 @@ fn action_toggle(env: &Env) -> i32 {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
-    if vm_running(env) {
+    if vm::running(env) {
         note_rc(env, "vm_stop", vm_stop(env));
     } else {
         note_rc(env, "vm_start", vm_start(env));
@@ -290,7 +291,7 @@ pub fn run(args: &[String]) -> i32 {
             let ctx = NetCtx::new(&env, &cfg);
             acct_reset(&ctx);
             fsx::write_logged(&env, env.run_dir().join("notify.force"), "");
-            if vm_running(&env) && env.run_dir().join("guest/host").is_dir() {
+            if vm::running(&env) && env.run_dir().join("guest/host").is_dir() {
                 fsx::write_logged(
                     &env,
                     env.run_dir().join("guest/host/acct.cmd"),
@@ -304,7 +305,7 @@ pub fn run(args: &[String]) -> i32 {
             let (rc, out) = traffic_split(&env, 4);
             emit(&env, &out, rc)
         }
-        "running" => i32::from(!vm_running(&env)),
+        "running" => i32::from(!vm::running(&env)),
         "status-json" => emit(&env, &status::json(&env), 0),
         "status-line" => emit(&env, &status::line(&env), 0),
         "get" => {
@@ -359,11 +360,11 @@ pub fn run(args: &[String]) -> i32 {
             if mb.trim().parse::<u64>().is_err() {
                 return emit(&env, "usage: xr expand MB", 2);
             }
-            disk_expand(&env, mb)
+            disk::expand(&env, mb)
         }
-        "reset-disk" => disk_reset(&env),
+        "reset-disk" => disk::reset(&env),
         "sync" => {
-            if vm_running(&env) {
+            if vm::running(&env) {
                 run_net_hook(&env, "sync")
             } else {
                 1
@@ -475,14 +476,14 @@ pub fn run(args: &[String]) -> i32 {
             Some("vm") => match rest.get(1).map(String::as_str) {
                 Some("start") => vm_start(&env),
                 Some("stop") => vm_stop(&env),
-                Some("status") => emit(&env, &crate::vm::vm_status_json(&env), 0),
+                Some("status") => emit(&env, &vm::status_json(&env), 0),
                 Some("expand") => {
                     let Some(mb) = rest.get(2) else {
                         return 2;
                     };
-                    disk_expand(&env, mb)
+                    disk::expand(&env, mb)
                 }
-                Some("reset-disk") => disk_reset(&env),
+                Some("reset-disk") => disk::reset(&env),
                 _ => 2,
             },
             Some("daemon") => {

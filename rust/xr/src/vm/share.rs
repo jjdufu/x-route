@@ -4,15 +4,15 @@ use crate::log;
 use crate::sys::{ce_ready, fsx};
 
 #[derive(Debug, Clone)]
-pub struct ShareSpec {
+pub struct Spec {
     pub mode: String,
     pub spec: String,
     pub wrap: Vec<String>,
 }
 
 #[must_use]
-pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
-    let mut res = ShareSpec {
+pub fn prepare(env: &Env, cfg: &Config) -> Spec {
+    let mut res = Spec {
         mode: "off".to_owned(),
         spec: String::new(),
         wrap: Vec::new(),

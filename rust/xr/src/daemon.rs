@@ -29,7 +29,8 @@ use crate::sys::send_signal_logged;
 use crate::sys::spawn;
 use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note};
 use crate::traffic::acct_snapshot;
-use crate::vm::{run_net_hook, vm_running, vm_start_exec, vm_stop_exec};
+use crate::vm;
+use crate::vm::run_net_hook;
 
 fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
     if !vm_guest_reset_pending(env) {
@@ -74,7 +75,7 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
     note_rc(env, "run_net_hook", run_net_hook(env, "down"));
     fsx::remove_logged(env, run.join("stopping"));
 
-    note_rc(env, "vm_start_exec", vm_start_exec(env));
+    note_rc(env, "vm_start_exec", vm::start_exec(env));
     fsx::write_logged(env, run.join("notify.force"), "");
     notify_update(env);
     true
@@ -198,7 +199,7 @@ pub fn send(env: &Env, cmd: &str) -> i32 {
 #[must_use]
 pub fn vm_start(env: &Env) -> i32 {
     if env.in_daemon || env.daemon_foreground {
-        return vm_start_exec(env);
+        return vm::start_exec(env);
     }
     send(env, "start")
 }
@@ -206,12 +207,12 @@ pub fn vm_start(env: &Env) -> i32 {
 #[must_use]
 pub fn vm_stop(env: &Env) -> i32 {
     if env.in_daemon || env.daemon_foreground {
-        return vm_stop_exec(env, false);
+        return vm::stop_exec(env, false);
     }
     if running(env) {
         return send(env, "stop");
     }
-    vm_stop_exec(env, false)
+    vm::stop_exec(env, false)
 }
 
 fn clean_daemon_pid(env: &Env, self_pid: &str) {
@@ -295,15 +296,15 @@ pub fn main_loop(env: &Env) -> i32 {
                 let rc = match cmd.as_str() {
                     "start" => {
                         reset_times.clear();
-                        vm_start_exec(env)
+                        vm::start_exec(env)
                     }
                     "stop" => {
                         reset_times.clear();
-                        vm_stop_exec(env, false)
+                        vm::stop_exec(env, false)
                     }
                     "ping" => 0,
                     "quit" => {
-                        note_rc(env, "vm_stop_exec", vm_stop_exec(env, false));
+                        note_rc(env, "vm_stop_exec", vm::stop_exec(env, false));
                         let cfg = Config::load(env);
                         let ctx = NetCtx::new(env, &cfg);
                         acct_snapshot(&ctx);
@@ -334,7 +335,7 @@ pub fn main_loop(env: &Env) -> i32 {
 
         cgroup_escape_tree(env, std::process::id());
         if !vm_stopping(env) && (run.join("crosvm.pid").is_file() || run.join("state").is_file()) {
-            if !vm_running(env) {
+            if !vm::running(env) {
                 if !handle_guest_reboot(env, &mut reset_times) {
                     let reason = vm_exit_reason(env);
                     emergency_teardown(env, &reason);

@@ -20,7 +20,8 @@ use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 use crate::sys::{is_pid_running, proc_cmdline, shutdown_note};
 use crate::traffic::acct_total;
-use crate::vm::{run_net_hook, vm_running};
+use crate::vm;
+use crate::vm::run_net_hook;
 
 #[must_use]
 pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
@@ -111,7 +112,7 @@ pub fn cgroup_in_apps(env: &Env, pid: &str) -> bool {
 
 #[must_use]
 pub fn xr_vm_alive(env: &Env) -> bool {
-    if vm_running(env) {
+    if vm::running(env) {
         return true;
     }
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();

@@ -21,7 +21,8 @@ use crate::out::{self, emit};
 use crate::sys::fsx;
 use crate::sys::spawn;
 use crate::sys::{is_pid_running, send_signal_logged};
-use crate::vm::{reap_in_background, vm_running};
+use crate::vm;
+use crate::vm::reap_in_background;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
@@ -638,7 +639,7 @@ pub fn run_clash_mux(env: &Env) -> i32 {
     let started = Instant::now();
     let mut saw_vm = false;
     while !stop.load(Ordering::Relaxed) {
-        if vm_running(env) {
+        if vm::running(env) {
             saw_vm = true;
         } else if (saw_vm || started.elapsed() > Duration::from_secs(10))
             && !env.fuse_file().is_file()

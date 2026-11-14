@@ -12,7 +12,8 @@ use crate::log;
 use crate::log::{dlog_env, unix_now};
 use crate::net::vpn_routes::is_default_route;
 use crate::sys::fsx;
-use crate::vm::{vm_running, vpn_sync_host};
+use crate::vm;
+use crate::vm::vpn_sync_host;
 
 #[must_use]
 pub fn vpn_slug(name: &str) -> String {
@@ -134,7 +135,7 @@ pub fn vpn_mirror_legacy(env: &Env) {
 }
 
 pub fn vpn_rejected(env: &Env) -> Vec<String> {
-    if !vm_running(env) {
+    if !vm::running(env) {
         return Vec::new();
     }
     let act_raw = fs::read_to_string(env.run_dir().join("routes.active")).unwrap_or_default();
@@ -171,7 +172,7 @@ pub fn vpn_tunnels(env: &Env, summary_st: &str) -> Vec<Value> {
         .to_owned();
     let mut out = Vec::new();
     let tun_file = env.run_dir().join("guest/guest/openvpn.tunnels");
-    let alive = vm_running(env);
+    let alive = vm::running(env);
     if alive
         && fs::metadata(&tun_file).is_ok_and(|meta| meta.len() > 0)
         && let Ok(content) = fs::read_to_string(&tun_file)
@@ -247,7 +248,7 @@ pub fn vpn_profiles(env: &Env, summary_st: &str) -> Vec<Value> {
     if !vpn_dir.is_dir() {
         return out;
     }
-    let alive = vm_running(env);
+    let alive = vm::running(env);
     let tun_raw =
         fs::read_to_string(env.run_dir().join("guest/guest/openvpn.tunnels")).unwrap_or_default();
     let multi = env.run_dir().join("guest/guest/openvpn.multi").is_file();
@@ -443,7 +444,7 @@ pub fn vpn_import(env: &Env, path_arg: &str, enable_flag: &str) -> (i32, String)
     );
     vpn_mirror_legacy(env);
 
-    if vm_running(env) {
+    if vm::running(env) {
         if vpn_sync_host(env).is_none() {
             // 刚写入的配置目录不存在（创建失败）：客机侧本轮不更新，只记调试日志
             dlog_env(env, "vpn", "导入后同步客机配置：配置目录不存在");
@@ -488,7 +489,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
         if !fs::metadata(&ovpn).is_ok_and(|ovpn_meta| ovpn_meta.len() > 0) {
             return (1, "{\"ok\":false,\"error\":\"配置不存在\"}".to_owned());
         }
-        if !vm_running(env) {
+        if !vm::running(env) {
             if want {
                 return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
             }
@@ -594,7 +595,7 @@ pub fn vpn_set(env: &Env, act: &str, tid: &str) -> (i32, String) {
             fsx::write_logged(env, vpn_dir.join(format!("{fid}.enabled")), "1\n");
         }
     }
-    if !vm_running(env) {
+    if !vm::running(env) {
         if want {
             return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
         }
@@ -645,7 +646,7 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
     fsx::remove_logged(env, vpn_dir.join(format!("{did}.name")));
     fsx::remove_logged(env, vpn_dir.join(format!("{did}.enabled")));
     vpn_mirror_legacy(env);
-    if vm_running(env) {
+    if vm::running(env) {
         let any = vpn_sync_host(env).unwrap_or(false);
         if was_en || !any {
             let host = env.run_dir().join("guest/host");
@@ -662,7 +663,7 @@ pub fn vpn_delete(env: &Env, did: &str) -> (i32, String) {
 
 #[must_use]
 pub fn traffic_split(env: &Env, wait_secs: u64) -> (i32, String) {
-    if !vm_running(env) {
+    if !vm::running(env) {
         return (1, "{\"ok\":false,\"error\":\"服务未运行\"}".to_owned());
     }
     let host = env.run_dir().join("guest/host");

@@ -8,7 +8,7 @@ use crate::config::{Config, KEYS};
 use crate::env::Env;
 use crate::net;
 use crate::sys::ce_ready;
-use crate::vm::{vm_running, vm_status};
+use crate::vm;
 
 pub const RESTART_KEYS: &[&str] = &[
     "XR_NET_PREFIX",
@@ -26,14 +26,14 @@ pub const RESTART_KEYS: &[&str] = &[
 
 #[must_use]
 pub fn needs_restart(env: &Env, key: &str) -> bool {
-    RESTART_KEYS.contains(&key) && vm_running(env)
+    RESTART_KEYS.contains(&key) && vm::running(env)
 }
 
 #[must_use]
 pub fn json(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
-    let vm_st = vm_status(env);
+    let vm_st = vm::status(env);
     let vm_val = serde_json::to_value(&vm_st).unwrap_or_else(|_| json!({}));
 
     let net_sh = env.moddir.join("scripts/net.sh");
@@ -160,7 +160,7 @@ pub fn json(env: &Env) -> String {
 pub fn line(env: &Env) -> String {
     let cfg = Config::load(env);
     let run = env.run_dir();
-    let (vm_label, vm_detail) = if vm_running(env) {
+    let (vm_label, vm_detail) = if vm::running(env) {
         let st = fs::read_to_string(run.join("state")).unwrap_or_default();
         match st.trim() {
             "stable" => ("运行中", "运行中"),

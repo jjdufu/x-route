@@ -25,10 +25,9 @@ use crate::sys::fsx;
 use crate::sys::send_signal_logged;
 use crate::sys::spawn;
 use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
-use crate::vm::share::share_prepare;
 
 #[must_use]
-pub fn vm_running(env: &Env) -> bool {
+pub fn running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let trimmed = pid.trim();
     if !is_pid_running(env, trimmed) {
@@ -37,7 +36,7 @@ pub fn vm_running(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
-pub fn vm_fail(env: &Env, log_msg: &str, ui_msg: &str) {
+pub fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
     log::err(env, "vm", log_msg);
     fsx::write_logged(env, env.run_dir().join("last_error"), format!("{ui_msg}\n"));
     let boot_log = env.boot_log();
@@ -145,9 +144,9 @@ pub fn fuse_watch(env: &Env) {
     let ready_to = cfg.ready_timeout_sec();
     let mut waited = 0_u64;
     while waited < ready_to {
-        if !vm_running(env) {
+        if !running(env) {
             fsx::remove_logged(env, env.fuse_file());
-            vm_fail(env, "就绪前 crosvm 已退出，详见 vmm.log", "启动中退出");
+            fail(env, "就绪前 crosvm 已退出，详见 vmm.log", "启动中退出");
             return;
         }
         if ready_seen(env) {
@@ -160,8 +159,8 @@ pub fn fuse_watch(env: &Env) {
     if !ready_seen(env) {
         let msg = format!("{ready_to} 秒内未就绪，停止 VM");
         let ui = format!("{ready_to} 秒内未就绪");
-        vm_fail(env, &msg, &ui);
-        note_rc(env, "vm_stop_exec", vm_stop_exec(env, true));
+        fail(env, &msg, &ui);
+        note_rc(env, "vm_stop_exec", stop_exec(env, true));
         return;
     }
 
@@ -189,7 +188,7 @@ pub fn fuse_watch(env: &Env) {
     let stable_sec = cfg_now.stable_sec();
     let mut st = 0_u64;
     while st < stable_sec {
-        if !vm_running(env) {
+        if !running(env) {
             if crate::daemon::keepalive::vm_guest_reset_pending(env) {
                 let dpid = crate::daemon::pid(env);
                 if is_pid_running(env, &dpid) {
@@ -198,7 +197,7 @@ pub fn fuse_watch(env: &Env) {
                 }
             }
             fsx::remove_logged(env, env.fuse_file());
-            vm_fail(env, "稳定期内 crosvm 退出", "服务意外退出");
+            fail(env, "稳定期内 crosvm 退出", "服务意外退出");
             return;
         }
         thread::sleep(Duration::from_secs(5));
@@ -321,9 +320,9 @@ pub fn vpn_boot_prepare(env: &Env) {
 }
 
 #[must_use]
-pub fn vm_start_exec(env: &Env) -> i32 {
+pub fn start_exec(env: &Env) -> i32 {
     let cfg = Config::load(env);
-    if vm_running(env) {
+    if running(env) {
         log::info(env, "vm", "已在运行");
         return 0;
     }
@@ -351,7 +350,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     let image_path = env.img_dir().join("Image");
     let rootfs = env.rootfs_img();
     if !crate::env::is_executable(&env.crosvm) || !image_path.is_file() || !rootfs.is_file() {
-        vm_fail(env, "缺少 crosvm 或镜像", "缺少虚拟化组件或系统镜像");
+        fail(env, "缺少 crosvm 或镜像", "缺少虚拟化组件或系统镜像");
         return 1;
     }
     if !ce_ready() {
@@ -397,7 +396,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
             "创建 xr0 / xr1、登记 netd 本地网络、建立转发规则",
         );
         if run_net_hook(env, "up") != 0_i32 {
-            vm_fail(env, "net up 失败", "网络初始化失败");
+            fail(env, "net up 失败", "网络初始化失败");
             return 1;
         }
         let up_if = fs::read_to_string(run.join("net.up_if"))
@@ -432,7 +431,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
         )
     };
 
-    let share = share_prepare(env, &cfg);
+    let share = share::prepare(env, &cfg);
     blog(
         env,
         "vm",
@@ -580,7 +579,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     );
 
     let Ok(mut ch) = child else {
-        vm_fail(env, "无法拉起 crosvm", "无法启动");
+        fail(env, "无法拉起 crosvm", "无法启动");
         fsx::remove_logged(env, env.fuse_file());
         crate::clash::stop_clash_mux(env);
         wakelock_off(env);
@@ -604,8 +603,8 @@ pub fn vm_start_exec(env: &Env) -> i32 {
     }));
     blog(env, "vm", &format!("crosvm pid {pid_str}，等待内核输出"));
     thread::sleep(Duration::from_secs(2));
-    if !vm_running(env) {
-        vm_fail(env, "crosvm 立即退出，详见 vmm.log", "无法启动");
+    if !running(env) {
+        fail(env, "crosvm 立即退出，详见 vmm.log", "无法启动");
         fsx::remove_logged(env, env.fuse_file());
         fsx::remove_logged(env, run.join("crosvm.pid"));
         crate::clash::stop_clash_mux(env);
@@ -636,7 +635,7 @@ pub fn vm_start_exec(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
+pub fn stop_exec(env: &Env, in_watch: bool) -> i32 {
     let run = env.run_dir();
     fsx::write_logged(
         env,
@@ -655,7 +654,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         .trim()
         .to_owned();
     diag::snap(env, "停止前", 2);
-    if vm_running(env) {
+    if running(env) {
         let sock = run.join("crosvm.sock");
         let stop_status = Command::new(&env.crosvm)
             .args(["stop", &sock.to_string_lossy()])
@@ -665,16 +664,16 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
             .status();
         note_status(env, "crosvm stop", stop_status);
         for _ in 0_i32..10_i32 {
-            if !vm_running(env) {
+            if !running(env) {
                 break;
             }
             thread::sleep(Duration::from_secs(1));
         }
-        if vm_running(env) && !pid.is_empty() {
+        if running(env) && !pid.is_empty() {
             send_signal_logged(env, &pid, Signal::TERM);
             thread::sleep(Duration::from_secs(5));
         }
-        if vm_running(env) && !pid.is_empty() {
+        if running(env) && !pid.is_empty() {
             send_signal_logged(env, &pid, Signal::KILL);
         }
     }
@@ -700,7 +699,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
 }
 
 #[derive(Serialize)]
-pub struct VmStatusJson {
+pub struct StatusJson {
     pub running: bool,
     pub pid: Option<u64>,
     pub state: String,
@@ -712,9 +711,9 @@ pub struct VmStatusJson {
 }
 
 #[must_use]
-pub fn vm_status(env: &Env) -> VmStatusJson {
+pub fn status(env: &Env) -> StatusJson {
     let run = env.run_dir();
-    let running = vm_running(env);
+    let running = running(env);
     let mut pid_num = None;
     let mut uptime_s = 0_u64;
     let state = if running {
@@ -771,7 +770,7 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
         .unwrap_or("")
         .replace(['"', '\\'], "");
 
-    VmStatusJson {
+    StatusJson {
         running,
         pid: pid_num,
         state,
@@ -784,7 +783,7 @@ pub fn vm_status(env: &Env) -> VmStatusJson {
 }
 
 #[must_use]
-pub fn vm_status_json(env: &Env) -> String {
-    serde_json::to_string(&vm_status(env))
+pub fn status_json(env: &Env) -> String {
+    serde_json::to_string(&status(env))
         .unwrap_or_else(|_| "{\"running\":false,\"state\":\"stopped\"}".to_owned())
 }
