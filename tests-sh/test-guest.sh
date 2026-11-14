@@ -191,4 +191,20 @@ chk 'grep -q "/etc/init.d/openclash enable" "$OC_DEF" && ! grep -q "/etc/init.d/
 chk 'grep -q "openclash.config.enable=0" "$OC_DEF"'
 chk 'grep -q "/etc/init.d/openclash enabled" "$OC_RDY" && grep -q "/etc/init.d/openclash boot" "$OC_RDY"'
 
+# 8. xrouter-vpn 上报 IPv6 状态：内容不变不替换 guest/ipv6（控制目录在手机闪存上），临时文件写在客机 /tmp
+VPN_INIT="$ROOT/openwrt/files/etc/init.d/xrouter-vpn"
+mkdir -p "$T/ip6/usr/libexec" "$T/ip6/tmp" "$T/ip6/ctl/guest"
+printf '#!/bin/sh\ncat "%s/ip6/state"\n' "$T" > "$T/ip6/usr/libexec/xrouter-ipv6"; chmod +x "$T/ip6/usr/libexec/xrouter-ipv6"
+sed -n '/# ipv6-report-begin/,/# ipv6-report-end/p' "$VPN_INIT" | sed -e "s# /tmp/xrouter-ipv6.state# $T/ip6/tmp/xrouter-ipv6.state#g" -e "s#/usr/libexec/xrouter-ipv6 #$T/ip6/usr/libexec/xrouter-ipv6 #g" > "$T/ip6/step.sh"
+chk '[ "$(grep -c . "$T/ip6/step.sh")" -ge 3 ] && ! grep -q "> \"\${CTL}/guest/ipv6.tmp\"" "$VPN_INIT"'
+echo "1" > "$T/ip6/state"
+CTL="$T/ip6/ctl" sh "$T/ip6/step.sh"
+chk '[ "$(cat "$T/ip6/ctl/guest/ipv6")" = 1 ] && [ ! -e "$T/ip6/ctl/guest/ipv6.tmp" ]'
+touch -t 200001010000 "$T/ip6/ctl/guest/ipv6"
+CTL="$T/ip6/ctl" sh "$T/ip6/step.sh"
+chk '[ -n "$(find "$T/ip6/ctl/guest/ipv6" -mtime +1000)" ]'   # 第二轮内容相同：不替换
+echo "0" > "$T/ip6/state"
+CTL="$T/ip6/ctl" sh "$T/ip6/step.sh"
+chk '[ "$(cat "$T/ip6/ctl/guest/ipv6")" = 0 ] && [ -z "$(find "$T/ip6/ctl/guest/ipv6" -mtime +1000)" ]'
+
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi

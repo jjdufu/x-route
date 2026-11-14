@@ -139,7 +139,10 @@ watch() {
       lastwan="$wan"
       /usr/libexec/xrouter-ipv6 wan
     fi
-    /usr/libexec/xrouter-ipv6 state > "${CTL}/guest/ipv6.tmp" && mv -f "${CTL}/guest/ipv6.tmp" "${CTL}/guest/ipv6"
+    # ipv6-report-begin：状态先写到客机内存 /tmp，内容有变化才原子替换控制目录里的 guest/ipv6（控制目录在手机闪存上）
+    /usr/libexec/xrouter-ipv6 state > /tmp/xrouter-ipv6.state
+    cmp -s /tmp/xrouter-ipv6.state "${CTL}/guest/ipv6" 2>/dev/null || { cp -f /tmp/xrouter-ipv6.state "${CTL}/guest/ipv6.tmp" && mv -f "${CTL}/guest/ipv6.tmp" "${CTL}/guest/ipv6"; }
+    # ipv6-report-end
     hc="$(cat "${CTL}/host/hotspot.cmd" 2>/dev/null)"
     if [ -n "$hc" ] && [ "$hc" != "$lasths" ]; then
       lasths="$hc"
