@@ -248,18 +248,46 @@ pub(crate) fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     ]);
 }
 
-/// 把热点接口 `iface` 桥接进虚拟机：读取安卓分配的地址、建网桥、交给客机接管 DHCP，成功后写 `run/net.hs_*` 并返回 true。
-///
-/// 任一步失败时记 ERROR、写 `run/net.hs_fail` 并回退，返回 false。
-pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
-    let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", iface]);
-    let cidr = out4
-        .stdout
+/// `ip -o addr show` 输出第一行的第 4 列（地址/前缀），没有时为空串。
+fn first_addr(stdout: &str) -> String {
+    stdout
         .lines()
         .next()
-        .and_then(|route_line| route_line.split_whitespace().nth(3))
+        .and_then(|line| line.split_whitespace().nth(3))
         .unwrap_or("")
-        .to_owned();
+        .to_owned()
+}
+
+/// 热点接口当前的地址信息与桥接参数。
+struct HsPlan {
+    /// 安卓给热点分配的网关地址（`IPv4/前缀`）。
+    cidr: String,
+    /// `OpenWrt` 接管后使用的网关地址。
+    gw: String,
+    /// 需要为已连设备保留安卓原网段时为 `+<cidr>`，否则为空。
+    alias: String,
+    /// 热点接口的链路本地 `IPv6` 地址，没有时为空。
+    ll: String,
+    /// 邻居表里已知设备的 `IPv4` 地址，以空格分隔。
+    clients: String,
+}
+
+/// 热点接口邻居表中可达设备的 `IPv4` 地址（排除 `FAILED`、`INCOMPLETE`），以空格连接。
+fn hs_clients(ctx: &NetCtx<'_>, iface: &str) -> String {
+    let neigh_out = ctx.ip(&["-4", "neigh", "show", "dev", iface]);
+    let clients: Vec<&str> = neigh_out
+        .stdout
+        .lines()
+        .filter(|row| !row.contains("FAILED") && !row.contains("INCOMPLETE"))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|ip| !ip.is_empty() && ip.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.'))
+        .collect();
+    clients.join(" ")
+}
+
+/// 读取热点接口的 `IPv4` 地址、计算 `OpenWrt` 网关、链路本地地址与已知设备并记调试日志；接口还没有 `IPv4` 地址时返回 `None`。
+fn hs_probe(ctx: &NetCtx<'_>, iface: &str) -> Option<HsPlan> {
+    let cidr = first_addr(&ctx.ip(&["-4", "-o", "addr", "show", "dev", iface]).stdout);
     if cidr.is_empty() {
         dlog(
             ctx.env,
@@ -267,7 +295,7 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
             "hotspot",
             &format!("{iface} 还没有 IPv4 地址，暂不桥接"),
         );
-        return false;
+        return None;
     }
     let gw = hs_gw_cidr(ctx, iface, &cidr);
     let alias = if gw != cidr && !cidr::overlap(&gw, &cidr) {
@@ -275,24 +303,11 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     } else {
         String::new()
     };
-    let out6 = ctx.ip(&["-6", "-o", "addr", "show", "dev", iface, "scope", "link"]);
-    let ll = out6
-        .stdout
-        .lines()
-        .next()
-        .and_then(|entry_line| entry_line.split_whitespace().nth(3))
-        .unwrap_or("")
-        .to_owned();
-    let neigh_out = ctx.ip(&["-4", "neigh", "show", "dev", iface]);
-    let clients: Vec<String> = neigh_out
-        .stdout
-        .lines()
-        .filter(|row| !row.contains("FAILED") && !row.contains("INCOMPLETE"))
-        .filter_map(|line| line.split_whitespace().next())
-        .filter(|ip| !ip.is_empty() && ip.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.'))
-        .map(str::to_owned)
-        .collect();
-    let cl_str = clients.join(" ");
+    let ll = first_addr(
+        &ctx.ip(&["-6", "-o", "addr", "show", "dev", iface, "scope", "link"])
+            .stdout,
+    );
+    let clients = hs_clients(ctx, iface);
     let alias_note = if alias.is_empty() {
         String::new()
     } else {
@@ -305,31 +320,46 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         &format!(
             "准备桥接 {iface}：安卓网关 {cidr}，OpenWrt 网关 {gw}{alias_note}，链路本地 {}，已知设备 {}",
             if ll.is_empty() { "无" } else { &ll },
-            if cl_str.is_empty() { "无" } else { &cl_str }
+            if clients.is_empty() { "无" } else { &clients }
         ),
     );
+    Some(HsPlan {
+        cidr,
+        gw,
+        alias,
+        ll,
+        clients,
+    })
+}
 
-    let cmd = format!("on {gw} {alias} {cl_str}");
-    let run = ctx.env.run_dir();
-    if !hs_guest_cmd(ctx.env, &cmd, 15) {
-        let resp = fs::read_to_string(run.join("guest/guest/hotspot"))
-            .unwrap_or_else(|_| "无响应".to_owned());
-        log::err(
-            ctx.env,
-            "hotspot",
-            &format!(
-                "OpenWrt 未接管热点网段 {gw}（{}），热点保持由安卓分配",
-                resp.trim()
-            ),
-        );
-        fsx::write_logged(
-            ctx.env,
-            run.join("net.hs_fail"),
-            format!("{iface} {cidr} {gw}\n"),
-        );
-        return false;
+/// 通知客机接管热点网段；15 秒内未确认时记 ERROR、写 `run/net.hs_fail` 并返回 false。
+fn hs_guest_on(ctx: &NetCtx<'_>, iface: &str, plan: &HsPlan) -> bool {
+    let cmd = format!("on {} {} {}", plan.gw, plan.alias, plan.clients);
+    if hs_guest_cmd(ctx.env, &cmd, 15) {
+        return true;
     }
+    let run = ctx.env.run_dir();
+    let resp =
+        fs::read_to_string(run.join("guest/guest/hotspot")).unwrap_or_else(|_| "无响应".to_owned());
+    log::err(
+        ctx.env,
+        "hotspot",
+        &format!(
+            "OpenWrt 未接管热点网段 {}（{}），热点保持由安卓分配",
+            plan.gw,
+            resp.trim()
+        ),
+    );
+    fsx::write_logged(
+        ctx.env,
+        run.join("net.hs_fail"),
+        format!("{iface} {} {}\n", plan.cidr, plan.gw),
+    );
+    false
+}
 
+/// 确保网桥存在并设置参数、`sysctl` 后启用，把 `xr1` 挂上；网桥建不出来时记 ERROR、通知客机关闭并返回 false。
+fn hs_make_bridge(ctx: &NetCtx<'_>) -> bool {
     if !ctx.ip(&["link", "show", HS_BR]).success()
         && !ctx.ip(&["link", "add", HS_BR, "type", "bridge"]).success()
     {
@@ -351,62 +381,39 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         "0",
     ]);
     let proc = &ctx.env.proc_dir;
-    ctx.sysw_run(
-        &proc.join(format!("sys/net/ipv4/conf/{HS_BR}/arp_ignore")),
-        "1",
-    );
-    ctx.sysw_run(
-        &proc.join(format!("sys/net/ipv4/conf/{HS_BR}/rp_filter")),
-        "0",
-    );
-    ctx.sysw_run(
-        &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/accept_ra")),
-        "0",
-    );
-    ctx.sysw_run(
-        &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/disable_ipv6")),
-        "0",
-    );
+    for (family, name, value) in [
+        ("ipv4", "arp_ignore", "1"),
+        ("ipv4", "rp_filter", "0"),
+        ("ipv6", "accept_ra", "0"),
+        ("ipv6", "disable_ipv6", "0"),
+    ] {
+        ctx.sysw_run(
+            &proc.join(format!("sys/net/{family}/conf/{HS_BR}/{name}")),
+            value,
+        );
+    }
     ctx.ip_run(&["link", "set", HS_BR, "up"]);
     ctx.ip_run(&["link", "set", HS_TAP, "master", HS_BR]);
-    if !ctx.ip(&["link", "set", iface, "master", HS_BR]).success() {
-        log::err(ctx.env, "hotspot", &format!("{iface} 无法加入网桥"));
-        hs_unbridge(ctx);
-        return false;
-    }
+    true
+}
+
+/// 桥接成功后的收尾：开启网桥 `IPv6` 转发、补链路本地地址、装规则与路由、拒绝网桥 `IPv6` 转发、关闭网络共享卸载，写 `run/net.hs_*` 并记日志。
+fn hs_bridge_done(ctx: &NetCtx<'_>, iface: &str, plan: &HsPlan) {
+    let run = ctx.env.run_dir();
+    let (cidr, gw) = (&plan.cidr, &plan.gw);
     ctx.sysw_run(
-        &proc.join(format!("sys/net/ipv6/conf/{HS_BR}/forwarding")),
+        &ctx.env
+            .proc_dir
+            .join(format!("sys/net/ipv6/conf/{HS_BR}/forwarding")),
         "1",
     );
-    if !ll.is_empty() {
-        ctx.ip6_run(&["addr", "replace", &ll, "dev", HS_BR, "nodad"]);
+    if !plan.ll.is_empty() {
+        ctx.ip6_run(&["addr", "replace", &plan.ll, "dev", HS_BR, "nodad"]);
     }
     hs_rules(ctx, iface);
-    hs_route4(ctx, &gw, &cidr);
-    ctx.ip6t_run(&[
-        "-I",
-        "XR_FWD6",
-        "1",
-        "-i",
-        HS_BR,
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "icmp6-adm-prohibited",
-    ]);
-    ctx.ip6t_run(&[
-        "-I",
-        "XR_FWD6",
-        "1",
-        "-i",
-        HS_BR,
-        "-p",
-        "tcp",
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "tcp-reset",
-    ]);
+    hs_route4(ctx, gw, cidr);
+    ctx.ip6t_run(&hs_reject6(&["-I", "XR_FWD6", "1"], false));
+    ctx.ip6t_run(&hs_reject6(&["-I", "XR_FWD6", "1"], true));
     v6_tether_offload_off(ctx);
     fsx::write_logged(ctx.env, run.join("net.hs_if"), format!("{iface}\n"));
     fsx::write_logged(ctx.env, run.join("net.hs_cidr"), format!("{cidr}\n"));
@@ -428,6 +435,24 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         );
     }
     trigger_diag_snap_bg(ctx.env, ctx.cfg, &format!("热点桥接 {iface}"));
+}
+
+/// 把热点接口 `iface` 桥接进虚拟机：读取安卓分配的地址、建网桥、交给客机接管 DHCP，成功后写 `run/net.hs_*` 并返回 true。
+///
+/// 任一步失败时记 ERROR、写 `run/net.hs_fail` 并回退，返回 false。
+pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
+    let Some(plan) = hs_probe(ctx, iface) else {
+        return false;
+    };
+    if !hs_guest_on(ctx, iface, &plan) || !hs_make_bridge(ctx) {
+        return false;
+    }
+    if !ctx.ip(&["link", "set", iface, "master", HS_BR]).success() {
+        log::err(ctx.env, "hotspot", &format!("{iface} 无法加入网桥"));
+        hs_unbridge(ctx);
+        return false;
+    }
+    hs_bridge_done(ctx, iface, &plan);
     true
 }
 
