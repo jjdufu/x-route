@@ -111,7 +111,7 @@ chk '[ -f "$MOCK/chain.XR_ACCT_UP" ] && [ ! -f "$MOCK/chain.XR_ACCT6_UP" ]'
 chk '! grep -qx -- "-j XR_ACCT6" "$MOCK/XR_FWD6"'
 chk '[ "$($XR traffic | J "d[\"ipv6\"], d[\"counting\"]")" = "False True" ]'
 
-# 10. 单位换算已在 rust/xr/tests/net_traffic.rs 中覆盖
+# 10. 单位换算已在 rust/xr/tests/net_traffic/cases.rs 中覆盖
 
 # 11. 损坏的保存文件按 0 处理
 echo "garbage x" > "$XR_DATA/config/traffic.base"
