@@ -1,6 +1,6 @@
 //! `ip6_format`：按 4 个十六进制字符分组的输出与逐字符参照实现一致（锁定 `as_chunks` 改写）。
 
-use super::ip6_format;
+use super::{dev_values, ip6_format};
 use xr_test_support::{Failure, ensure};
 
 /// 参照实现：只接受 32 个十六进制字符，每 4 个字符之间插入 `:`。
@@ -74,4 +74,23 @@ fn ip6_format_known_values() -> Result<(), Failure> {
         ip6_format("20010db800000000000000000000000g").is_none(),
         "非十六进制应拒绝",
     )
+}
+
+/// `dev_values` 按出现顺序取出每个 `dev` 之后的接口名，行尾孤立的 `dev` 不取值。
+///
+/// # Errors
+///
+/// 取值与期望不同时返回错误。
+#[test]
+fn dev_values_takes_each_dev_argument() -> Result<(), Failure> {
+    ensure(
+        dev_values("10.0.0.0/24 dev wlan0 proto kernel nexthop dev rndis0")
+            == ["wlan0".to_owned(), "rndis0".to_owned()],
+        "应依次取出 wlan0、rndis0",
+    )?;
+    ensure(
+        dev_values("unreachable default dev").is_empty(),
+        "行尾孤立的 dev 不取值",
+    )?;
+    ensure(dev_values("").is_empty(), "空行无结果")
 }

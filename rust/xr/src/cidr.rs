@@ -518,6 +518,20 @@ pub fn hs_subnet_valid(raw: &str) -> bool {
     host != 0 && host != bcast
 }
 
+/// 一行路由输出中每个 `dev` 之后的接口名，按出现顺序返回。
+fn dev_values(line: &str) -> Vec<String> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let mut devs = Vec::new();
+    for pair in tokens.windows(2) {
+        if let [tok, dev] = *pair
+            && tok == "dev"
+        {
+            devs.push(dev.to_owned());
+        }
+    }
+    devs
+}
+
 /// 检查热点子网 `subnet` 是否与 `xr0` 的 `/24` 或手机上其他接口的 `IPv4` 地址冲突。
 ///
 /// 跳过 `lo`、`xr0`、`xr1`、`xrbr1`、`local_network` 表里的接口以及 `skip_if`；冲突时返回"接口名 地址段"，无冲突返回 `None`。
@@ -548,14 +562,7 @@ pub fn hs_subnet_clash(
     {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-            for (idx, tok) in tokens.iter().enumerate() {
-                if *tok == "dev"
-                    && let Some(dev) = tokens.get(idx.saturating_add(1))
-                {
-                    skip.push((*dev).to_owned());
-                }
-            }
+            skip.extend(dev_values(line));
         }
     }
     if let Ok(out) = Command::new(&ip_bin)
