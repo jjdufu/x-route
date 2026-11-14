@@ -81,6 +81,32 @@ pub(crate) fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 单条路由校验：默认路由静默跳过；格式错误、主机位非 0、与 `busy` 中网段重叠时记一行 ERROR 并跳过；通过时返回规范写法。
+fn route_check(ctx: &NetCtx<'_>, raw: &str, busy: &[String]) -> Option<String> {
+    if is_default_route(raw) {
+        return None;
+    }
+    let Some(nc) = norm_route(raw) else {
+        log::err(ctx.env, "vpn", &format!("格式错误 {raw}"));
+        return None;
+    };
+    if is_default_route(&nc) {
+        return None;
+    }
+    if !cidr::is_aligned(&nc) {
+        log::err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
+        return None;
+    }
+    if let Some(conflict) = busy
+        .iter()
+        .find(|used| !used.is_empty() && cidr::overlap(&nc, used))
+    {
+        log::err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
+        return None;
+    }
+    Some(nc)
+}
+
 /// 筛出可以安装的 `VPN` 路由：规范化、跳过默认路由，拒绝格式错误、主机位非 0、与现有网段重叠的项，最多 64 条。
 ///
 /// 每条被拒绝的路由记一行 ERROR；返回排序去重后的规范写法。
@@ -122,27 +148,9 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     let mut count = 0_usize;
     let mut valid_set = BTreeSet::new();
     for raw in routes_source(ctx) {
-        if is_default_route(&raw) {
-            continue;
-        }
-        let Some(nc) = norm_route(&raw) else {
-            log::err(ctx.env, "vpn", &format!("格式错误 {raw}"));
+        let Some(nc) = route_check(ctx, &raw, &busy) else {
             continue;
         };
-        if is_default_route(&nc) {
-            continue;
-        }
-        if !cidr::is_aligned(&nc) {
-            log::err(ctx.env, "vpn", &format!("主机位不为 0：{raw}"));
-            continue;
-        }
-        if let Some(conflict) = busy
-            .iter()
-            .find(|used| !used.is_empty() && cidr::overlap(&nc, used))
-        {
-            log::err(ctx.env, "vpn", &format!("{nc} 与 {conflict} 重叠"));
-            continue;
-        }
         count = count.saturating_add(1);
         if count > 64 {
             log::err(ctx.env, "vpn", "超过 64 条，其余忽略");
