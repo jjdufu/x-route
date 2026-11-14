@@ -1,3 +1,5 @@
+//! 系统辅助：进程存活判定与信号、`getprop` 与开关机状态、唤醒锁、cgroup 迁移，以及基于锁文件的进程间互斥（`PathLock`）。
+
 pub mod exec;
 pub(crate) mod fsx;
 pub(crate) mod spawn;
@@ -132,11 +134,15 @@ impl Drop for PathLock {
     }
 }
 
+/// `/proc/<pid>/stat` 内容表明进程是僵尸（`Z`）或已死（`X`/`x`）时返回 true。
 #[must_use]
 pub(crate) fn is_zombie_stat(stat_content: &str) -> bool {
     stat_content.contains(") Z ") || stat_content.contains(") X ") || stat_content.contains(") x ")
 }
 
+/// `pid_str` 对应的进程存在且不是僵尸时返回 true。
+///
+/// 测试把 `proc_base` 指向假目录时，只要其中存在该 pid 目录（且 `stat` 不是僵尸）即视为在运行。
 #[must_use]
 pub(crate) fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();
@@ -175,6 +181,7 @@ pub(crate) fn is_pid_running(env: &Env, pid_str: &str) -> bool {
     true
 }
 
+/// 向进程发送信号，发送成功返回 true；pid 无法解析或进程已不存在时返回 false。
 #[must_use]
 pub(crate) fn send_signal(pid_str: &str, sig: Signal) -> bool {
     let Ok(raw_pid) = pid_str.trim().parse::<i32>() else {
@@ -200,6 +207,7 @@ pub(crate) fn send_signal_logged(env: &Env, pid_str: &str, sig: Signal) {
     }
 }
 
+/// 读取进程命令行，参数间的 NUL 换成空格；进程不存在或读取失败时返回 `None`。
 #[must_use]
 pub(crate) fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     let trimmed = pid_str.trim();
@@ -217,6 +225,7 @@ pub(crate) fn proc_cmdline(env: &Env, pid_str: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&mapped).to_string())
 }
 
+/// 读取 Android 系统属性；`getprop` 无法执行时返回空串。
 #[must_use]
 pub(crate) fn getprop(name: &str) -> String {
     Command::new("getprop")
@@ -226,17 +235,20 @@ pub(crate) fn getprop(name: &str) -> String {
         .map_or_default(|result| String::from_utf8_lossy(&result.stdout).trim().to_owned())
 }
 
+/// 用户 0 的凭据加密存储已解锁（`sys.user.0.ce_available` 为 `true`）时返回 true。
 #[must_use]
 pub(crate) fn ce_ready() -> bool {
     getprop("sys.user.0.ce_available") == "true"
 }
 
+/// 每 2 秒轮询一次，直到 `sys.boot_completed` 为 1。
 pub(crate) fn wait_boot_completed() {
     while getprop("sys.boot_completed") != "1" {
         thread::sleep(Duration::from_secs(2));
     }
 }
 
+/// 系统正在关机时返回 true：`run/shutdown` 标记已存在，或 `sys.powerctl`、`sys.shutdown.requested` 非空（此时补写标记）。
 #[must_use]
 pub(crate) fn shutting_down(env: &Env) -> bool {
     let marker = env.run_dir().join("shutdown");
@@ -251,6 +263,7 @@ pub(crate) fn shutting_down(env: &Env) -> bool {
     false
 }
 
+/// 每次关机只记一次"系统关机，服务随之停止"（以 `run/shutdown.noted` 去重）。
 pub(crate) fn shutdown_note(env: &Env, module: &str) {
     let noted = env.run_dir().join("shutdown.noted");
     if noted.is_file() {
@@ -262,10 +275,12 @@ pub(crate) fn shutdown_note(env: &Env, module: &str) {
     log::info(env, module_name, "系统关机，服务随之停止");
 }
 
+/// 申请内核唤醒锁 `xrouter`，阻止手机在虚拟机运行时深度睡眠。
 pub(crate) fn wakelock_on(env: &Env) {
     wakelock_write(env, Path::new("/sys/power/wake_lock"));
 }
 
+/// 释放内核唤醒锁 `xrouter`。
 pub(crate) fn wakelock_off(env: &Env) {
     wakelock_write(env, Path::new("/sys/power/wake_unlock"));
 }
@@ -294,6 +309,7 @@ fn write_if_exists(path: &Path, text: &str) -> Option<std::io::Result<()>> {
     )
 }
 
+/// 写入已存在的控制文件；文件不存在或写入失败时返回 false。
 fn write_existing(path: &Path, text: &str) -> bool {
     matches!(write_if_exists(path, text), Some(Ok(())))
 }
@@ -306,6 +322,7 @@ fn write_existing_logged(env: &Env, path: &Path, text: &str) {
     }
 }
 
+/// 读取进程所在 cgroup 路径：优先 cgroup v2 的 `0::` 行，否则取第一行的路径字段。
 #[must_use]
 pub(crate) fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     let cg_file = env.proc_base.join(pid_str.trim()).join("cgroup");
@@ -323,6 +340,7 @@ pub(crate) fn cgroup_path(env: &Env, pid_str: &str) -> Option<String> {
     None
 }
 
+/// 进程位于应用 cgroup（`/apps/`、`uid_*/pid_*` 或 `SukiSU` 管理器相关路径）时返回 true。
 #[must_use]
 pub fn cgroup_in_apps(env: &Env, pid_str: &str) -> bool {
     let Some(cg) = cgroup_path(env, pid_str) else {
@@ -335,6 +353,7 @@ pub fn cgroup_in_apps(env: &Env, pid_str: &str) -> bool {
         || is_uid_pid_cgroup(&cg)
 }
 
+/// cgroup 路径中存在相邻的 `uid_*`、`pid_*` 两段时返回 true。
 fn is_uid_pid_cgroup(path: &str) -> bool {
     let segs: Vec<&str> = path.split('/').collect();
     for (idx, seg) in segs.iter().enumerate() {
@@ -348,6 +367,7 @@ fn is_uid_pid_cgroup(path: &str) -> bool {
     false
 }
 
+/// 进程在运行时把它移出应用 cgroup 并调低 OOM 优先级，返回 true；pid 为空或进程不在时返回 false。
 #[must_use]
 pub fn cgroup_escape(env: &Env, pid_str: &str) -> bool {
     let trimmed = pid_str.trim();

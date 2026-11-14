@@ -1,3 +1,5 @@
+//! 外部命令执行：统一的执行入口（记录调试日志、开机日志、失败计数）与结果类型。
+
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::os::unix::process::ExitStatusExt as _;
@@ -8,20 +10,26 @@ use crate::config::Config;
 use crate::env::Env;
 use crate::log::{FAILURES, dlog, dlog_env, note_failure};
 
+/// 一次外部命令的结果。
 #[derive(Debug, Clone)]
 pub struct Output {
+    /// 退出码：被信号终止时为 128 + 信号值，无法执行时为 127。
     pub(crate) code: i32,
+    /// 标准输出（按 UTF-8 宽松解码）。
     pub(crate) stdout: String,
+    /// 标准错误（按 UTF-8 宽松解码）。
     pub(crate) stderr: String,
 }
 
 impl Output {
+    /// 退出码为 0 时返回 true。
     #[must_use]
     pub(crate) const fn success(&self) -> bool {
         self.code == 0
     }
 }
 
+/// 参数中含有修改类动词（`add`、`del`、`flush`、`set` 等）时返回 true，用于决定是否记入开机日志和调试日志。
 #[must_use]
 pub(crate) fn is_mutating_args(args: &[&str]) -> bool {
     args.iter().any(|arg| {
@@ -53,6 +61,7 @@ pub(crate) fn is_mutating_args(args: &[&str]) -> bool {
     })
 }
 
+/// 日志里显示的命令行：系统命令目录下的程序只写程序名，后接空格分隔的参数。
 fn format_cmd_for_log(env: &Env, prog: &Path, args: &[&str]) -> String {
     let sysbin_prefix = format!("{}/", env.sysbin.to_string_lossy().trim_end_matches('/'));
     let prog_s = prog.to_string_lossy();
@@ -64,6 +73,7 @@ fn format_cmd_for_log(env: &Env, prog: &Path, args: &[&str]) -> String {
     }
 }
 
+/// 从进程结果取退出码：正常退出取退出码，被信号终止取 128 + 信号值，都取不到时为 1。
 fn exit_code_from_output(out: &process::Output) -> i32 {
     out.status.code().unwrap_or_else(|| {
         out.status
@@ -72,6 +82,9 @@ fn exit_code_from_output(out: &process::Output) -> i32 {
     })
 }
 
+/// 执行外部命令并收集输出，标准输入接空。
+///
+/// 修改类命令在开机日志存在时先记一行；调试开关打开时，失败、有错误输出或修改类的命令记入调试日志（只读命令的 141 除外）。`pass_stderr` 为 true 时把标准错误转发到本进程的标准错误。无法执行时返回退出码 127。
 #[must_use]
 pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) -> Output {
     let mutating = is_mutating_args(args);
@@ -146,14 +159,14 @@ pub fn run_xr(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: 
 
 /// 读取一次命令结果的成败：非 0 退出或无法执行时计数到 `FAILURES.exec`。
 ///
-/// 调试日志已由 [`xr_exec`] 写过，这里不重复写。
+/// 调试日志已由 [`run_xr`] 写过，这里不重复写。
 pub(crate) fn note_exec_result(res: &Output) {
     if !res.success() {
         note_failure(&FAILURES.exec);
     }
 }
 
-/// 处理不经 [`xr_exec`] 直接运行并等待的命令结果：非 0 退出或无法执行时计数，
+/// 处理不经 [`run_xr`] 直接运行并等待的命令结果：非 0 退出或无法执行时计数，
 /// 无法执行时（调试开关打开）写调试日志。调用方继续执行。
 pub(crate) fn note_status(env: &Env, what: &str, res: std::io::Result<ExitStatus>) {
     match res {
