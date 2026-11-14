@@ -1,3 +1,7 @@
+//! 累计流量：在 `xr0` 的 INPUT/OUTPUT 上挂 `XR_ACCT*` 计数链，区分出网与局域网流量，并把计数折算进持久化的基线与快照文件。
+//!
+//! 基线（`traffic.base`）记录规则重建前已累计的量，快照（`traffic.snap`）在计数规则不在位时提供最后读数。
+
 use std::collections::BTreeSet;
 use std::fs;
 
@@ -10,6 +14,7 @@ use crate::net::common::{
 use crate::sys::fsx;
 use crate::sys::{LockWait, PathLock};
 
+/// 获取累计流量的进程间锁 `run/acct.lock`（最多等待约 3 秒）。
 fn acct_lock(ctx: &NetCtx<'_>) -> PathLock {
     PathLock::acquire(
         ctx.env,
@@ -35,6 +40,7 @@ fn active_routes(ctx: &NetCtx<'_>, want_v6: bool) -> Vec<String> {
         .collect()
 }
 
+/// 视为局域网的 `IPv4` 目的网段：私有、CGNAT、链路本地、回环、组播、广播，加上已安装的 `VPN` 路由。
 pub fn acct_lan4(ctx: &NetCtx<'_>) -> Vec<String> {
     let mut set: BTreeSet<String> = [
         "10.0.0.0/8",
@@ -55,6 +61,7 @@ pub fn acct_lan4(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 视为局域网的 `IPv6` 网段：ULA、链路本地、组播、回环，加上已安装的 `IPv6` `VPN` 路由。
 pub fn acct_lan6(ctx: &NetCtx<'_>) -> Vec<String> {
     let mut set: BTreeSet<String> = ["fc00::/7", "fe80::/10", "ff00::/8", "::1/128"]
         .into_iter()
@@ -64,6 +71,7 @@ pub fn acct_lan6(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 读取一条计数链的字节数：最后一条规则（兜底 `RETURN`）是出网，前面各条之和是局域网，返回 `(局域网, 出网)`。
 fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
     let out = if use_v6 {
         ctx.ip6t(&["-nvxL", chain])
@@ -88,16 +96,19 @@ fn acct_chain_bytes(ctx: &NetCtx<'_>, use_v6: bool, chain: &str) -> (u64, u64) {
     (lan, wan)
 }
 
+/// `IPv4` 计数链 `XR_ACCT_UP` 存在时返回 true。
 #[must_use]
 pub(crate) fn acct_present(ctx: &NetCtx<'_>) -> bool {
     ctx.ipt(&["-S", "XR_ACCT_UP"]).success()
 }
 
+/// `IPv6` 计数链 `XR_ACCT6_UP` 存在时返回 true。
 #[must_use]
 pub(crate) fn acct_present6(ctx: &NetCtx<'_>) -> bool {
     ctx.ip6t(&["-S", "XR_ACCT6_UP"]).success()
 }
 
+/// 计数链当前读数（`IPv4` 与 `IPv6` 相加），顺序为 `[出网上行, 出网下行, 局域网上行, 局域网下行]`。
 #[must_use]
 pub(crate) fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
     let (up_lan, up_inet) = acct_chain_bytes(ctx, false, "XR_ACCT_UP");
@@ -117,6 +128,7 @@ pub(crate) fn acct_live(ctx: &NetCtx<'_>) -> [u64; 4] {
     ]
 }
 
+/// 累计总量：计数规则在位时为基线加当前读数，否则取基线与快照中的较大值。
 #[must_use]
 pub(crate) fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
     let base = read_quad(&ctx.env.acct_base_file());
@@ -127,12 +139,14 @@ pub(crate) fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
     }
 }
 
+/// 把当前读数折算进基线（并同步写快照），用于规则重建或拆除之前。
 fn acct_fold(ctx: &NetCtx<'_>) {
     let total = combine_quad_add(read_quad(&ctx.env.acct_base_file()), acct_live(ctx));
     write_quad(ctx.env, &ctx.env.acct_base_file(), total);
     write_quad(ctx.env, &ctx.env.acct_snap_file(), total);
 }
 
+/// 按局域网网段列表重建计数链 `<prefix>_UP`/`<prefix>_DN` 的规则：每个局域网网段一条 `RETURN`，最后一条兜底 `RETURN`。
 fn acct_rules(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str, lan_list: &[String]) {
     let up = format!("{prefix}_UP");
     let dn = format!("{prefix}_DN");
@@ -157,6 +171,7 @@ fn acct_rules(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str, lan_list: &[String])
     }
 }
 
+/// 新建计数链 `<prefix>_UP`/`<prefix>_DN`；链已存在时返回 false。
 fn acct_new(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) -> bool {
     let up = format!("{prefix}_UP");
     let dn = format!("{prefix}_DN");
@@ -184,6 +199,7 @@ fn acct_new(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) -> bool {
     true
 }
 
+/// 确保 `INPUT -i xr0`、`OUTPUT -o xr0` 的第一条跳到计数链 `prefix`。
 fn acct_hooks_one(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     if use_v6 {
         if !ctx
@@ -214,6 +230,7 @@ fn acct_hooks_one(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     }
 }
 
+/// 为在位的 `IPv4`、`IPv6` 计数链补齐 INPUT/OUTPUT 跳转。
 pub(crate) fn acct_hooks(ctx: &NetCtx<'_>) {
     if acct_present(ctx) {
         acct_hooks_one(ctx, false, "XR_ACCT");
@@ -223,6 +240,7 @@ pub(crate) fn acct_hooks(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 建立或刷新计数规则：首次建链时合并基线与快照并记录起始时间；局域网网段变化时先折算再重建规则，最后补齐跳转。
 pub(crate) fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
     let l4 = acct_lan4(ctx);
     let l6 = if with_v6 { acct_lan6(ctx) } else { Vec::new() };
@@ -257,6 +275,7 @@ pub(crate) fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
     acct_hooks(ctx);
 }
 
+/// 删除计数链 `prefix` 的 INPUT/OUTPUT 跳转并清空、删除两条计数链。
 fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     let up = format!("{prefix}_UP");
     let dn = format!("{prefix}_DN");
@@ -293,6 +312,7 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
     }
 }
 
+/// 拆除计数规则：先把当前读数折算进基线，再删除 `IPv4`、`IPv6` 计数链与 `run/acct.sig`。
 pub(crate) fn acct_teardown(ctx: &NetCtx<'_>) {
     let _lock = acct_lock(ctx);
     if acct_present(ctx) {
@@ -303,6 +323,7 @@ pub(crate) fn acct_teardown(ctx: &NetCtx<'_>) {
     fsx::remove_logged(ctx.env, ctx.env.run_dir().join("acct.sig"));
 }
 
+/// 计数规则在位且总量变化时更新快照文件。
 pub(crate) fn acct_snapshot(ctx: &NetCtx<'_>) {
     if !acct_present(ctx) {
         return;
@@ -315,6 +336,7 @@ pub(crate) fn acct_snapshot(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 累计流量清零：计数器归零，基线与快照写 0，起始时间改为现在。
 pub(crate) fn acct_reset(ctx: &NetCtx<'_>) {
     let _lock = acct_lock(ctx);
     if acct_present(ctx) {
@@ -334,6 +356,7 @@ pub(crate) fn acct_reset(ctx: &NetCtx<'_>) {
     );
 }
 
+/// 累计流量汇总（出网、局域网、合计、起始时间与规则在位状态）。
 #[must_use]
 pub(crate) fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     let [wu, wd, lu, ld] = acct_total(ctx);
@@ -354,6 +377,7 @@ pub(crate) fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {
     }
 }
 
+/// 累计流量汇总的 JSON 文本（`xr traffic-json`）；序列化失败时返回 `{}`。
 #[must_use]
 pub(crate) fn acct_json(ctx: &NetCtx<'_>) -> String {
     serde_json::to_string(&acct_summary(ctx)).unwrap_or_else(|_| "{}".to_owned())
