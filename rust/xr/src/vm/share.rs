@@ -1,15 +1,24 @@
+//! 内部存储共享：按 `VM_SHARE*` 配置生成 `crosvm --shared-dir` 参数，只读模式下用挂载命名空间包装 `crosvm`。
+
 use crate::config::{Config, valid_kv};
 use crate::env::Env;
 use crate::log;
 use crate::sys::{ce_ready, fsx};
 
+/// 一次启动的共享目录设置。
 #[derive(Debug, Clone)]
 pub(crate) struct Spec {
+    /// 实际生效的模式：`off`、`ro` 或 `rw`。
     pub(crate) mode: String,
+    /// 传给 `--shared-dir` 的参数，不共享时为空串。
     pub(crate) shared_dir: String,
+    /// 放在 `crosvm` 命令前面的包装命令（只读模式下为 `busybox unshare -m sh share-ro.sh`），不需要时为空。
     pub(crate) wrap: Vec<String>,
 }
 
+/// 按配置准备共享目录：未开启、手机未解锁、路径不合法或读写模式不受支持时不共享（后几种记 ERROR）。
+///
+/// 只读模式会生成 `run/share-ro.sh`，在私有挂载命名空间里把目录重新挂为只读后再执行 `crosvm`。
 #[must_use]
 pub(crate) fn prepare(env: &Env, cfg: &Config) -> Spec {
     let mut res = Spec {

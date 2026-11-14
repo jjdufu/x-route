@@ -1,3 +1,5 @@
+//! 虚拟机生命周期：`crosvm` 的启动与停止、就绪与稳定判定（启动保险丝）、`VPN` 配置下发与 `vm status` 状态。
+
 pub(crate) mod disk;
 pub(crate) mod share;
 
@@ -26,6 +28,7 @@ use crate::sys::send_signal_logged;
 use crate::sys::spawn;
 use crate::sys::{ce_ready, is_pid_running, proc_cmdline, wakelock_off, wakelock_on};
 
+/// `crosvm` 在运行时返回 true：`run/crosvm.pid` 的进程存在，且命令行（能读到时）含有 `crosvm`。
 #[must_use]
 pub(crate) fn running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
@@ -36,6 +39,7 @@ pub(crate) fn running(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
+/// 启动失败：记 ERROR、把给界面看的原因写入 `run/last_error`，5 秒后在后台删除开机日志。
 pub(crate) fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
     log::err(env, "vm", log_msg);
     fsx::write_logged(env, env.run_dir().join("last_error"), format!("{ui_msg}\n"));
@@ -48,6 +52,7 @@ pub(crate) fn fail(env: &Env, log_msg: &str, ui_msg: &str) {
     }));
 }
 
+/// 在开机日志里记一行就绪等待进度（已等待秒数与串口输出量）。
 pub(crate) fn boot_progress(env: &Env, secs: u64) {
     let sz = fs::metadata(env.console_log()).map_or(0, |meta| meta.len());
     let kb = sz.checked_div(1024_u64).unwrap_or(0_u64);
@@ -68,6 +73,7 @@ pub(crate) fn reap_in_background(mut child: std::process::Child) {
     }));
 }
 
+/// 装上启动保险丝：写入"当前时间 配置指纹"并落盘，然后等 1 秒。
 pub(crate) fn fuse_arm(env: &Env) {
     let line = format!("{} {}\n", unix_now(), config::hash(env));
     fsx::write_logged(env, env.fuse_file(), line);
@@ -79,6 +85,7 @@ pub(crate) fn fuse_arm(env: &Env) {
     thread::sleep(Duration::from_secs(1));
 }
 
+/// 客机已报告就绪（`vm-ctl.log` 有以 `XR_READY` 开头的行，或串口日志含 `XR_READY`）时返回 true。
 #[must_use]
 pub(crate) fn ready_seen(env: &Env) -> bool {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
@@ -95,6 +102,7 @@ pub(crate) fn ready_seen(env: &Env) -> bool {
     false
 }
 
+/// 客机报告就绪所用的通道：`hvc`（控制通道）、`ttyS0`（串口）或 `null`（尚未就绪）。
 #[must_use]
 pub(crate) fn ready_channel(env: &Env) -> &'static str {
     if let Ok(ctl) = fs::read_to_string(env.ctl_log())
@@ -111,6 +119,7 @@ pub(crate) fn ready_channel(env: &Env) -> &'static str {
     "null"
 }
 
+/// 执行模块的 `scripts/net.sh <op>`（存在时）并返回其退出码；脚本不存在时调用内置的 `xr net <op>`。
 #[must_use]
 pub(crate) fn run_net_hook(env: &Env, op: &str) -> i32 {
     let net_sh = env.moddir.join("scripts/net.sh");
@@ -126,6 +135,7 @@ pub(crate) fn run_net_hook(env: &Env, op: &str) -> i32 {
     run_net_cli(env, &[op.to_owned()])
 }
 
+/// 系统单调运行时长（秒，取 `uptime` 整数部分）；测试可用 `proc_base/uptime` 覆盖。
 #[must_use]
 pub(crate) fn mono_now(env: &Env) -> Option<u64> {
     let custom = env.proc_base.join("uptime");
@@ -139,6 +149,9 @@ pub(crate) fn mono_now(env: &Env) -> Option<u64> {
         .and_then(|text| text.trim().parse::<u64>().ok())
 }
 
+/// 启动保险丝看守：在就绪超时内等客机就绪，再在稳定期内持续确认 `crosvm` 存活；成功后拆除保险丝并写 `last_good`。
+///
+/// 期间 `crosvm` 退出或超时未就绪时调用 [`fail`] 记录原因。
 pub(crate) fn fuse_watch(env: &Env) {
     let cfg = Config::load(env);
     let ready_to = cfg.ready_timeout_sec();
@@ -214,6 +227,9 @@ pub(crate) fn fuse_watch(env: &Env) {
     fsx::remove_logged(env, env.boot_log());
 }
 
+/// 把 `config/vpn/*.ovpn` 及其启用标记同步到给客机的 `guest/host/vpn/`，并删除已不存在的配置。
+///
+/// 返回 `Some(是否有启用的配置)`；没有 `VPN` 配置目录时返回 `None`。
 #[must_use]
 pub(crate) fn vpn_sync_host(env: &Env) -> Option<bool> {
     let host_dir = env.run_dir().join("guest/host");
@@ -274,6 +290,7 @@ pub(crate) fn vpn_sync_host(env: &Env) -> Option<bool> {
     Some(any)
 }
 
+/// 开机前准备 `VPN`：清掉客机上次的应答文件，按配置下发 `openvpn.cmd`（`enable`/`disable`）；兼容旧版单文件 `config/openvpn.ovpn`。
 pub(crate) fn vpn_boot_prepare(env: &Env) {
     let guest = env.run_dir().join("guest/guest");
     let host = env.run_dir().join("guest/host");
@@ -319,6 +336,7 @@ pub(crate) fn vpn_boot_prepare(env: &Env) {
     }
 }
 
+/// `xr start` 的实际执行：检查熔断与镜像、准备共享目录与系统盘、启动 `crosvm`、拉起网络与保险丝看守；返回进程退出码。
 #[must_use]
 pub(crate) fn start_exec(env: &Env) -> i32 {
     let cfg = Config::load(env);
@@ -638,6 +656,9 @@ pub(crate) fn start_exec(env: &Env) -> i32 {
     0
 }
 
+/// `xr stop` 的实际执行：通知看守退出、先 `TERM` 后 `KILL` 停止 `crosvm`，拆除网络并清理运行状态；返回进程退出码。
+///
+/// `in_watch` 为 true 表示由保险丝看守自身调用，此时不再向看守发信号。
 #[must_use]
 pub(crate) fn stop_exec(env: &Env, in_watch: bool) -> i32 {
     let run = env.run_dir();
@@ -702,18 +723,28 @@ pub(crate) fn stop_exec(env: &Env, in_watch: bool) -> i32 {
     0
 }
 
+/// `xr internal vm status` 输出的虚拟机状态（序列化为 JSON，字段名即 JSON 键）。
 #[derive(Debug, Serialize)]
 pub(crate) struct StatusJson {
+    /// `crosvm` 是否在运行。
     pub(crate) running: bool,
+    /// `crosvm` 进程号，未运行时为 `null`。
     pub(crate) pid: Option<u64>,
+    /// 状态：`stopped`、`booting`、`ready`、`stable` 等（取自 `run/state`）。
     pub(crate) state: String,
+    /// 就绪后的运行秒数，未就绪时为 0。
     pub(crate) uptime_s: u64,
+    /// 熔断原因（`config/tripped` 的内容），未熔断时为 `null`。
     pub(crate) tripped: Option<String>,
+    /// 当前配置指纹与 `last_good` 一致时为 true。
     pub(crate) last_good_match: bool,
+    /// 就绪通道 `hvc` 或 `ttyS0`，未就绪时为 `null`。
     pub(crate) ready_channel: Option<String>,
+    /// 最近一次启动失败的原因（`run/last_error` 首行，去掉引号与反斜杠），没有时为空串。
     pub(crate) error: String,
 }
 
+/// 从运行状态文件汇总虚拟机状态。
 #[must_use]
 pub(crate) fn status(env: &Env) -> StatusJson {
     let run = env.run_dir();
@@ -788,6 +819,7 @@ pub(crate) fn status(env: &Env) -> StatusJson {
     }
 }
 
+/// 虚拟机状态的 JSON 文本；序列化失败时返回 `{"running":false,"state":"stopped"}`。
 #[must_use]
 pub(crate) fn status_json(env: &Env) -> String {
     serde_json::to_string(&status(env))

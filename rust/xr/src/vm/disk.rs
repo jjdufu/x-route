@@ -1,3 +1,5 @@
+//! 读写系统盘的扩容与重置。
+
 use std::fs::{self, File, OpenOptions};
 use std::io;
 
@@ -9,6 +11,9 @@ use crate::log;
 use crate::sys::fsx;
 use crate::vm;
 
+/// `xr expand <MB>`：虚拟机停止时把系统盘镜像扩大到新大小并记入 `VM_DISK_SIZE_MB`；文件系统在下次启动时由客机扩展。
+///
+/// 运行中、参数非法或不大于当前大小、写入失败时记 ERROR 并返回 1，成功返回 0。
 #[must_use]
 pub(crate) fn expand(env: &Env, new_mb_str: &str) -> i32 {
     if vm::running(env) {
@@ -50,6 +55,9 @@ pub(crate) fn expand(env: &Env, new_mb_str: &str) -> i32 {
     0
 }
 
+/// `xr reset-disk`：虚拟机停止时从 `openwrt-rootfs.img.gz` 重新解压系统盘并按 `VM_DISK_SIZE_MB` 扩到目标大小，删除 `last_good`。
+///
+/// 失败时删除临时文件、记 ERROR 并返回 1，成功返回 0。
 #[must_use]
 pub(crate) fn reset(env: &Env) -> i32 {
     if vm::running(env) {
