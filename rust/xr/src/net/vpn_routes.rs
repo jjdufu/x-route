@@ -495,12 +495,16 @@ pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
     } else {
         format!("{}\n", want.join("\n"))
     };
-    fsx::write_logged(ctx.env, &active_path, body);
-    fsx::write_logged(
+    let wrote_active = fsx::write_if_changed_logged(ctx.env, &active_path, &body);
+    let cksum_path = ctx.env.run_dir().join("vpn.cksum");
+    let wrote_cksum = fsx::write_if_changed_logged(
         ctx.env,
-        ctx.env.run_dir().join("vpn.cksum"),
-        format!("{}\n", routes_file_cksum(ctx)),
+        &cksum_path,
+        &format!("{}\n", routes_file_cksum(ctx)),
     );
+    if wrote_active || wrote_cksum {
+        dlog(ctx.env, ctx.cfg, "vpn", "已更新 routes.active / vpn.cksum");
+    }
 }
 
 /// 补回 `run/routes.active` 中在 97 号表里找不到的路由（被外部删除时）。
