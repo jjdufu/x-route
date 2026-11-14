@@ -40,14 +40,36 @@ pub(crate) fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     res
 }
 
+/// 可共享给虚拟机的上游 `IPv6` 前缀。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct V6Uplink {
+    /// 前缀（如 `2001:db8:1::/64`）。
+    pub(crate) pfx: String,
+    /// 前缀所在接口。
+    pub(crate) up_if: String,
+    /// 各接口上已占用的全局地址。
+    pub(crate) busy: Vec<String>,
+}
+
+/// 地址 `addr`（`地址/长度`）所在的 48–64 位前缀：返回（规范写法 `前缀/长度`, 长度）；长度不在范围或无法解析时返回 `None`。
+fn prefix_of(addr: &str) -> Option<(String, u8)> {
+    let (bare, len_s) = addr.split_once('/')?;
+    let len = len_s.parse::<u8>().ok()?;
+    if !(48..=64).contains(&len) {
+        return None;
+    }
+    let fmt = ip6_expand(bare)
+        .and_then(|x| ip6_mask(&x, len))
+        .and_then(|net| ip6_format(&net))?;
+    Some((format!("{fmt}/{len}"), len))
+}
+
 /// 在上游出口与共享网络接口上寻找可共享给虚拟机的 `IPv6` 前缀（48–64 位，上游出口优先）。
 ///
-/// 返回 `(前缀, 前缀所在接口, 已占用地址列表)`；找不到时返回 `None`。
+/// 先在全部接口中取最短前缀并收集已占用地址，再按上游出口顺序取第一个可用前缀覆盖之；结果写入 `net.v6pfx`、`net.v6upif`。
+/// 找不到时返回 `None`。
 #[must_use]
-pub(crate) fn v6_discover(
-    ctx: &NetCtx<'_>,
-    outs6: &[String],
-) -> Option<(String, String, Vec<String>)> {
+pub(crate) fn v6_discover(ctx: &NetCtx<'_>, outs6: &[String]) -> Option<V6Uplink> {
     let run = ctx.env.run_dir();
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
     fsx::remove_logged(ctx.env, run.join("net.v6upif"));
@@ -59,54 +81,34 @@ pub(crate) fn v6_discover(
     let mut best = String::new();
     let mut best_len: u8 = 128;
     let mut best_if = String::new();
-
-    for iface in &ifaces {
-        if iface.is_empty() || iface == XR_IF {
-            continue;
-        }
+    for iface in ifaces
+        .iter()
+        .filter(|name| !name.is_empty() && *name != XR_IF)
+    {
         for addr in v6_iface_globals(ctx, iface) {
             busy.push(addr.clone());
-            let Some((bare, len_s)) = addr.split_once('/') else {
-                continue;
-            };
-            let Ok(len) = len_s.parse::<u8>() else {
-                continue;
-            };
-            if (48..=64).contains(&len)
+            if let Some((pfx, len)) = prefix_of(&addr)
                 && len < best_len
-                && let Some(net) = ip6_expand(bare).and_then(|x| ip6_mask(&x, len))
-                && let Some(fmt) = ip6_format(&net)
             {
-                best = format!("{fmt}/{len}");
+                best = pfx;
                 best_len = len;
                 best_if.clone_from(iface);
             }
         }
     }
 
-    'outer: for iface in outs6 {
-        if iface.is_empty() {
-            continue;
-        }
-        for addr in v6_iface_globals(ctx, iface) {
-            let Some((bare, len_s)) = addr.split_once('/') else {
-                continue;
-            };
-            let Ok(len) = len_s.parse::<u8>() else {
-                continue;
-            };
-            if !(48..=64).contains(&len) {
-                continue;
-            }
-            if let Some(fmt) = ip6_expand(bare)
-                .and_then(|x| ip6_mask(&x, len))
-                .and_then(|net| ip6_format(&net))
-            {
-                best = format!("{fmt}/{len}");
-                best_if.clone_from(iface);
-                break 'outer;
-            }
-        }
+    let preferred = outs6
+        .iter()
+        .filter(|name| !name.is_empty())
+        .find_map(|iface| {
+            v6_iface_globals(ctx, iface)
+                .iter()
+                .find_map(|addr| prefix_of(addr))
+                .map(|(pfx, _)| (pfx, iface.clone()))
+        });
+    if let Some((pfx, iface)) = preferred {
+        best = pfx;
+        best_if = iface;
     }
 
     if best.is_empty() {
@@ -114,7 +116,11 @@ pub(crate) fn v6_discover(
     }
     fsx::write_logged(ctx.env, run.join("net.v6pfx"), format!("{best}\n"));
     fsx::write_logged(ctx.env, run.join("net.v6upif"), format!("{best_if}\n"));
-    Some((best, best_if, busy))
+    Some(V6Uplink {
+        pfx: best,
+        up_if: best_if,
+        busy,
+    })
 }
 
 /// 关闭安卓的热点硬件卸载（`settings`、`ndc`、`setprop` 三处），避免卸载路径绕过邻居代理；失败只计数。
@@ -220,7 +226,7 @@ pub(crate) fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
 #[must_use]
 pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let run = ctx.env.run_dir();
-    let Some((pfx, up_if, busy)) = v6_discover(ctx, outs6) else {
+    let Some(V6Uplink { pfx, up_if, busy }) = v6_discover(ctx, outs6) else {
         if !run.join("net.v6nopfx").is_file() {
             log::info(
                 ctx.env,
@@ -255,7 +261,12 @@ pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     if run.join("net.v6proxy").is_file() {
         v6_proxy_remove(ctx, Some("上游前缀或地址变化，重新安装"));
     }
-    let Some((new_pfx, new_up_if, new_busy)) = v6_discover(ctx, outs6) else {
+    let Some(V6Uplink {
+        pfx: new_pfx,
+        up_if: new_up_if,
+        busy: new_busy,
+    }) = v6_discover(ctx, outs6)
+    else {
         return false;
     };
     let Some(new_wan) = v6_pick_addr(&new_pfx, &new_busy, ctx.cfg.vm_mac()) else {
