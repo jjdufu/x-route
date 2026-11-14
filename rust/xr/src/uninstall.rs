@@ -1,6 +1,5 @@
 use std::fs;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -11,17 +10,25 @@ use rustix::process::Signal;
 use crate::daemon::keepalive::cgroup_escape;
 use crate::daemon::vm_stop;
 use crate::env::Env;
+use crate::log::note_ok;
+use crate::log::note_rc;
 use crate::log::{log_info, unix_now};
 use crate::net::run_net_cli;
-use crate::sys::{getprop, send_signal};
+use crate::sys::exec::note_spawn;
+use crate::sys::exec::note_status;
+use crate::sys::fsx;
+use crate::sys::getprop;
+use crate::sys::send_signal_logged;
 
-fn sys_run(bin: &Path, args: &[&str]) {
-    let _ = Command::new(bin)
+/// 同步运行一条系统命令（丢弃输出）；无法执行时计数并写调试日志，退出码不影响卸载流程。
+fn sys_run(env: &Env, bin: &Path, args: &[&str]) {
+    let status = Command::new(bin)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    note_status(env, &bin.to_string_lossy(), status);
 }
 
 fn sys_ok(bin: &Path, args: &[&str]) -> bool {
@@ -69,7 +76,7 @@ fn kill_matching_procs(env: &Env, sig: Signal) {
             || cmd.trim() == "xrnotify"
             || cmd.contains("xrnotify ");
         if is_match {
-            let _ = send_signal(&name, sig);
+            send_signal_logged(env, &name, sig);
         }
     }
 }
@@ -92,6 +99,7 @@ fn cancel_notifications(env: &Env) {
     if getprop("sys.boot_completed") == "1" {
         for _ in 0..3 {
             sys_run(
+                env,
                 &env.app_process,
                 &[
                     &cp,
@@ -109,44 +117,42 @@ fn cancel_notifications(env: &Env) {
     } else {
         let tj = Path::new("/data/local/tmp/xrnotify-cancel.jar");
         if fs::copy(&jar_path, tj).is_ok() {
-            #[cfg(unix)]
-            {
-                let _ = fs::set_permissions(tj, fs::Permissions::from_mode(0o644));
-            }
+            fsx::chmod_logged(env, tj, 0o644);
             let ap = env.app_process.to_string_lossy().into_owned();
             let script = format!(
                 "until [ \"$(getprop sys.boot_completed)\" = 1 ]; do sleep 3; done; sleep 10; \"{ap}\" -Djava.class.path=\"{}\" /system/bin --nice-name=xrnotify-cancel com.xrouter.notify.Main cancel; rm -f \"{}\"",
                 tj.display(),
                 tj.display()
             );
-            let _ = Command::new("sh")
+            let child = Command::new("sh")
                 .args(["-c", &script])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
+            note_spawn(env, "xrnotify-cancel", child);
         }
     }
 }
 
 pub fn uninstall_standard(env: &Env) -> i32 {
     let run = env.run_dir();
-    let _ = vm_stop(env);
-    let _ = run_net_cli(env, &["down".to_string()]);
+    note_rc(env, "vm_stop", vm_stop(env));
+    note_rc(env, "run_net_cli", run_net_cli(env, &["down".to_owned()]));
 
     if let Ok(rd) = fs::read_dir(&run) {
         for ent in rd.flatten() {
             let p = ent.path();
             if p.extension().and_then(|s| s.to_str()) == Some("pid") {
                 if let Ok(pid) = fs::read_to_string(&p) {
-                    let _ = send_signal(pid.trim(), Signal::TERM);
+                    send_signal_logged(env, pid.trim(), Signal::TERM);
                 }
             }
         }
     }
     let sock = run.join("crosvm.sock");
     if sock.exists() {
-        sys_run(&env.crosvm, &["stop", &sock.to_string_lossy()]);
+        sys_run(env, &env.crosvm, &["stop", &sock.to_string_lossy()]);
     }
     kill_matching_procs(env, Signal::TERM);
     thread::sleep(Duration::from_secs(1));
@@ -155,7 +161,7 @@ pub fn uninstall_standard(env: &Env) -> i32 {
             let p = ent.path();
             if p.extension().and_then(|s| s.to_str()) == Some("pid") {
                 if let Ok(pid) = fs::read_to_string(&p) {
-                    let _ = send_signal(pid.trim(), Signal::KILL);
+                    send_signal_logged(env, pid.trim(), Signal::KILL);
                 }
             }
         }
@@ -168,52 +174,52 @@ pub fn uninstall_standard(env: &Env) -> i32 {
     let ndc = env.sysbin_cmd("ndc");
 
     while sys_ok(&ipt, &["-w", "-D", "FORWARD", "-j", "XR_FWD"]) {}
-    sys_run(&ipt, &["-w", "-F", "XR_FWD"]);
-    sys_run(&ipt, &["-w", "-X", "XR_FWD"]);
+    sys_run(env, &ipt, &["-w", "-F", "XR_FWD"]);
+    sys_run(env, &ipt, &["-w", "-X", "XR_FWD"]);
     while sys_ok(
         &ipt,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT"],
     ) {}
-    sys_run(&ipt, &["-w", "-t", "nat", "-F", "XR_NAT"]);
-    sys_run(&ipt, &["-w", "-t", "nat", "-X", "XR_NAT"]);
+    sys_run(env, &ipt, &["-w", "-t", "nat", "-F", "XR_NAT"]);
+    sys_run(env, &ipt, &["-w", "-t", "nat", "-X", "XR_NAT"]);
 
     while sys_ok(&ip6t, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
-    sys_run(&ip6t, &["-w", "-F", "XR_FWD6"]);
-    sys_run(&ip6t, &["-w", "-X", "XR_FWD6"]);
+    sys_run(env, &ip6t, &["-w", "-F", "XR_FWD6"]);
+    sys_run(env, &ip6t, &["-w", "-X", "XR_FWD6"]);
     while sys_ok(
         &ip6t,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"],
     ) {}
-    sys_run(&ip6t, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
-    sys_run(&ip6t, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
+    sys_run(env, &ip6t, &["-w", "-t", "nat", "-F", "XR_NAT6"]);
+    sys_run(env, &ip6t, &["-w", "-t", "nat", "-X", "XR_NAT6"]);
 
     for bin in [&ipt, &ip6t] {
         for c in ["XR_ACCT", "XR_ACCT6"] {
             while sys_ok(bin, &["-w", "-D", "INPUT", "-i", "xr0", "-j", c]) {}
             while sys_ok(bin, &["-w", "-D", "OUTPUT", "-o", "xr0", "-j", c]) {}
             for s in [c, &format!("{c}_UP"), &format!("{c}_DN")] {
-                sys_run(bin, &["-w", "-F", s]);
+                sys_run(env, bin, &["-w", "-F", s]);
             }
             for s in [c, &format!("{c}_UP"), &format!("{c}_DN")] {
-                sys_run(bin, &["-w", "-X", s]);
+                sys_run(env, bin, &["-w", "-X", s]);
             }
         }
     }
 
     while sys_ok(&ipt, &["-w", "-D", "OUTPUT", "-j", "XR_HS"]) {}
-    sys_run(&ipt, &["-w", "-F", "XR_HS"]);
-    sys_run(&ipt, &["-w", "-X", "XR_HS"]);
+    sys_run(env, &ipt, &["-w", "-F", "XR_HS"]);
+    sys_run(env, &ipt, &["-w", "-X", "XR_HS"]);
     while sys_ok(&ip6t, &["-w", "-D", "OUTPUT", "-j", "XR_HS6"]) {}
-    sys_run(&ip6t, &["-w", "-F", "XR_HS6"]);
-    sys_run(&ip6t, &["-w", "-X", "XR_HS6"]);
+    sys_run(env, &ip6t, &["-w", "-F", "XR_HS6"]);
+    sys_run(env, &ip6t, &["-w", "-X", "XR_HS6"]);
 
     for bin in [&ipt, &ip6t] {
         while sys_ok(
             bin,
             &["-w", "-t", "mangle", "-D", "POSTROUTING", "-j", "XR_MSS"],
         ) {}
-        sys_run(bin, &["-w", "-t", "mangle", "-F", "XR_MSS"]);
-        sys_run(bin, &["-w", "-t", "mangle", "-X", "XR_MSS"]);
+        sys_run(env, bin, &["-w", "-t", "mangle", "-F", "XR_MSS"]);
+        sys_run(env, bin, &["-w", "-t", "mangle", "-X", "XR_MSS"]);
     }
 
     let br_dir = env.sysnet.join("xrbr1");
@@ -221,14 +227,14 @@ pub fn uninstall_standard(env: &Env) -> i32 {
         if let Ok(rd) = fs::read_dir(br_dir.join("brif")) {
             for ent in rd.flatten() {
                 let port = ent.file_name().to_string_lossy().into_owned();
-                sys_run(&ip, &["link", "set", &port, "nomaster"]);
+                sys_run(env, &ip, &["link", "set", &port, "nomaster"]);
             }
         }
-        sys_run(&ip, &["link", "del", "xrbr1"]);
+        sys_run(env, &ip, &["link", "del", "xrbr1"]);
     }
-    sys_run(&ip, &["link", "del", "xr1"]);
-    sys_run(&ndc, &["ipfwd", "disable", "xrouter"]);
-    sys_run(&ndc, &["ipfwd", "disable", "xroute"]);
+    sys_run(env, &ip, &["link", "del", "xr1"]);
+    sys_run(env, &ndc, &["ipfwd", "disable", "xrouter"]);
+    sys_run(env, &ndc, &["ipfwd", "disable", "xroute"]);
 
     for pref in [
         "4790", "4800", "4801", "18800", "18900", "19050", "19060", "19100",
@@ -236,21 +242,25 @@ pub fn uninstall_standard(env: &Env) -> i32 {
         while sys_ok(&ip, &["rule", "del", "pref", pref]) {}
         while sys_ok(&ip, &["-6", "rule", "del", "pref", pref]) {}
     }
-    sys_run(&ip, &["route", "flush", "table", "97", "dev", "xr0"]);
-    sys_run(&ip, &["route", "flush", "table", "233"]);
-    sys_run(&ip, &["route", "flush", "table", "234"]);
-    sys_run(&ip, &["-6", "route", "flush", "table", "97", "dev", "xr0"]);
-    sys_run(&ip, &["-6", "route", "flush", "table", "233"]);
-    sys_run(&ip, &["-6", "route", "flush", "table", "234"]);
-    sys_run(&ip, &["-6", "route", "flush", "table", "235"]);
-    sys_run(&ip, &["link", "del", "xr0"]);
+    sys_run(env, &ip, &["route", "flush", "table", "97", "dev", "xr0"]);
+    sys_run(env, &ip, &["route", "flush", "table", "233"]);
+    sys_run(env, &ip, &["route", "flush", "table", "234"]);
+    sys_run(
+        env,
+        &ip,
+        &["-6", "route", "flush", "table", "97", "dev", "xr0"],
+    );
+    sys_run(env, &ip, &["-6", "route", "flush", "table", "233"]);
+    sys_run(env, &ip, &["-6", "route", "flush", "table", "234"]);
+    sys_run(env, &ip, &["-6", "route", "flush", "table", "235"]);
+    sys_run(env, &ip, &["link", "del", "xr0"]);
 
     cancel_notifications(env);
-    let _ = fs::write("/sys/power/wake_unlock", "xrouter\n");
-    let _ = fs::write("/sys/power/wake_unlock", "x-route\n");
+    fsx::write_logged(env, "/sys/power/wake_unlock", "xrouter\n");
+    fsx::write_logged(env, "/sys/power/wake_unlock", "x-route\n");
 
-    let _ = fs::remove_dir_all(&env.xr_data);
-    let _ = fs::remove_dir_all("/data/adb/x-route");
+    fsx::remove_tree_logged(env, &env.xr_data);
+    fsx::remove_tree_logged(env, "/data/adb/x-route");
     rustix::fs::sync();
     0
 }
@@ -272,7 +282,7 @@ fn pick_stage_base(env: &Env) -> PathBuf {
         return sys_tmp;
     }
     let dev = Path::new("/dev").join(&name);
-    let _ = fs::create_dir_all(&dev);
+    fsx::mkdirs_logged(env, &dev);
     dev
 }
 
@@ -307,26 +317,20 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
 
     let stage = pick_stage_base(env);
     let stage_bin = stage.join("bin");
-    let _ = fs::create_dir_all(&stage_bin);
+    fsx::mkdirs_logged(env, &stage_bin);
 
     let staged_xr = stage_bin.join("xr");
     let self_exe = env.self_exe();
     if fs::copy(&self_exe, &staged_xr).is_ok() {
-        #[cfg(unix)]
-        {
-            let _ = fs::set_permissions(&staged_xr, fs::Permissions::from_mode(0o755));
-        }
+        fsx::chmod_logged(env, &staged_xr, 0o755);
     }
     let jar = env.moddir.join("bin/xrnotify.jar");
     if jar.is_file() {
-        let _ = fs::copy(&jar, stage_bin.join("xrnotify.jar"));
+        fsx::copy_logged(env, &jar, stage_bin.join("xrnotify.jar"));
     }
     let staged_sh = stage.join("uninstall.sh");
-    let _ = fs::copy(&uninst_sh, &staged_sh);
-    #[cfg(unix)]
-    {
-        let _ = fs::set_permissions(&staged_sh, fs::Permissions::from_mode(0o755));
-    }
+    fsx::copy_logged(env, &uninst_sh, &staged_sh);
+    fsx::chmod_logged(env, &staged_sh, 0o755);
 
     let upd_dir = env.modules_update.join(&id);
     let worker_bin = if staged_xr.is_file() {
@@ -361,10 +365,10 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
         }
     }
 
-    let _ = fs::remove_dir_all(&env.moddir);
-    let _ = fs::remove_dir_all(&upd_dir);
+    fsx::remove_tree_logged(env, &env.moddir);
+    fsx::remove_tree_logged(env, &upd_dir);
     if env.moddir.exists() {
-        let _ = fs::write(env.moddir.join("remove"), "");
+        fsx::write_logged(env, env.moddir.join("remove"), "");
     }
     rustix::fs::sync();
 
@@ -373,17 +377,23 @@ pub fn uninstall_now(env: &Env, confirm_arg: &str) -> (i32, String) {
 
 pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -> i32 {
     crate::sys::spawn::enter_detached_session(env);
-    let _ = std::env::set_current_dir("/");
-    let _ = cgroup_escape(env, &std::process::id().to_string());
+    if let Err(err) = std::env::set_current_dir("/") {
+        fsx::record_failure(env, "chdir", Path::new("/"), &err);
+    }
+    note_ok(
+        env,
+        "cgroup_escape",
+        cgroup_escape(env, &std::process::id().to_string()),
+    );
 
     let stage = Path::new(stage_s);
-    let _ = fs::write(stage.join("worker.ready"), "1\n");
+    fsx::write_logged(env, stage.join("worker.ready"), "1\n");
 
     thread::sleep(Duration::from_millis(200));
 
     let staged_sh = stage.join("uninstall.sh");
     if staged_sh.is_file() {
-        let _ = Command::new("sh")
+        let status = Command::new("sh")
             .arg(&staged_sh)
             .current_dir("/")
             .env("MODDIR", stage)
@@ -393,14 +403,15 @@ pub fn uninstall_worker(env: &Env, stage_s: &str, moddir_s: &str, upd_s: &str) -
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        note_status(env, "uninstall.sh", status);
     } else {
-        let _ = uninstall_standard(env);
+        note_rc(env, "uninstall_standard", uninstall_standard(env));
     }
 
-    let _ = fs::remove_dir_all(moddir_s);
-    let _ = fs::remove_dir_all(upd_s);
-    let _ = fs::remove_dir_all(&env.xr_data);
-    let _ = fs::remove_dir_all(stage);
+    fsx::remove_tree_logged(env, moddir_s);
+    fsx::remove_tree_logged(env, upd_s);
+    fsx::remove_tree_logged(env, &env.xr_data);
+    fsx::remove_tree_logged(env, stage);
     rustix::fs::sync();
     0
 }
