@@ -13,12 +13,12 @@ use crate::sys::exec::note_status;
 use crate::sys::fsx;
 
 #[must_use]
-pub fn vm_v6(env: &Env) -> bool {
+pub(crate) fn vm_v6(env: &Env) -> bool {
     fs::read_to_string(env.run_dir().join("guest/guest/ipv6")).is_ok_and(|text| text.trim() == "1")
 }
 
 #[must_use]
-pub fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
+pub(crate) fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     if iface.is_empty() {
         return Vec::new();
     }
@@ -37,7 +37,10 @@ pub fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
 }
 
 #[must_use]
-pub fn v6_discover(ctx: &NetCtx<'_>, outs6: &[String]) -> Option<(String, String, Vec<String>)> {
+pub(crate) fn v6_discover(
+    ctx: &NetCtx<'_>,
+    outs6: &[String],
+) -> Option<(String, String, Vec<String>)> {
     let run = ctx.env.run_dir();
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
     fsx::remove_logged(ctx.env, run.join("net.v6upif"));
@@ -107,7 +110,7 @@ pub fn v6_discover(ctx: &NetCtx<'_>, outs6: &[String]) -> Option<(String, String
     Some((best, best_if, busy))
 }
 
-pub fn v6_tether_offload_off(ctx: &NetCtx<'_>) {
+pub(crate) fn v6_tether_offload_off(ctx: &NetCtx<'_>) {
     for (prog, args) in [
         (
             "settings",
@@ -134,7 +137,7 @@ fn v6_sysw_save(ctx: &NetCtx<'_>, path: &Path, val: &str, orig_path: &Path) {
     ctx.sysw_run(path, val);
 }
 
-pub fn v6_write_wan(env: &Env, wan: &str) {
+pub(crate) fn v6_write_wan(env: &Env, wan: &str) {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
     let content = if wan.is_empty() {
@@ -145,7 +148,7 @@ pub fn v6_write_wan(env: &Env, wan: &str) {
     fsx::write_logged(env, host_dir.join("ipv6.wan"), content);
 }
 
-pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
+pub(crate) fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     let run = ctx.env.run_dir();
     let addr = fs::read_to_string(run.join("net.v6vm"))
         .unwrap_or_default()
@@ -201,7 +204,7 @@ pub fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
 }
 
 #[must_use]
-pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
+pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let run = ctx.env.run_dir();
     let Some((pfx, up_if, busy)) = v6_discover(ctx, outs6) else {
         if !run.join("net.v6nopfx").is_file() {
@@ -294,7 +297,7 @@ pub fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
 }
 
 #[must_use]
-pub fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
+pub(crate) fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
     let mut ifaces = outs6.to_vec();
     ifaces.extend(tether_ifaces(ctx));
     let mut addrs = Vec::new();
@@ -306,7 +309,7 @@ pub fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
     addrs.join(" ")
 }
 
-pub fn v6_proxy_sync(ctx: &NetCtx<'_>, outs6: &[String]) {
+pub(crate) fn v6_proxy_sync(ctx: &NetCtx<'_>, outs6: &[String]) {
     let guest_v6 = fs::read_to_string(ctx.env.run_dir().join("guest/guest/ipv6"))
         .unwrap_or_else(|_| "未上报".to_owned());
     let outs6_s = if outs6.is_empty() {
@@ -356,7 +359,7 @@ fn nft_cmd(args: &[&str]) -> bool {
 }
 
 #[must_use]
-pub fn v6_nft_setup(env: &Env) -> bool {
+pub(crate) fn v6_nft_setup(env: &Env) -> bool {
     if !nft_cmd(&["list", "tables"]) {
         return false;
     }
@@ -375,7 +378,7 @@ pub fn v6_nft_setup(env: &Env) -> bool {
     true
 }
 
-pub fn v6_nft_teardown(env: &Env) {
+pub(crate) fn v6_nft_teardown(env: &Env) {
     let marker = env.run_dir().join("net.fwd6nft");
     if !marker.is_file() {
         return;
@@ -384,7 +387,7 @@ pub fn v6_nft_teardown(env: &Env) {
     fsx::remove_logged(env, marker);
 }
 
-pub fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[String]) {
+pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[String]) {
     let run = ctx.env.run_dir();
     if !run.join("net.fwd6nft").is_file() {
         return;

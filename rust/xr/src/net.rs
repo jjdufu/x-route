@@ -1,6 +1,6 @@
 pub mod common;
-pub mod hotspot;
-pub mod ipv6;
+pub(crate) mod hotspot;
+pub(crate) mod ipv6;
 pub mod vpn_routes;
 
 use std::collections::BTreeSet;
@@ -58,7 +58,7 @@ fn net_lock(env: &Env) -> PathLock {
 }
 
 #[must_use]
-pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
+pub(crate) fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     let out = ctx.ip(&["rule"]);
     for line in out.stdout.lines() {
         if let Some((_, rhs)) = line.split_once("fwmark 0x0/0xffff iif lo lookup ")
@@ -71,7 +71,7 @@ pub fn upstream_iface(ctx: &NetCtx<'_>) -> String {
 }
 
 #[must_use]
-pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
+pub(crate) fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
         return Vec::new();
     }
@@ -94,7 +94,7 @@ pub fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
 }
 
 #[must_use]
-pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
+pub(crate) fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
         return Vec::new();
     }
@@ -120,7 +120,7 @@ pub fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
 }
 
 #[must_use]
-pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
+pub(crate) fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     let mut set = BTreeSet::new();
     match ctx.cfg.expose() {
         "lan" => {
@@ -142,7 +142,7 @@ pub fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
 }
 
 #[must_use]
-pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
+pub(crate) fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     let mut min_mtu: u32 = 1500;
     for out_if in outs {
         if let Ok(raw) = fs::read_to_string(ctx.env.sysnet.join(out_if).join("mtu"))
@@ -177,7 +177,7 @@ pub fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     min_mtu.max(1280)
 }
 
-pub fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
+pub(crate) fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
     let mut targets = vec![XR_IF.to_owned()];
     targets.extend_from_slice(outs);
     for use_v6 in [false, true] {
@@ -224,7 +224,7 @@ pub fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
     }
 }
 
-pub fn mss_clear(ctx: &NetCtx<'_>) {
+pub(crate) fn mss_clear(ctx: &NetCtx<'_>) {
     for use_v6 in [false, true] {
         let run_t = |args: &[&str]| {
             if use_v6 {
@@ -239,7 +239,7 @@ pub fn mss_clear(ctx: &NetCtx<'_>) {
     }
 }
 
-pub fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
+pub(crate) fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     let mt = upstream_mtu(ctx, up, outs);
     let mt_s = mt.to_string();
     let cur = fs::read_to_string(ctx.env.sysnet.join(XR_IF).join("mtu"))
@@ -269,7 +269,7 @@ pub fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     mss_rules(ctx, outs);
 }
 
-pub fn time_push(env: &Env) {
+pub(crate) fn time_push(env: &Env) {
     let host_dir = env.run_dir().join("guest/host");
     if !host_dir.is_dir() {
         return;
@@ -321,7 +321,7 @@ fn fwd6_first(ctx: &NetCtx<'_>) {
 }
 
 #[must_use]
-pub fn ip6_nat_ok(env: &Env) -> bool {
+pub(crate) fn ip6_nat_ok(env: &Env) -> bool {
     let cache = env.run_dir().join("net.ip6nat");
     if let Ok(raw) = fs::read_to_string(&cache) {
         let trimmed = raw.trim();
@@ -886,7 +886,7 @@ fn sync_all_unlocked(env: &Env) {
     }
 }
 
-pub fn sync(env: &Env) {
+pub(crate) fn sync(env: &Env) {
     if !env.sysnet.join(XR_IF).is_dir() {
         return;
     }
@@ -896,7 +896,7 @@ pub fn sync(env: &Env) {
 }
 
 #[must_use]
-pub fn up(env: &Env) -> i32 {
+pub(crate) fn up(env: &Env) -> i32 {
     if env.ensure_dirs().is_err() {
         return 1;
     }
@@ -1007,7 +1007,7 @@ pub fn up(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn watch(env: &Env) -> i32 {
+pub(crate) fn watch(env: &Env) -> i32 {
     while env.sysnet.join(XR_IF).is_dir() {
         thread::sleep(Duration::from_secs(10));
         if !env.sysnet.join(XR_IF).is_dir() {
@@ -1172,7 +1172,7 @@ pub fn watch(env: &Env) -> i32 {
 }
 
 #[must_use]
-pub fn down(env: &Env) -> i32 {
+pub(crate) fn down(env: &Env) -> i32 {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
     let run = env.run_dir();
@@ -1262,19 +1262,19 @@ pub fn down(env: &Env) -> i32 {
 }
 
 #[derive(Debug, Serialize)]
-pub struct StatusJson {
-    pub mode: String,
-    pub up_if: String,
-    pub expose: String,
-    pub expose_if: Vec<String>,
-    pub vm_ip: String,
-    pub host_ip: String,
-    pub gw: String,
-    pub hotspot: String,
-    pub hotspot_net: String,
+pub(crate) struct StatusJson {
+    pub(crate) mode: String,
+    pub(crate) up_if: String,
+    pub(crate) expose: String,
+    pub(crate) expose_if: Vec<String>,
+    pub(crate) vm_ip: String,
+    pub(crate) host_ip: String,
+    pub(crate) gw: String,
+    pub(crate) hotspot: String,
+    pub(crate) hotspot_net: String,
 }
 
-pub fn status(env: &Env) -> StatusJson {
+pub(crate) fn status(env: &Env) -> StatusJson {
     let cfg = Config::load(env);
     let run = env.run_dir();
     let mode = fs::read_to_string(run.join("net.mode"))
@@ -1323,7 +1323,7 @@ pub fn status_json(env: &Env) -> String {
     serde_json::to_string(&status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
 }
 
-pub fn run_net_cli(env: &Env, args: &[String]) -> i32 {
+pub(crate) fn run_net_cli(env: &Env, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("up") => up(env),
         Some("down") => down(env),

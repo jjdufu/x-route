@@ -6,14 +6,14 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::env::{Env, is_executable};
+use crate::env::Env;
 use crate::log;
 use crate::sys::fsx;
 
 #[derive(Debug, Clone)]
 pub struct NetCtx<'a> {
-    pub env: &'a Env,
-    pub cfg: &'a Config,
+    pub(crate) env: &'a Env,
+    pub(crate) cfg: &'a Config,
 }
 
 impl<'a> NetCtx<'a> {
@@ -23,12 +23,12 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ip(&self, args: &[&str]) -> crate::sys::exec::Output {
+    pub(crate) fn ip(&self, args: &[&str]) -> crate::sys::exec::Output {
         crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ip"), args, true)
     }
 
     #[must_use]
-    pub fn ip6(&self, args: &[&str]) -> crate::sys::exec::Output {
+    pub(crate) fn ip6(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-6");
         full.extend_from_slice(args);
@@ -36,19 +36,19 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ndc(&self, args: &[&str]) -> crate::sys::exec::Output {
+    pub(crate) fn ndc(&self, args: &[&str]) -> crate::sys::exec::Output {
         crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ndc"), args, true)
     }
 
     #[must_use]
-    pub fn ndc_ok(&self, args: &[&str]) -> bool {
+    pub(crate) fn ndc_ok(&self, args: &[&str]) -> bool {
         let res = self.ndc(args);
         res.stdout.lines().any(|row| row.starts_with("200 "))
             || res.stderr.lines().any(|line| line.starts_with("200 "))
     }
 
     #[must_use]
-    pub fn ipt(&self, args: &[&str]) -> crate::sys::exec::Output {
+    pub(crate) fn ipt(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
         full.extend_from_slice(args);
@@ -62,7 +62,7 @@ impl<'a> NetCtx<'a> {
     }
 
     #[must_use]
-    pub fn ip6t(&self, args: &[&str]) -> crate::sys::exec::Output {
+    pub(crate) fn ip6t(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
         full.push("-w");
         full.extend_from_slice(args);
@@ -76,32 +76,32 @@ impl<'a> NetCtx<'a> {
     }
 
     /// 与 [`Self::ip`] 相同，只关心成败：失败时计数，不返回结果。
-    pub fn ip_run(&self, args: &[&str]) {
+    pub(crate) fn ip_run(&self, args: &[&str]) {
         crate::sys::exec::note_exec_result(&self.ip(args));
     }
 
     /// 与 [`Self::ip6`] 相同，只关心成败：失败时计数，不返回结果。
-    pub fn ip6_run(&self, args: &[&str]) {
+    pub(crate) fn ip6_run(&self, args: &[&str]) {
         crate::sys::exec::note_exec_result(&self.ip6(args));
     }
 
     /// 与 [`Self::ipt`] 相同，只关心成败：失败时计数，不返回结果。
-    pub fn ipt_run(&self, args: &[&str]) {
+    pub(crate) fn ipt_run(&self, args: &[&str]) {
         crate::sys::exec::note_exec_result(&self.ipt(args));
     }
 
     /// 与 [`Self::ip6t`] 相同，只关心成败：失败时计数，不返回结果。
-    pub fn ip6t_run(&self, args: &[&str]) {
+    pub(crate) fn ip6t_run(&self, args: &[&str]) {
         crate::sys::exec::note_exec_result(&self.ip6t(args));
     }
 
     /// 与 [`Self::ndc`] 相同，只关心成败：失败时计数，不返回结果。
-    pub fn ndc_run(&self, args: &[&str]) {
+    pub(crate) fn ndc_run(&self, args: &[&str]) {
         crate::sys::exec::note_exec_result(&self.ndc(args));
     }
 
     #[must_use]
-    pub fn sysw(&self, path: &Path, val: &str) -> bool {
+    pub(crate) fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
         if is_mock && let Some(file_path) = path.parent() {
             fsx::mkdirs_logged(self.env, file_path);
@@ -130,14 +130,14 @@ impl<'a> NetCtx<'a> {
     }
 
     /// 与 [`Self::sysw`] 相同，只关心成败：写入失败时计数（调试日志已由 `sysw` 写过），不返回结果。
-    pub fn sysw_run(&self, path: &Path, val: &str) {
+    pub(crate) fn sysw_run(&self, path: &Path, val: &str) {
         if !self.sysw(path, val) {
             log::note_failure(&log::FAILURES.fs);
         }
     }
 
     #[must_use]
-    pub fn lnt(&self) -> &'static str {
+    pub(crate) fn lnt(&self) -> &'static str {
         let mode = fs::read_to_string(self.env.run_dir().join("net.mode")).unwrap_or_default();
         if mode.trim() == "ndc" {
             "local_network"
@@ -147,12 +147,7 @@ impl<'a> NetCtx<'a> {
     }
 }
 
-#[must_use]
-pub fn diag_snap_cmd_available(env: &Env) -> bool {
-    is_executable(&env.moddir.join("bin/xr")) || std::env::current_exe().is_ok()
-}
-
-pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
+pub(crate) fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
     if !cfg.debug_on() {
         return;
     }
@@ -169,19 +164,19 @@ pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Default)]
-pub struct TrafficCounters {
-    pub up: u64,
-    pub down: u64,
+pub(crate) struct TrafficCounters {
+    pub(crate) up: u64,
+    pub(crate) down: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-pub struct TrafficSummary {
-    pub wan: TrafficCounters,
-    pub lan: TrafficCounters,
-    pub total: TrafficCounters,
-    pub since: u64,
-    pub counting: bool,
-    pub ipv6: bool,
+pub(crate) struct TrafficSummary {
+    pub(crate) wan: TrafficCounters,
+    pub(crate) lan: TrafficCounters,
+    pub(crate) total: TrafficCounters,
+    pub(crate) since: u64,
+    pub(crate) counting: bool,
+    pub(crate) ipv6: bool,
 }
 
 #[must_use]
@@ -219,7 +214,7 @@ pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
 }
 
 #[must_use]
-pub const fn combine_quad_add(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
+pub(crate) const fn combine_quad_add(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     [
         lhs[0].saturating_add(rhs[0]),
         lhs[1].saturating_add(rhs[1]),
@@ -304,8 +299,4 @@ fn round_tenths(value: u128, div: u128) -> u128 {
     } else {
         quot
     }
-}
-
-pub fn log_net_mode_info(env: &Env, msg: &str) {
-    log::info(env, "net", msg);
 }

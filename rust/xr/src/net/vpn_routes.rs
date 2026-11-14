@@ -16,7 +16,7 @@ pub fn guest_routes_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
 }
 
 #[must_use]
-pub fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
+pub(crate) fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     let Ok(content) = fs::read_to_string(ctx.env.ctl_log()) else {
         return String::new();
     };
@@ -29,7 +29,7 @@ pub fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     last
 }
 
-pub fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
+pub(crate) fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
     let gf = guest_routes_file(ctx);
     let raw = if gf.is_file() {
         fs::read_to_string(&gf).unwrap_or_default()
@@ -51,12 +51,12 @@ pub fn is_default_route(route: &str) -> bool {
 }
 
 #[must_use]
-pub fn is_ip6_cidr(route: &str) -> bool {
+pub(crate) fn is_ip6_cidr(route: &str) -> bool {
     route.contains(':')
 }
 
 #[must_use]
-pub fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
+pub(crate) fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     let out = ctx.ip(&["route", "show", "table", "local_network"]);
     let mut set = BTreeSet::new();
     for line in out.stdout.lines() {
@@ -163,7 +163,7 @@ fn ipx_run(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) {
     crate::sys::exec::note_exec_result(&ipx(ctx, cidr, args));
 }
 
-pub fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
+pub(crate) fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
     let mode = fs::read_to_string(ctx.env.run_dir().join("net.mode")).unwrap_or_default();
     if mode.trim() == "ndc" {
@@ -186,7 +186,7 @@ pub fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
     );
 }
 
-pub fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
+pub(crate) fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
     ctx.ndc_run(&["network", "route", "remove", "local", XR_IF, cidr, &via]);
     ipx_run(ctx, cidr, &["route", "del", cidr, "table", "97"]);
@@ -194,7 +194,7 @@ pub fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
 }
 
 #[must_use]
-pub fn cksum_crc_like(bytes: &[u8]) -> String {
+pub(crate) fn cksum_crc_like(bytes: &[u8]) -> String {
     // Simple deterministic fingerprint matching cksum presence/absence semantics for net_watch
     let mut crc: u32 = 0;
     for &byte in bytes {
@@ -204,12 +204,12 @@ pub fn cksum_crc_like(bytes: &[u8]) -> String {
 }
 
 #[must_use]
-pub fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
+pub(crate) fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
     fs::read(guest_routes_file(ctx))
         .map_or_else(|_| "none".to_owned(), |bytes| cksum_crc_like(&bytes))
 }
 
-pub fn routes_sync(ctx: &NetCtx<'_>) {
+pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
     let want = routes_valid(ctx);
     let active_path = ctx.env.run_dir().join("routes.active");
     let have: Vec<String> = fs::read_to_string(&active_path)
@@ -255,7 +255,7 @@ pub fn routes_sync(ctx: &NetCtx<'_>) {
     );
 }
 
-pub fn routes_reassert(ctx: &NetCtx<'_>) {
+pub(crate) fn routes_reassert(ctx: &NetCtx<'_>) {
     let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) else {
         return;
     };
@@ -272,7 +272,7 @@ pub fn routes_reassert(ctx: &NetCtx<'_>) {
     }
 }
 
-pub fn routes_clear(ctx: &NetCtx<'_>) {
+pub(crate) fn routes_clear(ctx: &NetCtx<'_>) {
     let active_path = ctx.env.run_dir().join("routes.active");
     if let Ok(active) = fs::read_to_string(&active_path) {
         for route in active

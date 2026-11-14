@@ -19,7 +19,7 @@ const HS_PREF: &str = "19050";
 const HS_PREF4: &str = "4790";
 
 #[must_use]
-pub fn vm_alive(env: &Env) -> bool {
+pub(crate) fn vm_alive(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let trimmed = pid.trim();
     if !is_pid_running(env, trimmed) {
@@ -29,7 +29,7 @@ pub fn vm_alive(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn vm_is_ready(env: &Env) -> bool {
+pub(crate) fn vm_is_ready(env: &Env) -> bool {
     if !vm_alive(env) {
         return false;
     }
@@ -38,7 +38,7 @@ pub fn vm_is_ready(env: &Env) -> bool {
 }
 
 #[must_use]
-pub fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
+pub(crate) fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     if !ctx.ip(&["link", "show", HS_TAP]).success()
         && !ctx.ip(&["tuntap", "add", HS_TAP, "mode", "tap"]).success()
     {
@@ -56,13 +56,13 @@ pub fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     true
 }
 
-pub fn hs_tap_down(ctx: &NetCtx<'_>) {
+pub(crate) fn hs_tap_down(ctx: &NetCtx<'_>) {
     hs_unbridge(ctx);
     ctx.ip_run(&["link", "del", HS_TAP]);
 }
 
 #[must_use]
-pub fn hs_master(env: &Env, iface: &str) -> String {
+pub(crate) fn hs_master(env: &Env, iface: &str) -> String {
     fs::read_link(env.sysnet.join(iface).join("master"))
         .ok()
         .and_then(|path| path.file_name().map(|n| n.to_string_lossy().to_string()))
@@ -70,7 +70,7 @@ pub fn hs_master(env: &Env, iface: &str) -> String {
 }
 
 #[must_use]
-pub fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
+pub(crate) fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     let mut cands = Vec::new();
     if let Ok(prev) = fs::read_to_string(ctx.env.run_dir().join("net.hs_if")) {
         for tok in prev.split_whitespace() {
@@ -100,12 +100,12 @@ pub fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
 }
 
 #[must_use]
-pub fn hs_guest_ok(env: &Env) -> bool {
+pub(crate) fn hs_guest_ok(env: &Env) -> bool {
     env.run_dir().join("guest/guest/hotspot").is_file()
 }
 
 #[must_use]
-pub fn hs_want(ctx: &NetCtx<'_>) -> bool {
+pub(crate) fn hs_want(ctx: &NetCtx<'_>) -> bool {
     ctx.cfg.hotspot_bridge()
         && ctx.cfg.vm_net()
         && vm_is_ready(ctx.env)
@@ -113,7 +113,7 @@ pub fn hs_want(ctx: &NetCtx<'_>) -> bool {
 }
 
 #[must_use]
-pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
+pub(crate) fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
     let ts = unix_now();
@@ -135,7 +135,7 @@ pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     false
 }
 
-pub fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
+pub(crate) fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
     ctx.ipt_run(&["-N", "XR_HS"]);
     ctx.ipt_run(&["-F", "XR_HS"]);
     ctx.ipt_run(&[
@@ -175,7 +175,7 @@ pub fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
     ]);
 }
 
-pub fn hs_rules_clear(ctx: &NetCtx<'_>) {
+pub(crate) fn hs_rules_clear(ctx: &NetCtx<'_>) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
     ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
     while ctx.ipt(&["-D", "OUTPUT", "-j", "XR_HS"]).success() {}
@@ -189,7 +189,7 @@ pub fn hs_rules_clear(ctx: &NetCtx<'_>) {
 }
 
 #[must_use]
-pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
+pub(crate) fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
     let hf = ctx.cfg.hotspot_subnet();
     let clash_file = ctx.env.run_dir().join("net.hs_clash");
     if !hf.is_empty() {
@@ -212,7 +212,7 @@ pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
     android_cidr.to_owned()
 }
 
-pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
+pub(crate) fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
     ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
     if gw == android_cidr {
@@ -230,7 +230,7 @@ pub fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     ]);
 }
 
-pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
+pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", iface]);
     let cidr = out4
         .stdout
@@ -410,7 +410,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     true
 }
 
-pub fn hs_unbridge(ctx: &NetCtx<'_>) {
+pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
     let iface = fs::read_to_string(run.join("net.hs_if"))
         .unwrap_or_default()
@@ -494,7 +494,7 @@ pub fn hs_unbridge(ctx: &NetCtx<'_>) {
     trigger_diag_snap_bg(ctx.env, ctx.cfg, &format!("热点拆桥 {iface}"));
 }
 
-pub fn hs_sync(ctx: &NetCtx<'_>) {
+pub(crate) fn hs_sync(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
     let mut want = None;
     if hs_want(ctx) {
@@ -603,7 +603,7 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
     }
 }
 
-pub fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
+pub(crate) fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
     if !ctx.env.run_dir().join("net.hs_if").is_file() {
         return;
     }
