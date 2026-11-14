@@ -208,6 +208,7 @@ function fillSelect(sel, opts, value) {
     sel.replaceChildren(...opts.map((o) => {
       const it = document.createElement("md-select-option");
       it.value = o.value;
+      if (o.value === value) it.setAttribute("selected", "");   // 首次插入即带选中态，slotchange 时直接算出 displayText
       const h = document.createElement("div");
       h.slot = "headline";
       h.textContent = o.label;
@@ -216,9 +217,20 @@ function fillSelect(sel, opts, value) {
     }));
     sel.dataset.filled = "1";
   }
-  if (sel.value === value || sel.matches(":focus-within")) return;
-  sel.querySelectorAll("md-select-option").forEach((o) => { o.selected = o.value === value; });
-  sel.updateComplete.then(() => { if (sel.value !== value) sel.select(value); });
+  if (sel.matches(":focus-within")) return;                    // 用户正在操作，不打断
+  const want = opts.find((o) => o.value === value);
+  if (sel.value === value && (!want || sel.displayText === want.label)) return;   // 值和显示文本都正确才跳过
+  syncSelect(sel, value);
+}
+
+// 把选项的选中态和 md-select 的值/显示文本同步到 value；元素未升级时先等定义完成
+function syncSelect(sel, value) {
+  const run = () => {
+    sel.querySelectorAll("md-select-option").forEach((o) => { o.selected = o.value === value; });
+    sel.select(value);
+  };
+  if (sel.updateComplete) sel.updateComplete.then(run);
+  else customElements.whenDefined(sel.localName).then(() => sel.updateComplete).then(run);
 }
 
 // ---- 乐观更新：先改本地状态并立即重绘，xr set 在后台跑；失败再回滚并提示 ----
@@ -753,7 +765,7 @@ async function pickRestartKey(key, sel, label, fmt) {
   if (v === cur) return;
   const running = !!(status && status.vm && status.vm.running);
   const ok = await confirmDlg(`${label}改为 ${fmt(v)}`, running ? "需要重启服务后生效" : "下次启动时生效", "保存");
-  if (!ok) { sel.select(cur); return; }
+  if (!ok) { syncSelect(sel, cur); return; }
   setKey(key, v);
 }
 
@@ -765,7 +777,6 @@ async function expandDisk() {
   const sel = $("sel-expand");
   delete sel.dataset.filled;
   fillSelect(sel, sizes.map((n) => ({ value: String(n), label: fmtSize(n) })), String(sizes[0]));
-  sel.value = String(sizes[0]);
   if (!await dialogResult($("dlg-expand"))) return;
   diskBusy = true;
   $("btn-expand").disabled = true;

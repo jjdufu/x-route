@@ -192,6 +192,10 @@ if (!/const txt = \(el, v\) =>/.test(main) || /\$\("v-uptime"\)\.textContent =/.
 if (!/class="shell nostate/.test(html) || !/localStorage/.test(main) || !/\.nostate/.test(css)) fail("重新打开不应闪「已停止」");
 if (!/prefers-reduced-motion/.test(css) || !/prefersReduce/.test(main)) fail("应尊重减少动效");
 if (!/\.hid \.wave-active/.test(css) || !/classList\.toggle\("hid", document\.hidden\)/.test(main)) fail("不可见时应暂停波浪进度动画");
+{ const f = main.slice(main.indexOf("function fillSelect"), main.indexOf("// ---- 乐观更新"));
+  if (!/setAttribute\("selected", ""\)/.test(f)) fail("fillSelect 首次创建选项时应带 selected");
+  if (!/displayText/.test(f)) fail("fillSelect 应以 displayText 自检，避免空白下拉框");
+  if (/sel\.value = String\(sizes\[0\]\)/.test(main)) fail("expandDisk 不应直接写 md-select 的 value"); }
 
 const blk = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
 const bt = L.parseBootTail("R1\x1f120\x1f2026-11-11 09:00:00 [INFO] [vm] 已启动 pid=1\n\x1f30\x1f[    0.000000] Booting Linux\n[ 0.1] half");
