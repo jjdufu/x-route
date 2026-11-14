@@ -188,6 +188,10 @@ export function fmtBytes(n) {
   while (v >= 1024 && i < UNITS.length - 1) { v /= 1024; i++; }
   return i === 0 ? `${Math.floor(v)} B` : `${v.toFixed(1)} ${UNITS[i]}`;
 }
+// 实时速率（字节/秒）：与 fmtBytes 同口径（1024 进制、一位小数），0 显示 0 B/s
+export function fmtRate(bps) {
+  return `${fmtBytes(bps)}/s`;
+}
 // d = xr traffic 的 JSON；mode = total | wan | lan
 export function trafficLine(d, mode) {
   const t = d && d[mode === "wan" || mode === "lan" ? mode : "total"];

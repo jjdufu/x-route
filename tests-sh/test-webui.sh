@@ -75,7 +75,7 @@ if (css.includes("backdrop-filter") || /filter:\s*blur/.test(css)) fail("不得�
 
 // M3 主状态卡、精简话术、高密度只读指标磁贴与页面分区归属
 if (!html.includes('id="hero-card"') || !html.includes('class="wave-svg"') || !html.includes('id="boot-steps"')) fail("状态页应有 M3 主状态卡与波浪进度");
-for (const t of ["开机自启", "运行时长", "上游网络", "热点分流", "组网状态", "打开 LuCI", "导入配置", "路由网段", "运行模式", "管理访问", "IPv6",
+for (const t of ["开机自启", "运行时长", "上游网络", "实时上传", "实时下载", "OpenWrt 负载", "在线设备", "打开 LuCI", "导入配置", "路由网段", "运行模式", "管理访问", "IPv6",
   "异地组网", "常规与通知", "总流量", "公网", "内网", "手机", "热点",
   "存储共享", "目录", "资源", "CPU", "内存", "系统盘", "扩容", "重置", "选择此文件夹", "日志导出", "DHCP", "网关地址", "地址/掩码", "整机复位后自启已关闭",
   "关于", "项目地址", "https://github.com/jjdufu/x-route", "作者", "jjdufu", "卸载 XRouter", "立即卸载", "通知显示", "累计流量", "清零"]) {
@@ -108,6 +108,14 @@ if (!sysHtml.includes('id="btn-about"') || !sysHtml.includes('id="about-body" cl
 const aboutHtml = sysHtml.slice(sysHtml.indexOf('id="about-body"'));
 if (!aboutHtml.includes('id="row-clash-ui"') || !aboutHtml.includes('id="sw-clash-ui"') || !aboutHtml.includes("分流管理")) fail("分流管理开关应位于折叠的关于菜单内");
 if (main.includes("当前 ${net.hotspot_net}")) fail("网关地址不应带「当前」前缀");
+// 状态页一屏（需求 6a）：不显示分流 / IPv6 / 组网 / 热点卡片；预留速率、负载、设备数据位；不得滚动
+for (const bad of ['id="tile-hs"', 'id="tile-vpn"', 'id="v-home-vpn"', 'id="v-home-hs"', "OpenClash", "分流", "IPv6", "组网"]) {
+  if (homeHtml.replace(/<!--[\s\S]*?-->/g, "").includes(bad)) fail(`状态页不应包含 ${bad}`);   // 注释不显示，不计
+}
+for (const id of ["v-rate-up", "v-rate-down", "v-load", "v-dev"]) if (!homeHtml.includes(`id="${id}"`)) fail(`状态页缺少 ${id}`);
+if (/#page-home\s*\{[^}]*overflow(-y)?:\s*auto/.test(css) || !/#page-home\s*\{[^}]*overflow:\s*hidden/.test(css)) fail("状态页不得滚动");
+if (/IPv6/.test(main.slice(main.indexOf("// 状态页高密度双列指标"), main.indexOf("// 网络页")))) fail("状态页渲染不得出现 IPv6");
+if (/v-home-(vpn|routes|hs)/.test(main)) fail("状态页不再渲染组网与热点磁贴");
 
 // 页面切换：150-200ms 干脆横移淡入（WAAPI），无滚动吸附、无 smooth 滚动
 if (/scroll-snap|scroll-behavior:\s*smooth/.test(css)) fail("页面切换不得使用滚动吸附动画");
@@ -177,6 +185,7 @@ eq(L.toMediaPath("/sdcard/a"), "/storage/emulated/0/a", "sdcard");
 eq(L.crumbs("/data/media/0/A/B").map((c) => c.label), ["内部存储", "A", "B"], "面包屑");
 eq(L.crumbs("/storage/emulated/0/A").map((c) => c.path), ["/storage/emulated/0", "/storage/emulated/0/A"], "面包屑路径");
 eq(L.parseLs("d/A\nf/x.ovpn\nd/.hidden\njunk"), [{ dir: true, name: "A" }, { dir: false, name: "x.ovpn" }], "parseLs");
+eq([L.fmtRate(0), L.fmtRate(1023), L.fmtRate(1024), L.fmtRate(1_830_000)], ["0 B/s", "1023 B/s", "1.0 KB/s", "1.7 MB/s"], "fmtRate");
 eq(L.expandSizes(1024), [1536, 2048, 3072, 5120, 9216], "扩容选项"); eq(L.expandSizes(16384), [], "扩容上限");
 
 // 性能与交互不变量

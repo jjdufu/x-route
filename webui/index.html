@@ -101,25 +101,47 @@
               </div>
             </article>
 
-            <article class="metric-tile" id="tile-hs">
+            <article class="metric-tile" id="tile-rate-up">
               <div class="tile-top">
-                <span class="tile-ico"><md-icon data-icon="wifi_tethering"></md-icon></span>
-                <span class="tile-label">热点分流</span>
+                <span class="tile-ico"><md-icon data-icon="arrow_upward"></md-icon></span>
+                <span class="tile-label">实时上传</span>
               </div>
               <div class="tile-body">
-                <span id="v-home-hs" class="tile-val">自动接管</span>
-                <span id="v-home-hs-sub" class="tile-sub"></span>
+                <span id="v-rate-up" class="tile-val">—</span>
+                <span id="v-rate-up-sub" class="tile-sub"></span>
               </div>
             </article>
 
-            <article class="metric-tile" id="tile-vpn">
+            <article class="metric-tile" id="tile-rate-down">
               <div class="tile-top">
-                <span class="tile-ico"><md-icon data-icon="vpn_lock"></md-icon></span>
-                <span class="tile-label">组网状态</span>
+                <span class="tile-ico"><md-icon data-icon="download"></md-icon></span>
+                <span class="tile-label">实时下载</span>
               </div>
               <div class="tile-body">
-                <span id="v-home-vpn" class="tile-val">未导入</span>
-                <span id="v-home-routes" class="tile-sub"></span>
+                <span id="v-rate-down" class="tile-val">—</span>
+                <span id="v-rate-down-sub" class="tile-sub"></span>
+              </div>
+            </article>
+
+            <article class="metric-tile" id="tile-load">
+              <div class="tile-top">
+                <span class="tile-ico"><md-icon data-icon="developer_board"></md-icon></span>
+                <span class="tile-label">OpenWrt 负载</span>
+              </div>
+              <div class="tile-body">
+                <span id="v-load" class="tile-val">—</span>
+                <span id="v-load-sub" class="tile-sub"></span>
+              </div>
+            </article>
+
+            <article class="metric-tile" id="tile-dev">
+              <div class="tile-top">
+                <span class="tile-ico"><md-icon data-icon="hub"></md-icon></span>
+                <span class="tile-label">在线设备</span>
+              </div>
+              <div class="tile-body">
+                <span id="v-dev" class="tile-val">—</span>
+                <span id="v-dev-sub" class="tile-sub"></span>
               </div>
             </article>
           </div>

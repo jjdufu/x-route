@@ -19,8 +19,8 @@ import "./style.css";
 import { ICONS } from "./icons.js";
 import {
   SET_KEYS, MODE_OPTS, NOTIFY_OPTS, DEBUG_HOURS_OPTS, ACCESS_OPTS, SHARE_OPTS, CPU_OPTS, MEM_OPTS,
-  VPN_TXT, labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
-  trafficLine, fmtSince, hsSubnetCheck, vpnProfiles, splitLines, clashView,
+  labelOf, xrCmd, lastJson, upKind, fmtUptime, vmView, displayPath, fmtSize, expandSizes,
+  trafficLine, fmtRate, fmtSince, hsSubnetCheck, vpnProfiles, splitLines, clashView,
 } from "./logic.js";
 import { openBrowser } from "./file-browser.js";
 import { createClashEmbed } from "./clash-embed.js";
@@ -414,9 +414,7 @@ function renderVpn(vpn) {
 
   const upList = list.filter((p) => p.status === "up");
   const connList = list.filter((p) => p.status === "connecting");
-  const st = upList.length ? "up" : connList.length ? "connecting" : ((vpn && vpn.status) || "down");
   const configured = list.length > 0 || !!(vpn && vpn.configured);
-  const activeCount = Array.isArray(vpn && vpn.routes_active) ? vpn.routes_active.length : 0;
 
   txt($("vpn-summary"),
     !configured ? "未导入配置"
@@ -426,8 +424,18 @@ function renderVpn(vpn) {
       : `已导入 ${list.length} 份`);
 
   prop($("nav-net"), "showBadge", false);
-  txt($("v-home-vpn"), !configured ? "未导入" : upList.length === 1 ? upList[0].name : upList.length > 1 ? `${upList.length} 条在线` : (VPN_TXT[st] || "未连接"));
-  txt($("v-home-routes"), activeCount ? `${activeCount} 个网段` : configured ? `${list.length} 份配置` : "");
+}
+
+// 状态页实时数据位：速率（需求 7）、OpenWrt 负载与在线设备（需求 8）；数据缺失或未运行时显示 —
+function renderHomeLive(d) {
+  const running = vmView(d, pending).phase === "running";
+  const t = d.traffic && d.traffic.rate, g = d.guest_stats;
+  txt($("v-rate-up"), running && t ? fmtRate(t.total.up) : "—");
+  txt($("v-rate-down"), running && t ? fmtRate(t.total.down) : "—");
+  txt($("v-load"), running && g && g.ok ? `${g.cpu_pct}% · ${g.mem_pct}%` : "—");
+  txt($("v-load-sub"), running && g && g.ok ? `负载 ${g.load1}` : "");
+  txt($("v-dev"), running && g && g.ok ? String(g.devices.total) : "—");
+  txt($("v-dev-sub"), running && g && g.ok ? `热点 ${g.devices.hotspot} · 本机 1` : "");
 }
 
 function render(d) {
@@ -470,21 +478,14 @@ function render(d) {
 
   const kind = isRunning ? upKind(net.up_if) : "—";
   txt($("v-up"), kind);
-  txt($("v-up-sub"), isRunning && net.up_if ? `${net.up_if}${d.ipv6 === true ? " · IPv6" : ""}` : "");
+  txt($("v-up-sub"), isRunning && net.up_if ? net.up_if : "");
   const ic = kind === "Wi-Fi" ? "wifi" : kind === "蜂窝" ? "signal_cellular_alt" : "cloud_off";
   setIcon($("i-up"), ic);
 
+  renderHomeLive(d);
+
   const curMode = cfg.XR_MODE || "global";
   const hsAuto = cfg.XR_HOTSPOT_BRIDGE !== "0";
-  txt($("v-home-hs"),
-    !isRunning ? (hsAuto ? "自动接管" : "未开启")
-      : net.hotspot ? `已接管 ${net.hotspot}`
-      : hsAuto ? "待机中" : "未开启");
-  txt($("v-home-hs-sub"),
-    net.hotspot && net.hotspot_net ? net.hotspot_net
-      : hsAuto ? (cfg.XR_HOTSPOT_SUBNET || "")
-      : "");
-
   renderVpn(vpn);
 
   // 网络页
@@ -1217,6 +1218,8 @@ function previewStatus(phase) {
     },
     share: { rw_supported: true },
     ipv6: running ? true : null,
+    traffic: { rate: { total: { up: 52_000, down: 1_830_000 } } },
+    guest_stats: { ok: true, cpu_pct: 7, mem_pct: 31, load1: "0.12", devices: { total: 3, hotspot: 2 } },
   };
 }
 
