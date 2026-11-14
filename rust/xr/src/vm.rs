@@ -4,6 +4,7 @@ pub(crate) mod disk;
 pub(crate) mod share;
 
 use std::fs::{self, OpenOptions};
+use std::ops::ControlFlow;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -149,18 +150,16 @@ pub(crate) fn mono_now(env: &Env) -> Option<u64> {
         .and_then(|text| text.trim().parse::<u64>().ok())
 }
 
-/// 启动保险丝看守：在就绪超时内等客机就绪，再在稳定期内持续确认 `crosvm` 存活；成功后拆除保险丝并写 `last_good`。
+/// 就绪等待：每秒检查一次，最多 `ready_to` 秒；`crosvm` 先退出时拆保险丝并记失败。
 ///
-/// 期间 `crosvm` 退出或超时未就绪时调用 [`fail`] 记录原因。
-pub(crate) fn fuse_watch(env: &Env) {
-    let cfg = Config::load(env);
-    let ready_to = cfg.ready_timeout_sec();
+/// 返回 `ControlFlow::Break` 表示看守到此结束（已处理失败），`Continue` 表示继续判断是否就绪。
+fn wait_ready(env: &Env, ready_to: u64) -> ControlFlow<()> {
     let mut waited = 0_u64;
     while waited < ready_to {
         if !running(env) {
             fsx::remove_logged(env, env.fuse_file());
             fail(env, "就绪前 crosvm 已退出，详见 vmm.log", "启动中退出");
-            return;
+            return ControlFlow::Break(());
         }
         if ready_seen(env) {
             break;
@@ -169,14 +168,11 @@ pub(crate) fn fuse_watch(env: &Env) {
         waited = waited.saturating_add(1);
         boot_progress(env, waited);
     }
-    if !ready_seen(env) {
-        let msg = format!("{ready_to} 秒内未就绪，停止 VM");
-        let ui = format!("{ready_to} 秒内未就绪");
-        fail(env, &msg, &ui);
-        note_rc(env, "vm_stop_exec", stop_exec(env, true));
-        return;
-    }
+    ControlFlow::Continue(())
+}
 
+/// 客机就绪后：记就绪时刻与状态、清上次错误、重建网络规则、记录接管方式并后台抓诊断快照。
+fn on_ready(env: &Env) {
     let run = env.run_dir();
     if let Some(now_m) = mono_now(env) {
         fsx::write_logged(env, run.join("ready_at"), format!("{now_m}\n"));
@@ -196,21 +192,28 @@ pub(crate) fn fuse_watch(env: &Env) {
         .unwrap_or_else(|| "off".to_owned());
     blog(env, "net", &format!("网络规则就绪，接管：{gw}"));
     diag::snap_bg(env, "服务就绪");
+}
 
-    let cfg_now = Config::load(env);
-    let stable_sec = cfg_now.stable_sec();
+/// 稳定期内 `crosvm` 退出：客机自行重启待处理且守护进程在时通知守护进程（`USR2`）接手；否则拆保险丝并记失败。
+fn on_stable_exit(env: &Env) {
+    if crate::daemon::keepalive::vm_guest_reset_pending(env) {
+        let dpid = crate::daemon::pid(env);
+        if is_pid_running(env, &dpid) {
+            send_signal_logged(env, &dpid, Signal::USR2);
+            return;
+        }
+    }
+    fsx::remove_logged(env, env.fuse_file());
+    fail(env, "稳定期内 crosvm 退出", "服务意外退出");
+}
+
+/// 稳定期确认：每 5 秒检查一次 `crosvm` 存活，满 `STABLE_SEC` 后拆保险丝、写 `last_good`、状态记为 `stable`。
+fn wait_stable(env: &Env) {
+    let stable_sec = Config::load(env).stable_sec();
     let mut st = 0_u64;
     while st < stable_sec {
         if !running(env) {
-            if crate::daemon::keepalive::vm_guest_reset_pending(env) {
-                let dpid = crate::daemon::pid(env);
-                if is_pid_running(env, &dpid) {
-                    send_signal_logged(env, &dpid, Signal::USR2);
-                    return;
-                }
-            }
-            fsx::remove_logged(env, env.fuse_file());
-            fail(env, "稳定期内 crosvm 退出", "服务意外退出");
+            on_stable_exit(env);
             return;
         }
         thread::sleep(Duration::from_secs(5));
@@ -222,9 +225,28 @@ pub(crate) fn fuse_watch(env: &Env) {
         env.last_good_file(),
         format!("{}\n", config::hash(env)),
     );
-    fsx::write_logged(env, run.join("state"), "stable\n");
+    fsx::write_logged(env, env.run_dir().join("state"), "stable\n");
     log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
     fsx::remove_logged(env, env.boot_log());
+}
+
+/// 启动保险丝看守：在就绪超时内等客机就绪，再在稳定期内持续确认 `crosvm` 存活；成功后拆除保险丝并写 `last_good`。
+///
+/// 期间 `crosvm` 退出或超时未就绪时调用 [`fail`] 记录原因。
+pub(crate) fn fuse_watch(env: &Env) {
+    let ready_to = Config::load(env).ready_timeout_sec();
+    if wait_ready(env, ready_to).is_break() {
+        return;
+    }
+    if !ready_seen(env) {
+        let msg = format!("{ready_to} 秒内未就绪，停止 VM");
+        let ui = format!("{ready_to} 秒内未就绪");
+        fail(env, &msg, &ui);
+        note_rc(env, "vm_stop_exec", stop_exec(env, true));
+        return;
+    }
+    on_ready(env);
+    wait_stable(env);
 }
 
 /// 把 `config/vpn/*.ovpn` 及其启用标记同步到给客机的 `guest/host/vpn/`，并删除已不存在的配置。
