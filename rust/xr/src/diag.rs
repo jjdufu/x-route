@@ -22,16 +22,16 @@ use crate::sys::{LockWait, PathLock};
 
 fn sys_cmd_output(bin: &Path, args: &[&str]) -> String {
     match Command::new(bin).args(args).output() {
-        Ok(o) => {
-            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
-            let err = String::from_utf8_lossy(&o.stderr);
+        Ok(result) => {
+            let mut text = String::from_utf8_lossy(&result.stdout).into_owned();
+            let err = String::from_utf8_lossy(&result.stderr);
             if !err.is_empty() {
-                if !s.is_empty() && !s.ends_with('\n') {
-                    s.push('\n');
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
                 }
-                s.push_str(&err);
+                text.push_str(&err);
             }
-            s
+            text
         }
         Err(_) => String::new(),
     }
@@ -64,14 +64,14 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
             continue;
         };
         for ent in rd.flatten() {
-            let p = ent.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("ovpn") {
-                files.push(p);
+            let file_path = ent.path();
+            if file_path.extension().and_then(|os_str| os_str.to_str()) == Some("ovpn") {
+                files.push(file_path);
             }
         }
     }
-    for f in files {
-        let Ok(content) = fs::read_to_string(f) else {
+    for file in files {
+        let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
         for line in content.lines() {
@@ -126,11 +126,11 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
         if !in_xml_secret
             && xml_tags
                 .iter()
-                .any(|t| trimmed.starts_with(&format!("<{t}>")))
+                .any(|open_tag| trimmed.starts_with(&format!("<{open_tag}>")))
         {
             if xml_tags
                 .iter()
-                .any(|t| trimmed.contains(&format!("</{t}>")))
+                .any(|close_tag| trimmed.contains(&format!("</{close_tag}>")))
             {
                 continue;
             }
@@ -140,7 +140,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
         if in_xml_secret {
             if xml_tags
                 .iter()
-                .any(|t| trimmed.contains(&format!("</{t}>")))
+                .any(|tag| trimmed.contains(&format!("</{tag}>")))
             {
                 in_xml_secret = false;
             }
@@ -183,9 +183,9 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
 pub fn diag_phone(env: &Env) -> String {
     let mut out = String::new();
     let ip_bin = env.sysbin_cmd("ip");
-    let ipt_bin = env.sysbin_cmd("iptables");
+    let iptables_bin = env.sysbin_cmd("iptables");
     let ip6t_bin = env.sysbin_cmd("ip6tables");
-    let iw_bin = env.sysbin_cmd("iw");
+    let wifi_bin = env.sysbin_cmd("iw");
     let now = Local::now().format("%Y-%m-%d %H:%M:%S");
     out.push_str("### 手机网络快照 ");
     out.push_str(&now.to_string());
@@ -253,7 +253,7 @@ pub fn diag_phone(env: &Env) -> String {
     );
     dsec(&mut out, &format!("{ip_s} neigh"), &ip_bin, &["neigh"]);
 
-    let ipt_s = ipt_bin.to_string_lossy().into_owned();
+    let iptables_path = iptables_bin.to_string_lossy().into_owned();
     for args in [
         &["-w", "-S", "FORWARD"][..],
         &["-w", "-S", "XR_FWD"],
@@ -265,8 +265,8 @@ pub fn diag_phone(env: &Env) -> String {
     ] {
         dsec(
             &mut out,
-            &format!("{ipt_s} {}", args.join(" ")),
-            &ipt_bin,
+            &format!("{iptables_path} {}", args.join(" ")),
+            &iptables_bin,
             args,
         );
     }
@@ -294,8 +294,8 @@ pub fn diag_phone(env: &Env) -> String {
             if name.starts_with("xrbr") && ent.path().is_dir() {
                 let mut ports = Vec::new();
                 if let Ok(brd) = fs::read_dir(ent.path().join("brif")) {
-                    for p in brd.flatten() {
-                        ports.push(p.file_name().to_string_lossy().into_owned());
+                    for entry in brd.flatten() {
+                        ports.push(entry.file_name().to_string_lossy().into_owned());
                     }
                 }
                 let ps = if ports.is_empty() {
@@ -334,15 +334,15 @@ pub fn diag_phone(env: &Env) -> String {
         }
     }
     for iface in ifaces {
-        for k in ["disable_ipv6", "forwarding", "proxy_ndp", "accept_ra"] {
-            let p = format!("/proc/sys/net/ipv6/conf/{iface}/{k}");
-            if let Ok(v) = fs::read_to_string(&p) {
+        for sysctl_key in ["disable_ipv6", "forwarding", "proxy_ndp", "accept_ra"] {
+            let target = format!("/proc/sys/net/ipv6/conf/{iface}/{sysctl_key}");
+            if let Ok(value) = fs::read_to_string(&target) {
                 out.push_str("ipv6.");
                 out.push_str(&iface);
                 out.push('.');
-                out.push_str(k);
+                out.push_str(sysctl_key);
                 out.push('=');
-                out.push_str(v.trim());
+                out.push_str(value.trim());
                 out.push('\n');
             }
         }
@@ -355,23 +355,23 @@ pub fn diag_phone(env: &Env) -> String {
             let path = ent.path();
             if path.join("wireless").is_dir() || path.join("phy80211").is_dir() {
                 let n = ent.file_name().to_string_lossy().into_owned();
-                let info = sys_cmd_output(&iw_bin, &["dev", &n, "info"]);
-                for l in info.lines() {
+                let info = sys_cmd_output(&wifi_bin, &["dev", &n, "info"]);
+                for info_line in info.lines() {
                     if ["Interface", "type", "ssid", "channel"]
                         .iter()
-                        .any(|k| l.contains(k))
+                        .any(|needle| info_line.contains(needle))
                     {
-                        out.push_str(l);
+                        out.push_str(info_line);
                         out.push('\n');
                     }
                 }
-                let st = sys_cmd_output(&iw_bin, &["dev", &n, "station", "dump"]);
-                for l in st.lines() {
+                let st = sys_cmd_output(&wifi_bin, &["dev", &n, "station", "dump"]);
+                for entry_line in st.lines() {
                     if ["Station", "inactive time", "connected time", "signal:"]
                         .iter()
-                        .any(|k| l.contains(k))
+                        .any(|needle_key| entry_line.contains(needle_key))
                     {
-                        out.push_str(l);
+                        out.push_str(entry_line);
                         out.push('\n');
                     }
                 }
@@ -387,7 +387,7 @@ pub fn diag_phone(env: &Env) -> String {
     out.push('\n');
     let tether = sys_cmd_output(Path::new("dumpsys"), &["tethering"]);
     let mut tcount = 0_usize;
-    for l in tether.lines() {
+    for row in tether.lines() {
         if [
             " - ",
             "Tethering",
@@ -399,9 +399,9 @@ pub fn diag_phone(env: &Env) -> String {
             "State",
         ]
         .iter()
-        .any(|k| l.contains(k))
+        .any(|name_key| row.contains(name_key))
         {
-            out.push_str(l);
+            out.push_str(row);
             out.push('\n');
             tcount = tcount.saturating_add(1);
             if tcount >= 60 {
@@ -414,10 +414,10 @@ pub fn diag_phone(env: &Env) -> String {
     out.push_str("## DNS\n");
     let gp = sys_cmd_output(Path::new("getprop"), &[]);
     let mut dcount = 0_usize;
-    for l in gp.lines() {
-        let lower = l.to_ascii_lowercase();
+    for line in gp.lines() {
+        let lower = line.to_ascii_lowercase();
         if lower.contains("net.dns") || lower.contains("dns") {
-            out.push_str(l);
+            out.push_str(line);
             out.push('\n');
             dcount = dcount.saturating_add(1);
             if dcount >= 20 {
@@ -450,15 +450,15 @@ pub fn diag_phone(env: &Env) -> String {
             }
         }
     }
-    for f in status_files {
-        if f.is_file()
-            && let Ok(raw) = fs::read(&f)
+    for file in status_files {
+        if file.is_file()
+            && let Ok(raw) = fs::read(&file)
         {
             let slice = raw.get(..raw.len().min(300)).unwrap_or(&[]);
             let val = String::from_utf8_lossy(slice).replace('\n', " ");
-            let rel = f.strip_prefix(&run).map_or_else(
-                |_| f.to_string_lossy().into_owned(),
-                |p| p.to_string_lossy().into_owned(),
+            let rel = file.strip_prefix(&run).map_or_else(
+                |_| file.to_string_lossy().into_owned(),
+                |file_path| file_path.to_string_lossy().into_owned(),
             );
             out.push_str(&rel);
             out.push('=');
@@ -523,16 +523,16 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     let state = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
     if matches!(state.trim(), "ready" | "stable") {
         match diag_guest(env, guest_wait_secs) {
-            Ok(s) | Err(s) => raw.push_str(&s),
+            Ok(text) | Err(text) => raw.push_str(&text),
         }
     }
     raw.push_str("======== 快照结束\n");
     let redacted = diag_redact(env, &raw);
-    if let Ok(mut f) = fs::OpenOptions::new()
+    if let Ok(mut file) = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(env.debug_log())
-        && writeln!(f, "{}", redacted.trim_end_matches('\n')).is_err()
+        && writeln!(file, "{}", redacted.trim_end_matches('\n')).is_err()
     {
         // 写的就是调试日志本身：失败只计数，不再写日志
         note_failure(&FAILURES.log);
@@ -588,9 +588,9 @@ pub fn diag_logcat() -> String {
     ];
     let filtered: Vec<&str> = out
         .lines()
-        .filter(|l| {
-            let low = l.to_ascii_lowercase();
-            keywords.iter().any(|k| low.contains(k))
+        .filter(|line| {
+            let low = line.to_ascii_lowercase();
+            keywords.iter().any(|key| low.contains(key))
         })
         .collect();
     let skip = filtered.len().saturating_sub(4000);
@@ -599,9 +599,9 @@ pub fn diag_logcat() -> String {
 
 #[must_use]
 pub fn download_dir(env: &Env) -> Option<PathBuf> {
-    if let Some(d) = &env.download_override {
-        if fs::create_dir_all(d).is_ok() {
-            return Some(d.clone());
+    if let Some(dir) = &env.download_override {
+        if fs::create_dir_all(dir).is_ok() {
+            return Some(dir.clone());
         }
         return None;
     }
@@ -620,22 +620,22 @@ pub fn download_dir(env: &Env) -> Option<PathBuf> {
 }
 
 fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> bool {
-    let Ok(f) = File::create(out_zip) else {
+    let Ok(file) = File::create(out_zip) else {
         return false;
     };
-    let mut zw = ZipWriter::new(f);
+    let mut zw = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let src_dir = root_dir.join(folder_name);
     let Ok(rd) = fs::read_dir(&src_dir) else {
         return false;
     };
-    let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<PathBuf> = rd.flatten().map(|dir_entry| dir_entry.path()).collect();
     entries.sort();
     for entry in entries {
         if !entry.is_file() {
             continue;
         }
-        let Some(name) = entry.file_name().and_then(|s| s.to_str()) else {
+        let Some(name) = entry.file_name().and_then(|os_str| os_str.to_str()) else {
             continue;
         };
         let zip_path = format!("{folder_name}/{name}");
@@ -670,7 +670,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     let ver = fs::read_to_string(env.moddir.join("module.prop"))
         .unwrap_or_default()
         .lines()
-        .find_map(|l| l.strip_prefix("version="))
+        .find_map(|row| row.strip_prefix("version="))
         .unwrap_or("")
         .trim()
         .to_owned();
@@ -694,24 +694,24 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
         env.vmm_log(),
         env.xr_data.join("log/console.prev.log"),
     ];
-    for f in log_files {
-        if let Some(bn) = f.file_name().and_then(|s| s.to_str()) {
-            let f1 = PathBuf::from(format!("{}.1", f.display()));
+    for file in log_files {
+        if let Some(bn) = file.file_name().and_then(|raw_name| raw_name.to_str()) {
+            let f1 = PathBuf::from(format!("{}.1", file.display()));
             if f1.is_file() {
                 fsx::copy_logged(env, &f1, raw_dir.join(format!("{bn}.1")));
             }
-            if f.is_file() {
-                fsx::copy_logged(env, &f, raw_dir.join(bn));
+            if file.is_file() {
+                fsx::copy_logged(env, &file, raw_dir.join(bn));
             }
         }
     }
 
     if is_diag {
         fsx::write_logged(env, raw_dir.join("phone.txt"), diag_phone(env));
-        let g = match diag_guest(env, 15) {
-            Ok(s) | Err(s) => s,
+        let guest = match diag_guest(env, 15) {
+            Ok(text) | Err(text) => text,
         };
-        fsx::write_logged(env, raw_dir.join("openwrt.txt"), g);
+        fsx::write_logged(env, raw_dir.join("openwrt.txt"), guest);
         fsx::write_logged(env, raw_dir.join("logcat.txt"), diag_logcat());
         fsx::write_logged(
             env,
@@ -719,7 +719,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
             sys_cmd_output(Path::new("dumpsys"), &["tethering"]),
         );
         if let Ok(conf) = fs::read_to_string(env.conf_file()) {
-            let filtered: Vec<&str> = conf.lines().filter(|l| !l.starts_with('#')).collect();
+            let filtered: Vec<&str> = conf.lines().filter(|line| !line.starts_with('#')).collect();
             fsx::write_logged(
                 env,
                 raw_dir.join("config.conf"),
@@ -742,11 +742,11 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
 
     if let Ok(rd) = fs::read_dir(&raw_dir) {
         for ent in rd.flatten() {
-            let p = ent.path();
-            if p.is_file()
-                && let Some(bn) = p.file_name().and_then(|s| s.to_str())
+            let file_path = ent.path();
+            if file_path.is_file()
+                && let Some(bn) = file_path.file_name().and_then(|os_str| os_str.to_str())
             {
-                let bytes = fs::read(&p).unwrap_or_default();
+                let bytes = fs::read(&file_path).unwrap_or_default();
                 let raw_text = String::from_utf8_lossy(&bytes);
                 let red = diag_redact(env, &raw_text);
                 fsx::write_logged(env, pack_dir.join(bn), red);
