@@ -8,7 +8,9 @@ use super::{
     chmod_logged, copy_logged, mkdirs_logged, remove_logged, remove_tree_logged, rename_logged,
     touch_logged, write_logged,
 };
-use crate::log::tests::{Failure, counter_guard, ensure, env_at, snapshot};
+use xr_test_support::{Failure, ensure};
+
+use crate::log::tests::{counter_guard, env_at, snapshot};
 
 /// 全部包装在可写的临时目录里成功，且不增加计数。
 ///
@@ -18,7 +20,7 @@ use crate::log::tests::{Failure, counter_guard, ensure, env_at, snapshot};
 #[test]
 fn wrappers_succeed_without_counting() -> Result<(), Failure> {
     let _guard = counter_guard();
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let dir = tmp.path().join("a").join("b");
     let file = dir.join("f.txt");
@@ -31,8 +33,8 @@ fn wrappers_succeed_without_counting() -> Result<(), Failure> {
     chmod_logged(&env, &copy, 0o600);
     rename_logged(&env, &copy, &moved);
     touch_logged(&env, &file);
-    let truncated = fs::read(&file).map_err(|_io_err| "读回")?;
-    let moved_body = fs::read(&moved).map_err(|_io_err| "读回")?;
+    let truncated = fs::read(&file).map_err(|_io_err| Failure::new("读回"))?;
+    let moved_body = fs::read(&moved).map_err(|_io_err| Failure::new("读回"))?;
     remove_logged(&env, &moved);
     remove_tree_logged(&env, tmp.path().join("a"));
     ensure(snapshot() == before, "成功路径不应计数")?;
@@ -49,7 +51,7 @@ fn wrappers_succeed_without_counting() -> Result<(), Failure> {
 #[test]
 fn remove_not_found_is_not_failure() -> Result<(), Failure> {
     let _guard = counter_guard();
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let before = snapshot();
     remove_logged(&env, tmp.path().join("missing"));
@@ -65,11 +67,11 @@ fn remove_not_found_is_not_failure() -> Result<(), Failure> {
 #[test]
 fn failures_are_counted_once_each() -> Result<(), Failure> {
     let _guard = counter_guard();
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let missing_parent = tmp.path().join("no-dir").join("f");
     let a_dir = tmp.path().join("dir");
-    fs::create_dir_all(&a_dir).map_err(|_io_err| "准备目录")?;
+    fs::create_dir_all(&a_dir).map_err(|_io_err| Failure::new("准备目录"))?;
     let [fs_before, exec_before, _log_before] = snapshot();
     write_logged(&env, &missing_parent, b"x");
     copy_logged(&env, &missing_parent, a_dir.join("c"));

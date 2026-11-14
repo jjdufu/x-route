@@ -1,7 +1,7 @@
 //! `ProcRole`、`DaemonMode`：由环境变量标志得到的角色与运行方式（替代原来的 4 个 bool 字段）。
 
 use super::{DaemonMode, ProcRole};
-use crate::log::tests::{Failure, ensure};
+use xr_test_support::{Failure, ensure};
 
 /// `XR_IN_DAEMON` / `XR_IN_WATCHDOG` 的 4 种组合（只有值为 "1" 才算设置）：两者都设置时与旧代码一样按守护进程处理。
 ///

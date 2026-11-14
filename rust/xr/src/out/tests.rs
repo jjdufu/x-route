@@ -2,19 +2,9 @@
 
 use std::io::{self, Write};
 
+use xr_test_support::{Failure, ensure};
+
 use super::{OUT_WRITE_FAILED, join_lines, line_to, raw_to};
-
-/// 失败信息。
-type Failure = &'static str;
-
-/// 条件不成立时返回 `Err(msg)`。
-///
-/// # Errors
-///
-/// `cond` 为假时返回 `msg`。
-fn ensure(cond: bool, msg: Failure) -> Result<(), Failure> {
-    if cond { Ok(()) } else { Err(msg) }
-}
 
 /// 任何写入都失败的 writer（模拟读端已关闭的管道）。
 #[derive(Debug)]
@@ -38,8 +28,8 @@ impl Write for Broken {
 #[test]
 fn line_and_raw_bytes() -> Result<(), Failure> {
     let mut sink: Vec<u8> = Vec::new();
-    line_to(&mut sink, "{\"ok\":true}").map_err(|_io_err| "写 Vec 不应失败")?;
-    raw_to(&mut sink, "R0\u{1f}S-").map_err(|_io_err| "写 Vec 不应失败")?;
+    line_to(&mut sink, "{\"ok\":true}").map_err(|_io_err| Failure::new("写 Vec 不应失败"))?;
+    raw_to(&mut sink, "R0\u{1f}S-").map_err(|_io_err| Failure::new("写 Vec 不应失败"))?;
     ensure(
         sink == b"{\"ok\":true}\nR0\x1fS-",
         "字节与 println/print 宏相同",

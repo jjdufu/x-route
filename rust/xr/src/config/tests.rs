@@ -1,7 +1,7 @@
 //! `RESTART_KEYS`：需要重启虚拟机才能生效的配置键，锁定其内容与顺序。
 
 use super::{KEYS, RESTART_KEYS};
-use crate::log::tests::{Failure, ensure};
+use xr_test_support::{Failure, ensure};
 
 /// 与 05a 合并前 `cli/status.rs` 中那份副本逐项一致（11 项，顺序相同）。
 ///

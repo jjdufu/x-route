@@ -1,7 +1,7 @@
 //! `ip6_format`：按 4 个十六进制字符分组的输出与逐字符参照实现一致（锁定 `as_chunks` 改写）。
 
 use super::ip6_format;
-use crate::log::tests::{Failure, ensure};
+use xr_test_support::{Failure, ensure};
 
 /// 参照实现：只接受 32 个十六进制字符，每 4 个字符之间插入 `:`。
 fn reference(hex32: &str) -> Option<String> {

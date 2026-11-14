@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 use super::{LockWait, PathLock};
-use crate::log::tests::{Failure, ensure, env_at};
+use xr_test_support::{Failure, ensure};
+
+use crate::log::tests::env_at;
 
 /// 已不存在的进程号（远大于 Linux 默认 `pid_max` 4194304）。
 const DEAD_PID: &str = "999999999\n";
@@ -45,7 +47,7 @@ fn hammer(env: &crate::env::Env, path: &Path, inside: &AtomicU32, overlap: &Atom
 /// 断言不成立、临时目录准备失败或线程异常结束时返回错误。
 #[test]
 fn concurrent_threads_are_mutually_exclusive() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let lock_path = tmp.path().join("run").join("acct.lock");
     let inside = Arc::new(AtomicU32::new(0));
@@ -61,7 +63,9 @@ fn concurrent_threads_are_mutually_exclusive() -> Result<(), Failure> {
         }));
     }
     for handle in workers {
-        handle.join().map_err(|_panic| "工作线程异常结束")?;
+        handle
+            .join()
+            .map_err(|_panic| Failure::new("工作线程异常结束"))?;
     }
     ensure(
         overlap.load(Ordering::SeqCst) == 0,
@@ -77,10 +81,10 @@ fn concurrent_threads_are_mutually_exclusive() -> Result<(), Failure> {
 /// 断言不成立或临时目录准备失败时返回错误。
 #[test]
 fn stale_pid_file_is_taken_at_once() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let lock_path = tmp.path().join(".net.lock");
-    fs::write(&lock_path, DEAD_PID).map_err(|_io_err| "写旧锁")?;
+    fs::write(&lock_path, DEAD_PID).map_err(|_io_err| Failure::new("写旧锁"))?;
     let started = Instant::now();
     let held = PathLock::acquire(
         &env,
@@ -92,7 +96,7 @@ fn stale_pid_file_is_taken_at_once() -> Result<(), Failure> {
         },
     );
     ensure(started.elapsed() < Duration::from_millis(400), "不应等待")?;
-    let owner = fs::read_to_string(&lock_path).map_err(|_io_err| "读锁文件")?;
+    let owner = fs::read_to_string(&lock_path).map_err(|_io_err| Failure::new("读锁文件"))?;
     ensure(
         owner.trim() == std::process::id().to_string(),
         "锁文件记录本进程 pid",
@@ -108,11 +112,11 @@ fn stale_pid_file_is_taken_at_once() -> Result<(), Failure> {
 /// 断言不成立或临时目录准备失败时返回错误。
 #[test]
 fn stale_legacy_dir_lock_is_replaced() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let lock_path = tmp.path().join(".net.lock");
-    fs::create_dir_all(&lock_path).map_err(|_io_err| "建旧目录锁")?;
-    fs::write(lock_path.join("pid"), DEAD_PID).map_err(|_io_err| "写旧 pid")?;
+    fs::create_dir_all(&lock_path).map_err(|_io_err| Failure::new("建旧目录锁"))?;
+    fs::write(lock_path.join("pid"), DEAD_PID).map_err(|_io_err| Failure::new("写旧 pid"))?;
     let started = Instant::now();
     let held = PathLock::acquire(
         &env,
@@ -136,10 +140,10 @@ fn stale_legacy_dir_lock_is_replaced() -> Result<(), Failure> {
 /// 断言不成立或临时目录准备失败时返回错误。
 #[test]
 fn legacy_dir_lock_is_forced_after_timeout() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let lock_path = tmp.path().join("acct.lock");
-    fs::create_dir_all(&lock_path).map_err(|_io_err| "建旧目录锁")?;
+    fs::create_dir_all(&lock_path).map_err(|_io_err| Failure::new("建旧目录锁"))?;
     let started = Instant::now();
     let held = PathLock::acquire(&env, lock_path.clone(), plain(2, 50));
     ensure(
@@ -158,7 +162,7 @@ fn legacy_dir_lock_is_forced_after_timeout() -> Result<(), Failure> {
 /// 断言不成立或临时目录准备失败时返回错误。
 #[test]
 fn held_lock_is_forced_after_timeout() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let lock_path = tmp.path().join(".snap.lock");
     let first = PathLock::acquire(&env, lock_path.clone(), plain(1, 10));

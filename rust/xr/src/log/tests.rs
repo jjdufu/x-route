@@ -6,13 +6,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 
 use tempfile::TempDir;
+use xr_test_support::{Failure, ensure};
 
 use super::{FAILURES, append_line, format_failures_line, note_failure};
 use crate::env::Env;
 use crate::log;
-
-/// 失败信息。
-pub(crate) type Failure = &'static str;
 
 /// 读写全局失败计数的测试互斥执行，保证前后差值只来自本测试。
 pub(crate) static COUNTER_LOCK: Mutex<()> = Mutex::new(());
@@ -22,15 +20,6 @@ pub(crate) fn counter_guard() -> MutexGuard<'static, ()> {
     COUNTER_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// 条件不成立时返回 `Err(msg)`。
-///
-/// # Errors
-///
-/// `cond` 为假时返回 `msg`。
-pub(crate) const fn ensure(cond: bool, msg: Failure) -> Result<(), Failure> {
-    if cond { Ok(()) } else { Err(msg) }
 }
 
 /// 数据目录位于 `data` 的测试环境。
@@ -57,12 +46,12 @@ pub(crate) fn snapshot() -> [u64; 3] {
 /// 断言不成立或临时目录创建失败时返回错误。
 #[test]
 fn append_line_reports_error() -> Result<(), Failure> {
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let missing = tmp.path().join("no-such-dir").join("x.log");
     ensure(append_line(&missing, "line").is_err(), "应返回错误")?;
     let ok_path = tmp.path().join("ok.log");
     ensure(append_line(&ok_path, "line").is_ok(), "可写路径应成功")?;
-    let body = fs::read_to_string(&ok_path).map_err(|_io_err| "读回")?;
+    let body = fs::read_to_string(&ok_path).map_err(|_io_err| Failure::new("读回"))?;
     ensure(body == "line\n", "内容应为一行")
 }
 
@@ -74,9 +63,9 @@ fn append_line_reports_error() -> Result<(), Failure> {
 #[test]
 fn log_msg_counts_write_failure() -> Result<(), Failure> {
     let _guard = counter_guard();
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let blocker = tmp.path().join("data");
-    fs::write(&blocker, "not a dir").map_err(|_io_err| "准备文件")?;
+    fs::write(&blocker, "not a dir").map_err(|_io_err| Failure::new("准备文件"))?;
     let env = env_at(&blocker);
     let [fs_before, exec_before, log_before] = snapshot();
     log::msg(&env, "INFO", "test", "hello");
@@ -97,12 +86,12 @@ fn log_msg_counts_write_failure() -> Result<(), Failure> {
 #[test]
 fn log_msg_success_counts_nothing() -> Result<(), Failure> {
     let _guard = counter_guard();
-    let tmp = TempDir::new().map_err(|_io_err| "临时目录")?;
+    let tmp = TempDir::new().map_err(|_io_err| Failure::new("临时目录"))?;
     let env = env_at(&tmp.path().join("data"));
     let before = snapshot();
     log::msg(&env, "INFO", "test", "hello");
     ensure(snapshot() == before, "成功路径不应计数")?;
-    let body = fs::read_to_string(env.module_log()).map_err(|_io_err| "读回")?;
+    let body = fs::read_to_string(env.module_log()).map_err(|_io_err| Failure::new("读回"))?;
     ensure(body.ends_with(" [INFO] [test] hello\n"), "日志行格式不变")
 }
 
