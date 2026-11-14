@@ -24,6 +24,7 @@ use crate::net::ipv6::{
 use crate::net::vpn_routes::{
     routes_clear, routes_file_cksum, routes_reassert, routes_sync, tether_ifaces,
 };
+use crate::out::emit;
 use crate::sys::exec::note_exec_result;
 use crate::sys::fsx;
 use crate::sys::spawn::spawn_self_detached;
@@ -1313,13 +1314,7 @@ pub fn run_net_cli(env: &Env, args: &[String]) -> i32 {
             net_sync(env);
             0
         }
-        Some("status") => {
-            println!("{}", net_status_json(env));
-            0
-        }
-        _ => {
-            println!("usage: net.sh up|down|watch|sync|status");
-            2
-        }
+        Some("status") => emit(env, &net_status_json(env), 0),
+        _ => emit(env, "usage: net.sh up|down|watch|sync|status", 2),
     }
 }
