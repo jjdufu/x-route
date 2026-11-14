@@ -166,7 +166,7 @@ fn bg_exec(env: &Env, action: &str) -> i32 {
 }
 
 fn boot_service(env: &Env) -> i32 {
-    boot_clean_run(env);
+    note_ok(env, "boot_clean_run", boot_clean_run(env));
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
