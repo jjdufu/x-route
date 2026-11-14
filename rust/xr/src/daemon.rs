@@ -240,9 +240,30 @@ fn clean_daemon_pid(env: &Env, self_pid: &str) {
     }
 }
 
-/// 守护进程主循环：响应 `SIGUSR1` 命令（`start`、`stop`、`ping`、`quit`）、`SIGUSR2` 客机重启与 `SIGTERM` 退出，并周期更新常驻通知；返回进程退出码。
-#[must_use]
-pub(crate) fn main_loop(env: &Env) -> i32 {
+/// 守护进程主循环的运行状态。
+#[derive(Debug)]
+struct DaemonState {
+    /// 已走过的循环拍数。
+    tick: u64,
+    /// 近期客机自行重启的时刻（用于限频）。
+    reset_times: Vec<u64>,
+    /// 收到 `SIGUSR1`/`SIGUSR2`。
+    usr: Arc<AtomicBool>,
+    /// 收到 `SIGTERM`/`SIGINT`。
+    term: Arc<AtomicBool>,
+    /// 本进程号。
+    self_pid: String,
+}
+
+/// 把信号 `sig`（名字 `name`）登记为置位 `flag_val`；失败只记日志。
+fn register_flag(env: &Env, sig: i32, name: &str, flag_val: &Arc<AtomicBool>) {
+    if let Err(err) = flag::register(sig, Arc::clone(flag_val)) {
+        log::err(env, "daemon", &format!("信号注册失败 {name}: {err}"));
+    }
+}
+
+/// 守护进程启动：写 `daemon.pid`、逃出应用 `cgroup`、登记信号、清空命令与通知状态、写 `daemon.ready`。
+fn daemon_init(env: &Env) -> DaemonState {
     if let Err(err) = env.ensure_dirs() {
         fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
     }
@@ -254,21 +275,11 @@ pub(crate) fn main_loop(env: &Env) -> i32 {
     let hup = Arc::new(AtomicBool::new(false));
     let usr = Arc::new(AtomicBool::new(false));
     let term = Arc::new(AtomicBool::new(false));
-    if let Err(err) = flag::register(SIGHUP, Arc::clone(&hup)) {
-        log::err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
-    }
-    if let Err(err) = flag::register(SIGUSR1, Arc::clone(&usr)) {
-        log::err(env, "daemon", &format!("信号注册失败 SIGUSR1: {err}"));
-    }
-    if let Err(err) = flag::register(SIGUSR2, Arc::clone(&usr)) {
-        log::err(env, "daemon", &format!("信号注册失败 SIGUSR2: {err}"));
-    }
-    if let Err(err) = flag::register(SIGTERM, Arc::clone(&term)) {
-        log::err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
-    }
-    if let Err(err) = flag::register(SIGINT, Arc::clone(&term)) {
-        log::err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
-    }
+    register_flag(env, SIGHUP, "SIGHUP", &hup);
+    register_flag(env, SIGUSR1, "SIGUSR1", &usr);
+    register_flag(env, SIGUSR2, "SIGUSR2", &usr);
+    register_flag(env, SIGTERM, "SIGTERM", &term);
+    register_flag(env, SIGINT, "SIGINT", &term);
 
     fsx::write_logged(env, run.join("daemon.cmd"), "");
     for name in [
@@ -283,150 +294,207 @@ pub(crate) fn main_loop(env: &Env) -> i32 {
     fsx::write_logged(env, run.join("daemon.ready"), "ready\n");
     let cg = cgroup_path(env, &self_pid).unwrap_or_default();
     log::info(env, "daemon", &format!("已启动 pid={self_pid} cgroup={cg}"));
+    DaemonState {
+        tick: 0,
+        reset_times: Vec::new(),
+        usr,
+        term,
+        self_pid,
+    }
+}
 
-    let mut tick = 0_u64;
-    let mut reset_times: Vec<u64> = Vec::new();
+/// 收到 `TERM` 时：记日志，虚拟机已不在时清理运行状态与路由，删除自己的 `daemon.pid`；返回 `Some(0)` 表示退出。
+fn on_term(env: &Env, st: &DaemonState) -> Option<i32> {
+    if !st.term.load(Ordering::Relaxed) {
+        return None;
+    }
+    if sys::shutting_down(env) {
+        shutdown_note(env, "daemon");
+    } else {
+        log::info(env, "daemon", "收到 TERM，守护进程退出");
+    }
+    if !xr_vm_alive(env) {
+        let run = env.run_dir();
+        fsx::remove_logged(env, run.join("state"));
+        fsx::remove_logged(env, run.join("ready_at"));
+        fsx::remove_logged(env, run.join("crosvm.pid"));
+        fsx::remove_logged(env, run.join("stopping"));
+        routes_emergency_down(env);
+    }
+    clean_daemon_pid(env, &st.self_pid);
+    Some(0)
+}
+
+/// `quit` 命令：停虚拟机、保存流量快照、撤销通知、删除 `daemon.pid` 与命令文件并写结果 0。
+fn quit(env: &Env, st: &DaemonState) {
+    let run = env.run_dir();
+    note_rc(env, "vm_stop_exec", vm::stop_exec(env, false));
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    acct_snapshot(&ctx);
+    notify_cancel(env);
+    clean_daemon_pid(env, &st.self_pid);
+    fsx::remove_logged(env, run.join("daemon.cmd"));
+    fsx::write_logged(env, run.join("daemon.res"), "0\n");
+}
+
+/// 处理 `SIGUSR1` 送来的 `daemon.cmd`（`start`、`stop`、`ping`、`quit`），写 `daemon.res` 并刷新通知；返回 `Some(0)` 表示退出。
+fn on_command(env: &Env, st: &mut DaemonState) -> Option<i32> {
+    if !st.usr.swap(false, Ordering::SeqCst) {
+        return None;
+    }
+    let run = env.run_dir();
+    let cmd = fs::read_to_string(run.join("daemon.cmd"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    fsx::write_logged(env, run.join("daemon.cmd"), "");
+    if cmd.is_empty() {
+        return None;
+    }
+    let rc = match cmd.as_str() {
+        "start" => {
+            st.reset_times.clear();
+            vm::start_exec(env)
+        }
+        "stop" => {
+            st.reset_times.clear();
+            vm::stop_exec(env, false)
+        }
+        "ping" => 0_i32,
+        "quit" => {
+            quit(env, st);
+            return Some(0);
+        }
+        _ => 2_i32,
+    };
+    fsx::write_logged(env, run.join("daemon.res"), format!("{rc}\n"));
+    if st.term.load(Ordering::Relaxed) && !sys::shutting_down(env) {
+        log::info(env, "daemon", "停止流程完成，响应 TERM 退出");
+        clean_daemon_pid(env, &st.self_pid);
+        return Some(0);
+    }
+    fsx::write_logged(env, run.join("notify.force"), "");
+    notify_update(env);
+    None
+}
+
+/// 虚拟机就绪的起点（秒）：优先 `ready_at`，否则 `crosvm`（进程号 `cp`）的启动时间。
+fn ready_since(env: &Env, cp: &str) -> Option<u64> {
+    fs::read_to_string(env.run_dir().join("ready_at"))
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .or_else(|| {
+            let text = fs::read_to_string(env.proc_base.join(cp).join("stat")).ok()?;
+            text.split_whitespace()
+                .nth(21)
+                .and_then(|x| x.parse::<u64>().ok())
+                .map(|ticks| ticks.checked_div(100_u64).unwrap_or(0_u64))
+        })
+}
+
+/// 状态停在 `ready` 而保险丝看守进程已不在时，就绪满 `STABLE_SEC` 后代为拆除保险丝、写 `last_good` 并记为 `stable`。
+fn promote_stable(env: &Env) {
+    let run = env.run_dir();
+    let fw_pid = fs::read_to_string(run.join("fuse_watch.pid"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if is_pid_running(env, &fw_pid) {
+        return;
+    }
+    let cfg = Config::load(env);
+    let cp = fs::read_to_string(run.join("crosvm.pid"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if let (Some(r0), Some(now)) = (ready_since(env, &cp), vm::mono_now(env))
+        && now.saturating_sub(r0) >= cfg.stable_sec()
+    {
+        fsx::remove_logged(env, env.fuse_file());
+        fsx::remove_logged(env, env.boot_log());
+        fsx::write_logged(
+            env,
+            env.last_good_file(),
+            format!("{}\n", crate::config::hash(env)),
+        );
+        fsx::write_logged(env, run.join("state"), "stable\n");
+        log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
+    }
+}
+
+/// 每拍检查虚拟机：本应运行却已退出时先看是否客机自行重启，否则紧急拆除；`ready` 状态下代为推进到 `stable`。
+fn watch_vm(env: &Env, st: &mut DaemonState) {
+    let run = env.run_dir();
+    if vm_stopping(env) || !(run.join("crosvm.pid").is_file() || run.join("state").is_file()) {
+        return;
+    }
+    if !vm::running(env) {
+        if !handle_guest_reboot(env, &mut st.reset_times) {
+            let reason = vm_exit_reason(env);
+            emergency_teardown(env, &reason);
+        }
+    } else if fs::read_to_string(run.join("state")).is_ok_and(|content| content.trim() == "ready") {
+        promote_stable(env);
+    } else {
+        // 虚拟机在运行但尚未 ready：本轮不检查 fuse 看门进程
+    }
+}
+
+/// 每拍的例行工作：网关残留检查、更新通知、轮转日志；每 12 拍保存流量快照并检查调试模式到期。
+fn periodic(env: &Env, st: &mut DaemonState) {
+    if stale_gateway(env) {
+        let reason = vm_exit_reason(env);
+        emergency_teardown(
+            env,
+            &format!("{reason}（xr0 无载波或虚拟机已死，规则仍在）"),
+        );
+    }
+    notify_update(env);
+    rotate_all_logs(env);
+
+    st.tick = st.tick.saturating_add(1);
+    if st.tick.is_multiple_of(12) {
+        let cfg = Config::load(env);
+        let ctx = NetCtx::new(env, &cfg);
+        acct_snapshot(&ctx);
+        debug_expire(env);
+    }
+}
+
+/// 拍间休眠：最多 5 秒，每秒醒来一次；收到命令或 `TERM` 立即结束，有 `notify.force` 时刷新通知。
+fn nap(env: &Env, st: &DaemonState) {
+    let run = env.run_dir();
+    for _ in 0_i32..5_i32 {
+        if st.usr.load(Ordering::Relaxed) || st.term.load(Ordering::Relaxed) {
+            break;
+        }
+        thread::sleep(Duration::from_secs(1));
+        if run.join("notify.force").is_file() {
+            notify_update(env);
+        }
+    }
+}
+
+/// 守护进程主循环：响应 `SIGUSR1` 命令（`start`、`stop`、`ping`、`quit`）、`SIGUSR2` 客机重启与 `SIGTERM` 退出，并周期更新常驻通知；返回进程退出码。
+#[must_use]
+pub(crate) fn main_loop(env: &Env) -> i32 {
+    let mut st = daemon_init(env);
     loop {
-        if term.load(Ordering::Relaxed) {
-            if sys::shutting_down(env) {
-                shutdown_note(env, "daemon");
-            } else {
-                log::info(env, "daemon", "收到 TERM，守护进程退出");
-            }
-            if !xr_vm_alive(env) {
-                fsx::remove_logged(env, run.join("state"));
-                fsx::remove_logged(env, run.join("ready_at"));
-                fsx::remove_logged(env, run.join("crosvm.pid"));
-                fsx::remove_logged(env, run.join("stopping"));
-                routes_emergency_down(env);
-            }
-            clean_daemon_pid(env, &self_pid);
-            return 0;
+        if let Some(code) = on_term(env, &st) {
+            return code;
         }
-
-        if usr.swap(false, Ordering::SeqCst) {
-            let cmd = fs::read_to_string(run.join("daemon.cmd"))
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
-            fsx::write_logged(env, run.join("daemon.cmd"), "");
-            if !cmd.is_empty() {
-                let rc = match cmd.as_str() {
-                    "start" => {
-                        reset_times.clear();
-                        vm::start_exec(env)
-                    }
-                    "stop" => {
-                        reset_times.clear();
-                        vm::stop_exec(env, false)
-                    }
-                    "ping" => 0,
-                    "quit" => {
-                        note_rc(env, "vm_stop_exec", vm::stop_exec(env, false));
-                        let cfg = Config::load(env);
-                        let ctx = NetCtx::new(env, &cfg);
-                        acct_snapshot(&ctx);
-                        notify_cancel(env);
-                        clean_daemon_pid(env, &self_pid);
-                        fsx::remove_logged(env, run.join("daemon.cmd"));
-                        fsx::write_logged(env, run.join("daemon.res"), "0\n");
-                        return 0;
-                    }
-                    _ => 2,
-                };
-                fsx::write_logged(env, run.join("daemon.res"), format!("{rc}\n"));
-                if term.load(Ordering::Relaxed) && !sys::shutting_down(env) {
-                    log::info(env, "daemon", "停止流程完成，响应 TERM 退出");
-                    clean_daemon_pid(env, &self_pid);
-                    return 0;
-                }
-                fsx::write_logged(env, run.join("notify.force"), "");
-                notify_update(env);
-            }
+        if let Some(code) = on_command(env, &mut st) {
+            return code;
         }
-
         if sys::shutting_down(env) {
             shutdown_note(env, "daemon");
-            clean_daemon_pid(env, &self_pid);
+            clean_daemon_pid(env, &st.self_pid);
             return 0;
         }
-
         cgroup_escape_tree(env, std::process::id());
-        if !vm_stopping(env) && (run.join("crosvm.pid").is_file() || run.join("state").is_file()) {
-            if !vm::running(env) {
-                if !handle_guest_reboot(env, &mut reset_times) {
-                    let reason = vm_exit_reason(env);
-                    emergency_teardown(env, &reason);
-                }
-            } else if fs::read_to_string(run.join("state"))
-                .is_ok_and(|content| content.trim() == "ready")
-            {
-                let fw_pid = fs::read_to_string(run.join("fuse_watch.pid"))
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned();
-                if !is_pid_running(env, &fw_pid) {
-                    let cfg = Config::load(env);
-                    let cp = fs::read_to_string(run.join("crosvm.pid"))
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned();
-                    let since = fs::read_to_string(run.join("ready_at"))
-                        .ok()
-                        .and_then(|raw| raw.trim().parse::<u64>().ok())
-                        .or_else(|| {
-                            let text =
-                                fs::read_to_string(env.proc_base.join(&cp).join("stat")).ok()?;
-                            text.split_whitespace()
-                                .nth(21)
-                                .and_then(|x| x.parse::<u64>().ok())
-                                .map(|ticks| ticks.checked_div(100_u64).unwrap_or(0_u64))
-                        });
-                    if let (Some(r0), Some(now)) = (since, vm::mono_now(env))
-                        && now.saturating_sub(r0) >= cfg.stable_sec()
-                    {
-                        fsx::remove_logged(env, env.fuse_file());
-                        fsx::remove_logged(env, env.boot_log());
-                        fsx::write_logged(
-                            env,
-                            env.last_good_file(),
-                            format!("{}\n", crate::config::hash(env)),
-                        );
-                        fsx::write_logged(env, run.join("state"), "stable\n");
-                        log::info(env, "vm", "稳定，熔断已解除，last_good 已更新");
-                    }
-                }
-            } else {
-                // 虚拟机在运行但尚未 ready：本轮不检查 fuse 看门进程
-            }
-        }
-
-        if stale_gateway(env) {
-            let reason = vm_exit_reason(env);
-            emergency_teardown(
-                env,
-                &format!("{reason}（xr0 无载波或虚拟机已死，规则仍在）"),
-            );
-        }
-        notify_update(env);
-        rotate_all_logs(env);
-
-        tick = tick.saturating_add(1);
-        if tick.is_multiple_of(12) {
-            let cfg = Config::load(env);
-            let ctx = NetCtx::new(env, &cfg);
-            acct_snapshot(&ctx);
-            debug_expire(env);
-        }
-
-        for _ in 0..5 {
-            if usr.load(Ordering::Relaxed) || term.load(Ordering::Relaxed) {
-                break;
-            }
-            thread::sleep(Duration::from_secs(1));
-            if run.join("notify.force").is_file() {
-                notify_update(env);
-            }
-        }
+        watch_vm(env, &mut st);
+        periodic(env, &mut st);
+        nap(env, &st);
     }
 }
