@@ -50,7 +50,7 @@ fn dsec(out: &mut String, title: &str, bin: &Path, args: &[&str]) {
 }
 
 #[must_use]
-pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
+pub fn vpn_hosts(env: &Env) -> Vec<String> {
     let mut hosts = BTreeSet::new();
     let mut files = vec![
         env.xr_data.join("config/openvpn.ovpn"),
@@ -88,7 +88,7 @@ pub fn diag_vpn_hosts(env: &Env) -> Vec<String> {
 }
 
 #[must_use]
-pub fn diag_redact(env: &Env, input: &str) -> String {
+pub fn redact(env: &Env, input: &str) -> String {
     let mut out = Vec::new();
     let mut in_pem = false;
     let mut in_xml_secret = false;
@@ -171,7 +171,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
             .replace_all(&text, "[AF_INET]<VPN服务器>")
             .into_owned();
     }
-    for host in diag_vpn_hosts(env) {
+    for host in vpn_hosts(env) {
         if !host.is_empty() {
             text = text.replace(&host, "<VPN服务器>");
         }
@@ -180,7 +180,7 @@ pub fn diag_redact(env: &Env, input: &str) -> String {
 }
 
 #[must_use]
-pub fn diag_phone(env: &Env) -> String {
+pub fn phone(env: &Env) -> String {
     let mut out = String::new();
     let ip_bin = env.sysbin_cmd("ip");
     let iptables_bin = env.sysbin_cmd("iptables");
@@ -470,7 +470,7 @@ pub fn diag_phone(env: &Env) -> String {
     out
 }
 
-pub fn diag_guest(env: &Env, wait_secs: u64) -> Result<String, String> {
+pub fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     let pid_raw = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
     let pid = pid_raw.trim();
     let host_dir = env.run_dir().join("guest/host");
@@ -497,7 +497,7 @@ pub fn diag_guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     ))
 }
 
-pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
+pub fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
         return;
@@ -519,15 +519,15 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     raw.push_str(" 快照：");
     raw.push_str(reason);
     raw.push('\n');
-    raw.push_str(&diag_phone(env));
+    raw.push_str(&phone(env));
     let state = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
     if matches!(state.trim(), "ready" | "stable") {
-        match diag_guest(env, guest_wait_secs) {
+        match guest(env, guest_wait_secs) {
             Ok(text) | Err(text) => raw.push_str(&text),
         }
     }
     raw.push_str("======== 快照结束\n");
-    let redacted = diag_redact(env, &raw);
+    let redacted = redact(env, &raw);
     if let Ok(mut file) = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -541,7 +541,7 @@ pub fn diag_snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     rotate_debug(env);
 }
 
-pub fn diag_snap_bg(env: &Env, reason: &str) {
+pub fn snap_bg(env: &Env, reason: &str) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
         return;
@@ -556,12 +556,12 @@ pub fn diag_snap_bg(env: &Env, reason: &str) {
             .spawn();
         note_spawn(env, "diag-snap", child);
     } else {
-        diag_snap(env, reason, 10);
+        snap(env, reason, 10);
     }
 }
 
 #[must_use]
-pub fn diag_logcat() -> String {
+pub fn logcat() -> String {
     let out = sys_cmd_output(
         Path::new("logcat"),
         &["-d", "-v", "threadtime", "-t", "30000"],
@@ -707,12 +707,12 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
     }
 
     if is_diag {
-        fsx::write_logged(env, raw_dir.join("phone.txt"), diag_phone(env));
-        let guest = match diag_guest(env, 15) {
+        fsx::write_logged(env, raw_dir.join("phone.txt"), phone(env));
+        let guest = match guest(env, 15) {
             Ok(text) | Err(text) => text,
         };
         fsx::write_logged(env, raw_dir.join("openwrt.txt"), guest);
-        fsx::write_logged(env, raw_dir.join("logcat.txt"), diag_logcat());
+        fsx::write_logged(env, raw_dir.join("logcat.txt"), logcat());
         fsx::write_logged(
             env,
             raw_dir.join("tethering.txt"),
@@ -748,7 +748,7 @@ pub fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str
             {
                 let bytes = fs::read(&file_path).unwrap_or_default();
                 let raw_text = String::from_utf8_lossy(&bytes);
-                let red = diag_redact(env, &raw_text);
+                let red = redact(env, &raw_text);
                 fsx::write_logged(env, pack_dir.join(bn), red);
             }
         }

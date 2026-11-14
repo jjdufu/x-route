@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
-use xr::diag::diag_phone;
+use xr::diag;
 use xr::env::Env;
 
 /// 失败信息。
@@ -78,7 +78,7 @@ fn diag_phone_matches_fixture() -> Result<(), Failure> {
     let dir = tempfile::TempDir::new().map_err(|err| err.to_string())?;
     let env = snapshot_env(dir.path())?;
     let tmp = dir.path().to_string_lossy();
-    let got = normalize(&diag_phone(&env), &tmp);
+    let got = normalize(&diag::phone(&env), &tmp);
     if got == FIXTURE {
         return Ok(());
     }

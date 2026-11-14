@@ -7,7 +7,7 @@ use std::time::Duration;
 use rustix::process::Signal;
 
 use crate::config::Config;
-use crate::diag::diag_snap;
+use crate::diag;
 use crate::env::Env;
 use crate::log::note_ok;
 use crate::log::note_rc;
@@ -476,7 +476,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     if last.trim() != why {
         fsx::write_logged(env, run.join("teardown.last"), format!("{why}\n"));
         log_err(env, "daemon", &format!("异常退出：{why}"));
-        diag_snap(env, &format!("异常：{why}"), 3);
+        diag::snap(env, &format!("异常：{why}"), 3);
     }
     if xr_vm_alive(env) {
         return;

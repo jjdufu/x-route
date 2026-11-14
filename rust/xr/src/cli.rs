@@ -18,7 +18,8 @@ use crate::config::{Config, KEYS, set_kv, valid_kv};
 use crate::daemon;
 use crate::daemon::watchdog;
 use crate::daemon::{ensure_watchdog, vm_start, vm_stop};
-use crate::diag::{diag_snap, diag_snap_bg, export_pack};
+use crate::diag;
+use crate::diag::export_pack;
 use crate::env::Env;
 use crate::log::{blog, boot_clean_run, debug_arm, log_err, log_info, note_ok, note_rc, unix_now};
 use crate::net::common::NetCtx;
@@ -73,7 +74,7 @@ fn after_set(env: &Env, key: &str) -> Result<(), String> {
                         format!("{hours} 小时后自动关闭")
                     };
                     log_info(env, "debug", &format!("调试模式已开启（{dur}）"));
-                    diag_snap_bg(env, "调试模式开启");
+                    diag::snap_bg(env, "调试模式开启");
                 } else {
                     log_info(env, "debug", "调试模式已关闭");
                 }
@@ -504,7 +505,7 @@ pub fn run(args: &[String]) -> i32 {
                 let reason = rest.get(1).map_or("manual", String::as_str);
                 let cfg = Config::load(&env);
                 if cfg.debug_on() {
-                    diag_snap(&env, reason, 10);
+                    diag::snap(&env, reason, 10);
                 }
                 0
             }

@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::cidr::hs_mac;
 use crate::config;
 use crate::config::Config;
-use crate::diag::{diag_snap, diag_snap_bg};
+use crate::diag;
 use crate::env::Env;
 use crate::log::FAILURES;
 use crate::log::note_failure;
@@ -182,7 +182,7 @@ pub fn fuse_watch(env: &Env) {
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "off".to_owned());
     blog(env, "net", &format!("网络规则就绪，接管：{gw}"));
-    diag_snap_bg(env, "服务就绪");
+    diag::snap_bg(env, "服务就绪");
 
     let cfg_now = Config::load(env);
     let stable_sec = cfg_now.stable_sec();
@@ -653,7 +653,7 @@ pub fn vm_stop_exec(env: &Env, in_watch: bool) -> i32 {
         .unwrap_or_default()
         .trim()
         .to_owned();
-    diag_snap(env, "停止前", 2);
+    diag::snap(env, "停止前", 2);
     if vm_running(env) {
         let sock = run.join("crosvm.sock");
         let stop_status = Command::new(&env.crosvm)

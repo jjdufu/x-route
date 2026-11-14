@@ -12,7 +12,7 @@ use crate::daemon::keepalive::{
     cgroup_escape, cgroup_escape_tree, emergency_teardown, stale_gateway, vm_exit_reason,
     vm_guest_reset_pending,
 };
-use crate::diag::diag_snap_bg;
+use crate::diag;
 use crate::env::Env;
 use crate::log::log_err;
 use crate::log::note_ok;
@@ -70,7 +70,7 @@ pub fn main_loop(env: &Env) -> i32 {
             cgroup_escape_tree(env, std::process::id());
         } else {
             log_info(env, "watchdog", "守护进程不在，重新拉起");
-            diag_snap_bg(env, "看门狗重新拉起守护进程");
+            diag::snap_bg(env, "看门狗重新拉起守护进程");
             note_ok(env, "ensure_daemon", daemon::ensure(env));
         }
         rotate_all_logs(env);

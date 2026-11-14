@@ -3,7 +3,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 
-use xr::diag::{diag_redact, diag_vpn_hosts};
+use xr::diag;
 use xr::env::Env;
 
 /// 失败信息。
@@ -46,7 +46,7 @@ fn collects_remote_hosts() -> Result<(), Failure> {
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
         .map_err(|err| err.to_string())?;
 
-    let hosts = diag_vpn_hosts(&env);
+    let hosts = diag::vpn_hosts(&env);
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))
         .map_err(|err| err.to_string())?;
     ensure(
@@ -54,7 +54,7 @@ fn collects_remote_hosts() -> Result<(), Failure> {
         &format!("hosts 不符：{hosts:?}"),
     )?;
 
-    let redacted = diag_redact(
+    let redacted = diag::redact(
         &env,
         "连接 vpn.example.com 与 b.example.org、1.2.3.4 正常\n",
     );
