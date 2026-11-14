@@ -1,8 +1,11 @@
 //! `xr status-json` 与 `xr status-line`：汇总虚拟机、网络、`OpenClash`、`VPN`、共享与配置的状态。
 
 use std::fs;
+use std::io::{BufRead as _, BufReader, Write as _};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -159,6 +162,45 @@ fn vpn_section(env: &Env, alive: bool) -> Value {
     })
 }
 
+/// 向守护进程的 `run/stats.sock` 发一行请求并读一行 JSON 回复；连接、超时或解析任一步失败返回 `None`。
+fn stats_query(env: &Env, request: &str, timeout: Duration) -> Option<Value> {
+    let stream = UnixStream::connect(env.stats_sock()).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    let mut writer = &stream;
+    writer.write_all(format!("{request}\n").as_bytes()).ok()?;
+    let mut line = String::new();
+    let read = BufReader::new(&stream).read_line(&mut line).ok()?;
+    if read == 0 {
+        return None;
+    }
+    serde_json::from_str(&line).ok()
+}
+
+/// 累计流量起始时间（`config/traffic.since` 中的 Unix 秒）；文件缺失或无法解析时为 0。
+fn traffic_since(env: &Env) -> u64 {
+    fs::read_to_string(env.acct_since_file())
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// 状态页的 `traffic` 段：向守护进程查询实时速率与累计值；守护进程不在时各项为 null、`source` 为 `none`（不回退到直接执行 iptables）。
+fn traffic_section(env: &Env) -> Value {
+    let since = traffic_since(env);
+    let Some(reply) = stats_query(env, "rate", Duration::from_millis(800)) else {
+        return json!({ "counting": null, "rate": null, "total": null, "since": since, "source": "none" });
+    };
+    let field = |key: &str| reply.get(key).cloned().unwrap_or(Value::Null);
+    json!({
+        "counting": field("counting"),
+        "rate": field("rate"),
+        "total": field("total"),
+        "since": since,
+        "source": "daemon",
+    })
+}
+
 /// `xr status-json` 的 JSON 文本：虚拟机、手机侧网络（`scripts/net.sh status` 或内置实现）、客机 `IPv6`、`OpenClash`、`VPN`、共享目录与当前配置。
 #[must_use]
 pub(crate) fn json(env: &Env) -> String {
@@ -178,6 +220,7 @@ pub(crate) fn json(env: &Env) -> String {
         "vpn": vpn,
         "share": share,
         "config": cfg_map,
+        "traffic": traffic_section(env),
     })
     .to_string()
 }
