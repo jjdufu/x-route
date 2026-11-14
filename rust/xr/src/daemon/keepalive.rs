@@ -9,9 +9,14 @@ use rustix::process::Signal;
 use crate::config::Config;
 use crate::diag::diag_snap;
 use crate::env::Env;
+use crate::log::note_ok;
+use crate::log::note_rc;
 use crate::log::{log_err, log_info, unix_now};
 use crate::net::common::NetCtx;
-use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note, sys_shutting_down};
+use crate::sys::exec::note_status;
+use crate::sys::fsx;
+use crate::sys::send_signal_logged;
+use crate::sys::{is_pid_running, proc_cmdline, shutdown_note, sys_shutting_down};
 use crate::traffic::acct_total;
 use crate::vm::{run_net_hook, vm_running};
 
@@ -29,7 +34,7 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
     }
     if !v2_ok {
         let uid0 = root.join("uid_0/cgroup.procs");
-        let _ = fs::write(&uid0, format!("{trimmed}\n"));
+        fsx::write_logged(env, &uid0, format!("{trimmed}\n"));
     }
     for f in [
         "/dev/memcg/system/cgroup.procs",
@@ -42,16 +47,20 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
     ] {
         let p = Path::new(f);
         if p.exists() {
-            let _ = fs::write(p, format!("{trimmed}\n"));
+            fsx::write_logged(env, p, format!("{trimmed}\n"));
         }
     }
     let oom = env.proc_base.join(trimmed).join("oom_score_adj");
-    let _ = fs::write(oom, "-1000\n");
+    fsx::write_logged(env, oom, "-1000\n");
     true
 }
 
 pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
-    let _ = cgroup_escape(env, &self_pid.to_string());
+    note_ok(
+        env,
+        "cgroup_escape",
+        cgroup_escape(env, &self_pid.to_string()),
+    );
     let run = env.run_dir();
     for f in [
         "crosvm.pid",
@@ -64,7 +73,7 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
         if let Ok(p) = fs::read_to_string(run.join(f)) {
             let trimmed = p.trim();
             if !trimmed.is_empty() {
-                let _ = cgroup_escape(env, trimmed);
+                note_ok(env, "cgroup_escape", cgroup_escape(env, trimmed));
             }
         }
     }
@@ -76,10 +85,8 @@ pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
         if let Some(rest) = line.strip_prefix("0::") {
             return Some(rest.to_string());
         }
-        let mut parts = line.splitn(3, ':');
-        let _ = parts.next();
-        let _ = parts.next();
-        if let Some(rest) = parts.next() {
+        // cgroup v1 行格式 `层级号:控制器:路径`，取第三段
+        if let Some(rest) = line.splitn(3, ':').nth(2) {
             return Some(rest.to_string());
         }
     }
@@ -169,7 +176,7 @@ pub fn notifier_running(env: &Env) -> bool {
 
 fn notifier_exec(env: &Env, mode: &str) {
     let cp = format!("-Djava.class.path={}", env.notifier_jar.display());
-    let _ = Command::new(&env.app_process)
+    let status = Command::new(&env.app_process)
         .args([
             &cp,
             "/system/bin",
@@ -182,6 +189,7 @@ fn notifier_exec(env: &Env, mode: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    note_status(env, "xrnotify", status);
 }
 
 pub fn notifier_start(env: &Env) -> bool {
@@ -192,8 +200,8 @@ pub fn notifier_start(env: &Env) -> bool {
         return false;
     }
     let run = env.run_dir();
-    let _ = fs::remove_file(run.join("notify.req"));
-    let _ = fs::remove_file(run.join("notify.ack"));
+    fsx::remove_logged(env, run.join("notify.req"));
+    fsx::remove_logged(env, run.join("notify.ack"));
     let nlog = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -218,8 +226,8 @@ pub fn notifier_start(env: &Env) -> bool {
         return false;
     };
     let pid_s = ch.id().to_string();
-    let _ = fs::write(run.join("notifier.pid"), format!("{pid_s}\n"));
-    let _ = cgroup_escape(env, &pid_s);
+    fsx::write_logged(env, run.join("notifier.pid"), format!("{pid_s}\n"));
+    note_ok(env, "cgroup_escape", cgroup_escape(env, &pid_s));
     true
 }
 
@@ -262,7 +270,7 @@ pub fn notify_cancel(env: &Env) {
             done = true;
         }
         if let Ok(p) = fs::read_to_string(run.join("notifier.pid")) {
-            let _ = send_signal(p.trim(), Signal::TERM);
+            send_signal_logged(env, p.trim(), Signal::TERM);
         }
     }
     if !done && env.notifier_jar.is_file() {
@@ -276,7 +284,7 @@ pub fn notify_cancel(env: &Env) {
         "notify.last",
         "notify.ts",
     ] {
-        let _ = fs::remove_file(run.join(f));
+        fsx::remove_logged(env, run.join(f));
     }
 }
 
@@ -285,18 +293,18 @@ pub fn notify_update(env: &Env) {
     if !xr_vm_alive(env) {
         if run.join("notify.on").is_file() || !run.join("notify.idle").is_file() {
             notify_cancel(env);
-            let _ = fs::write(run.join("notify.idle"), "");
+            fsx::write_logged(env, run.join("notify.idle"), "");
         }
         return;
     }
-    let _ = fs::remove_file(run.join("notify.idle"));
+    fsx::remove_logged(env, run.join("notify.idle"));
     let mut force = false;
     if run.join("notify.force").is_file() {
-        let _ = fs::remove_file(run.join("notify.force"));
+        fsx::remove_logged(env, run.join("notify.force"));
         force = true;
     }
     if run.join("notify.on").is_file() && !notifier_running(env) {
-        let _ = fs::remove_file(run.join("notify.on"));
+        fsx::remove_logged(env, run.join("notify.on"));
     }
     let now = unix_now();
     let ts = fs::read_to_string(run.join("notify.ts"))
@@ -311,18 +319,18 @@ pub fn notify_update(env: &Env) {
     if run.join("notify.on").is_file() && !force {
         let last = fs::read_to_string(run.join("notify.last")).unwrap_or_default();
         if last.trim() == pl || !screen_on(env) {
-            let _ = fs::write(run.join("notify.ts"), format!("{now}\n"));
+            fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
             return;
         }
     }
     if notifier_post(env, &pl) {
-        let _ = fs::write(run.join("notify.last"), format!("{pl}\n"));
-        let _ = fs::write(run.join("notify.ts"), format!("{now}\n"));
-        let _ = fs::write(run.join("notify.on"), "");
-        let _ = fs::remove_file(run.join("notify.warned"));
+        fsx::write_logged(env, run.join("notify.last"), format!("{pl}\n"));
+        fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
+        fsx::write_logged(env, run.join("notify.on"), "");
+        fsx::remove_logged(env, run.join("notify.warned"));
         return;
     }
-    let _ = fs::write(run.join("notify.ts"), format!("{now}\n"));
+    fsx::write_logged(env, run.join("notify.ts"), format!("{now}\n"));
     if !run.join("notify.warned").is_file() {
         let ack = fs::read_to_string(run.join("notify.ack")).unwrap_or_default();
         let why = if ack.trim().is_empty() {
@@ -340,7 +348,7 @@ pub fn notify_update(env: &Env) {
         };
         let short: String = why.chars().take(200).collect();
         log_err(env, "daemon", &format!("常驻通知发送失败：{short}"));
-        let _ = fs::write(run.join("notify.warned"), "");
+        fsx::write_logged(env, run.join("notify.warned"), "");
     }
 }
 
@@ -400,7 +408,7 @@ pub fn vm_exit_reason(env: &Env) -> String {
 }
 
 pub fn routes_emergency_down(env: &Env) {
-    let _ = run_net_hook(env, "down");
+    note_rc(env, "run_net_hook", run_net_hook(env, "down"));
 }
 
 pub fn emergency_teardown(env: &Env, why: &str) {
@@ -417,11 +425,11 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             run.join("crosvm.pid"),
             run.join("guest/guest/openclash.status"),
         ] {
-            let _ = fs::remove_file(p);
+            fsx::remove_logged(env, p);
         }
         routes_emergency_down(env);
         crate::sys::wakelock_off(env);
-        let _ = fs::remove_file(run.join("net.gw"));
+        fsx::remove_logged(env, run.join("net.gw"));
         return;
     }
     if run.join("stopping").is_file() {
@@ -429,7 +437,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             return;
         }
         if xr_vm_alive(env) {
-            let _ = fs::remove_file(run.join("stopping"));
+            fsx::remove_logged(env, run.join("stopping"));
             return;
         }
         log_info(env, "daemon", "补全未完成的停止清理");
@@ -443,7 +451,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             env.fuse_file(),
             env.boot_log(),
         ] {
-            let _ = fs::remove_file(p);
+            fsx::remove_logged(env, p);
         }
         routes_emergency_down(env);
         crate::sys::wakelock_off(env);
@@ -452,7 +460,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
     }
     let last = fs::read_to_string(run.join("teardown.last")).unwrap_or_default();
     if last.trim() != why {
-        let _ = fs::write(run.join("teardown.last"), format!("{why}\n"));
+        fsx::write_logged(env, run.join("teardown.last"), format!("{why}\n"));
         log_err(env, "daemon", &format!("异常退出：{why}"));
         diag_snap(env, &format!("异常：{why}"), 3);
     }
@@ -460,11 +468,11 @@ pub fn emergency_teardown(env: &Env, why: &str) {
         return;
     }
     crate::clash::stop_clash_mux(env);
-    let _ = fs::write(run.join("last_error"), "服务意外退出\n");
-    let _ = fs::remove_file(run.join("state"));
-    let _ = fs::remove_file(run.join("ready_at"));
-    let _ = fs::remove_file(run.join("crosvm.pid"));
-    let _ = fs::remove_file(run.join("guest/guest/openclash.status"));
+    fsx::write_logged(env, run.join("last_error"), "服务意外退出\n");
+    fsx::remove_logged(env, run.join("state"));
+    fsx::remove_logged(env, run.join("ready_at"));
+    fsx::remove_logged(env, run.join("crosvm.pid"));
+    fsx::remove_logged(env, run.join("guest/guest/openclash.status"));
     routes_emergency_down(env);
     crate::sys::wakelock_off(env);
     notify_cancel(env);
