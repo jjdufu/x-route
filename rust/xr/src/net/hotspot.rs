@@ -1,3 +1,5 @@
+//! 热点接管：把安卓热点接口桥接进虚拟机（`xr1` + `xrbr1`），由客机 `OpenWrt` 负责 DHCP 与路由，并维护相应的规则。
+
 use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -14,10 +16,14 @@ use crate::net::vpn_routes::tether_ifaces;
 use crate::sys::exec::note_spawn;
 use crate::sys::{fsx, is_pid_running, proc_cmdline};
 
+/// 热点固定网段与 `IPv6` 默认路由使用的路由表号。
 const HS_TABLE: &str = "234";
+/// 热点网桥 `IPv6` 规则（`iif xrbr1` 查热点表）的优先级。
 const HS_PREF: &str = "19050";
+/// 热点固定网段 `IPv4` 规则（目的为热点网段查热点表）的优先级。
 const HS_PREF4: &str = "4790";
 
+/// 虚拟机在运行时返回 true：`run/crosvm.pid` 的进程存在，且命令行（能读到时）含有 `crosvm`。
 #[must_use]
 pub(crate) fn vm_alive(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
@@ -28,6 +34,7 @@ pub(crate) fn vm_alive(env: &Env) -> bool {
     proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
+/// 虚拟机在运行且状态为 `ready` 或 `stable` 时返回 true。
 #[must_use]
 pub(crate) fn vm_is_ready(env: &Env) -> bool {
     if !vm_alive(env) {
@@ -37,6 +44,7 @@ pub(crate) fn vm_is_ready(env: &Env) -> bool {
     matches!(st.trim(), "ready" | "stable")
 }
 
+/// 创建（不存在时）并启用热点 tap 网卡 `xr1`，清空其地址并关闭其 `IPv6`；创建失败时记 ERROR 返回 false。
 #[must_use]
 pub(crate) fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     if !ctx.ip(&["link", "show", HS_TAP]).success()
@@ -56,11 +64,13 @@ pub(crate) fn hs_tap_up(ctx: &NetCtx<'_>) -> bool {
     true
 }
 
+/// 撤销桥接并删除热点 tap 网卡 `xr1`。
 pub(crate) fn hs_tap_down(ctx: &NetCtx<'_>) {
     hs_unbridge(ctx);
     ctx.ip_run(&["link", "del", HS_TAP]);
 }
 
+/// 接口所属网桥名（`/sys/class/net/<接口>/master` 的链接目标），不属于网桥时返回空串。
 #[must_use]
 pub(crate) fn hs_master(env: &Env, iface: &str) -> String {
     fs::read_link(env.sysnet.join(iface).join("master"))
@@ -69,6 +79,7 @@ pub(crate) fn hs_master(env: &Env, iface: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 挑选要接管的热点接口：先看上次接管的接口，再看共享网络接口；要求存在、是 Wi-Fi（或设置了 `XR_HS_ANY`）且未处于 down。
 #[must_use]
 pub(crate) fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     let mut cands = Vec::new();
@@ -99,11 +110,13 @@ pub(crate) fn hs_pick(ctx: &NetCtx<'_>) -> Option<String> {
     None
 }
 
+/// 客机已上报支持热点桥接（`guest/guest/hotspot` 存在）时返回 true。
 #[must_use]
 pub(crate) fn hs_guest_ok(env: &Env) -> bool {
     env.run_dir().join("guest/guest/hotspot").is_file()
 }
 
+/// 是否应接管热点：配置允许桥接、虚拟机有网卡、已就绪且 `xr1` 已存在。
 #[must_use]
 pub(crate) fn hs_want(ctx: &NetCtx<'_>) -> bool {
     ctx.cfg.hotspot_bridge()
@@ -112,6 +125,7 @@ pub(crate) fn hs_want(ctx: &NetCtx<'_>) -> bool {
         && ctx.env.sysnet.join(HS_TAP).is_dir()
 }
 
+/// 向客机下发热点命令（写 `guest/host/hotspot.cmd`），在 `timeout_sec` 秒内等到客机回写同样的前两个词时返回 true。
 #[must_use]
 pub(crate) fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     let host_dir = env.run_dir().join("guest/host");
@@ -135,6 +149,7 @@ pub(crate) fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     false
 }
 
+/// 热点接管期间的防护规则：阻止手机自身向热点接口发 DHCP、RA、DHCPv6 应答，并让网桥入站的 `IPv6` 走 `xr0`。
 pub(crate) fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
     ctx.ipt_run(&["-N", "XR_HS"]);
     ctx.ipt_run(&["-F", "XR_HS"]);
@@ -175,6 +190,7 @@ pub(crate) fn hs_rules(ctx: &NetCtx<'_>, iface: &str) {
     ]);
 }
 
+/// 删除热点相关的路由表、策略规则和 `XR_HS`/`XR_HS6` 链。
 pub(crate) fn hs_rules_clear(ctx: &NetCtx<'_>) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
     ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
@@ -188,6 +204,7 @@ pub(crate) fn hs_rules_clear(ctx: &NetCtx<'_>) {
     ctx.ip6_run(&["route", "flush", "table", HS_TABLE]);
 }
 
+/// 决定热点网段：设置了固定网段且不冲突时用它；冲突时记一次 ERROR 并沿用安卓分配的网段。
 #[must_use]
 pub(crate) fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
     let hf = ctx.cfg.hotspot_subnet();
@@ -212,6 +229,7 @@ pub(crate) fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> S
     android_cidr.to_owned()
 }
 
+/// 热点网段与安卓分配的不同时，加一条"去往热点网段经虚拟机"的路由和规则；相同时只清理旧规则。
 pub(crate) fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     while ctx.ip(&["rule", "del", "pref", HS_PREF4]).success() {}
     ctx.ip_run(&["route", "flush", "table", HS_TABLE]);
@@ -230,6 +248,9 @@ pub(crate) fn hs_route4(ctx: &NetCtx<'_>, gw: &str, android_cidr: &str) {
     ]);
 }
 
+/// 把热点接口 `iface` 桥接进虚拟机：读取安卓分配的地址、建网桥、交给客机接管 DHCP，成功后写 `run/net.hs_*` 并返回 true。
+///
+/// 任一步失败时记 ERROR、写 `run/net.hs_fail` 并回退，返回 false。
 pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     let out4 = ctx.ip(&["-4", "-o", "addr", "show", "dev", iface]);
     let cidr = out4
@@ -410,6 +431,7 @@ pub(crate) fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
     true
 }
 
+/// 撤销热点桥接：通知客机停止、把接口移出网桥并恢复安卓原地址，删除规则与 `run/net.hs_*` 状态文件。
 pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
     let iface = fs::read_to_string(run.join("net.hs_if"))
@@ -494,6 +516,7 @@ pub(crate) fn hs_unbridge(ctx: &NetCtx<'_>) {
     trigger_diag_snap_bg(ctx.env, ctx.cfg, &format!("热点拆桥 {iface}"));
 }
 
+/// 热点对账：按当前条件决定应接管的接口，与已接管的不同时先撤销再桥接，必要时记日志。
 pub(crate) fn hs_sync(ctx: &NetCtx<'_>) {
     let run = ctx.env.run_dir();
     let mut want = None;
@@ -603,6 +626,7 @@ pub(crate) fn hs_sync(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 已接管热点时，在 `XR_FWD6` 中拒绝从热点网桥进入的 `IPv6` 转发（TCP 回 RST，其余回 `ICMPv6` 禁止）。
 pub(crate) fn hs_fwd6_rules(ctx: &NetCtx<'_>) {
     if !ctx.env.run_dir().join("net.hs_if").is_file() {
         return;

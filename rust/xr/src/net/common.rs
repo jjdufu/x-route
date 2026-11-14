@@ -1,3 +1,5 @@
+//! 网络操作的公共部分：执行 `ip`/`iptables`/`ndc` 的上下文、内核参数写入、流量四元组文件与字节数格式化。
+
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::Path;
@@ -10,23 +12,29 @@ use crate::env::Env;
 use crate::log;
 use crate::sys::fsx;
 
+/// 一次网络操作的上下文：运行环境与当次读取的配置。
 #[derive(Debug, Clone)]
 pub struct NetCtx<'a> {
+    /// 运行环境。
     pub(crate) env: &'a Env,
+    /// 当次读取的配置（决定调试日志等行为）。
     pub(crate) cfg: &'a Config,
 }
 
 impl<'a> NetCtx<'a> {
+    /// 由运行环境和配置构造上下文。
     #[must_use]
     pub const fn new(env: &'a Env, cfg: &'a Config) -> Self {
         Self { env, cfg }
     }
 
+    /// 执行 `ip`（经统一执行入口，转发标准错误）。
     #[must_use]
     pub(crate) fn ip(&self, args: &[&str]) -> crate::sys::exec::Output {
         crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ip"), args, true)
     }
 
+    /// 执行 `ip -6`。
     #[must_use]
     pub(crate) fn ip6(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
@@ -35,11 +43,13 @@ impl<'a> NetCtx<'a> {
         crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ip"), &full, true)
     }
 
+    /// 执行 `ndc`。
     #[must_use]
     pub(crate) fn ndc(&self, args: &[&str]) -> crate::sys::exec::Output {
         crate::sys::exec::run_xr(self.env, self.cfg, &self.env.sysbin_cmd("ndc"), args, true)
     }
 
+    /// 执行 `ndc`，输出中有以 `200 ` 开头的行（命令成功）时返回 true。
     #[must_use]
     pub(crate) fn ndc_ok(&self, args: &[&str]) -> bool {
         let res = self.ndc(args);
@@ -47,6 +57,7 @@ impl<'a> NetCtx<'a> {
             || res.stderr.lines().any(|line| line.starts_with("200 "))
     }
 
+    /// 执行 `iptables -w`。
     #[must_use]
     pub(crate) fn ipt(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
@@ -61,6 +72,7 @@ impl<'a> NetCtx<'a> {
         )
     }
 
+    /// 执行 `ip6tables -w`。
     #[must_use]
     pub(crate) fn ip6t(&self, args: &[&str]) -> crate::sys::exec::Output {
         let mut full = Vec::with_capacity(args.len().saturating_add(1));
@@ -100,6 +112,9 @@ impl<'a> NetCtx<'a> {
         crate::sys::exec::note_exec_result(&self.ndc(args));
     }
 
+    /// 向内核参数文件写入一行 `val`，成功返回 true；调试开关打开时记一行 `sysctl` 调试日志。
+    ///
+    /// 测试把 `proc_dir` 指向假目录时会先创建父目录并允许创建文件。
     #[must_use]
     pub(crate) fn sysw(&self, path: &Path, val: &str) -> bool {
         let is_mock = self.env.proc_dir != Path::new("/proc");
@@ -136,6 +151,7 @@ impl<'a> NetCtx<'a> {
         }
     }
 
+    /// 本地网络路由表名：`net.mode` 为 `ndc` 时用系统的 `local_network`，否则用自建的 `97` 号表。
     #[must_use]
     pub(crate) fn lnt(&self) -> &'static str {
         let mode = fs::read_to_string(self.env.run_dir().join("net.mode")).unwrap_or_default();
@@ -147,6 +163,7 @@ impl<'a> NetCtx<'a> {
     }
 }
 
+/// 调试开关打开时在后台启动 `xr internal diag-snap <reason>` 抓一次网络快照，不等待。
 pub(crate) fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
     if !cfg.debug_on() {
         return;
@@ -163,22 +180,33 @@ pub(crate) fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
     crate::sys::exec::note_spawn(env, "diag-snap", child);
 }
 
+/// 一个方向对的流量计数（字节）。
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub(crate) struct TrafficCounters {
+    /// 上行字节数。
     pub(crate) up: u64,
+    /// 下行字节数。
     pub(crate) down: u64,
 }
 
+/// 累计流量汇总（`traffic-json` 输出）。
 #[derive(Debug, Clone, Copy, Serialize)]
 pub(crate) struct TrafficSummary {
+    /// 经上游出网的流量。
     pub(crate) wan: TrafficCounters,
+    /// 热点等局域网客户端之间的流量。
     pub(crate) lan: TrafficCounters,
+    /// 两者合计。
     pub(crate) total: TrafficCounters,
+    /// 累计起始时间（Unix 秒）。
     pub(crate) since: u64,
+    /// `IPv4` 计数规则是否在位。
     pub(crate) counting: bool,
+    /// `IPv6` 计数规则是否在位。
     pub(crate) ipv6: bool,
 }
 
+/// 读取流量四元组文件（首行 4 个十进制数：上游上行、上游下行、局域网上行、局域网下行）；缺失或非数字的项为 0。
 #[must_use]
 pub fn read_quad(path: &Path) -> [u64; 4] {
     let Ok(content) = fs::read_to_string(path) else {
@@ -199,6 +227,7 @@ pub fn read_quad(path: &Path) -> [u64; 4] {
     vals
 }
 
+/// 原子写入流量四元组：先写 `<文件>.tmp.<pid>` 再改名，写失败时删除临时文件。
 pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
     if let Some(parent) = path.parent() {
         fsx::mkdirs_logged(env, parent);
@@ -213,6 +242,7 @@ pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
     }
 }
 
+/// 两个四元组逐项饱和相加。
 #[must_use]
 pub(crate) const fn combine_quad_add(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     [
@@ -223,6 +253,7 @@ pub(crate) const fn combine_quad_add(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     ]
 }
 
+/// 两个四元组逐项取较大值。
 #[must_use]
 pub fn combine_quad_max(lhs: [u64; 4], rhs: [u64; 4]) -> [u64; 4] {
     [

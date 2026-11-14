@@ -1,3 +1,5 @@
+//! 客机 `OpenVPN` 推送的路由：读取、校验（格式、主机位、与现有网段冲突、最多 64 条）并在手机侧经 `xr0` 安装或撤销。
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::iter;
@@ -10,11 +12,13 @@ use crate::log::dlog;
 use crate::net::common::NetCtx;
 use crate::sys::fsx;
 
+/// 客机上报 `OpenVPN` 路由的文件 `run/guest/guest/openvpn.routes`。
 #[must_use]
 pub fn guest_routes_file(ctx: &NetCtx<'_>) -> std::path::PathBuf {
     ctx.env.run_dir().join("guest/guest/openvpn.routes")
 }
 
+/// 路由文件缺失时的退路：从 `vm-ctl.log` 中取最后一次 `XR_VPN_ROUTES` 之后的内容。
 #[must_use]
 pub(crate) fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     let Ok(content) = fs::read_to_string(ctx.env.ctl_log()) else {
@@ -29,6 +33,7 @@ pub(crate) fn scrape_ctl_routes(ctx: &NetCtx<'_>) -> String {
     last
 }
 
+/// 客机推送的原始路由列表（按逗号或空白拆分），来源见 [`guest_routes_file`] 与 [`scrape_ctl_routes`]。
 pub(crate) fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
     let gf = guest_routes_file(ctx);
     let raw = if gf.is_file() {
@@ -42,6 +47,7 @@ pub(crate) fn routes_source(ctx: &NetCtx<'_>) -> Vec<String> {
         .collect()
 }
 
+/// 路由等价于默认路由（含 `0/1`+`128/1` 这类拆分写法）时返回 true；这些路由不在手机侧安装。
 #[must_use]
 pub fn is_default_route(route: &str) -> bool {
     matches!(
@@ -50,11 +56,13 @@ pub fn is_default_route(route: &str) -> bool {
     )
 }
 
+/// 路由含 `:`（即 `IPv6`）时返回 true。
 #[must_use]
 pub(crate) fn is_ip6_cidr(route: &str) -> bool {
     route.contains(':')
 }
 
+/// 共享网络（热点、USB 共享等）接口列表：`local_network` 表中出现的 `dev`，排除 `xr0`。
 #[must_use]
 pub(crate) fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     let out = ctx.ip(&["route", "show", "table", "local_network"]);
@@ -73,6 +81,9 @@ pub(crate) fn tether_ifaces(ctx: &NetCtx<'_>) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 筛出可以安装的 `VPN` 路由：规范化、跳过默认路由，拒绝格式错误、主机位非 0、与现有网段重叠的项，最多 64 条。
+///
+/// 每条被拒绝的路由记一行 ERROR；返回排序去重后的规范写法。
 #[must_use]
 pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
@@ -142,6 +153,7 @@ pub fn routes_valid(ctx: &NetCtx<'_>) -> Vec<String> {
     valid_set.into_iter().collect()
 }
 
+/// 路由下一跳：`IPv6` 为客机的 `<ULA 前缀>::254`，`IPv4` 为 `<内网前缀>.254`。
 fn route_via(ctx: &NetCtx<'_>, cidr: &str) -> String {
     if is_ip6_cidr(cidr) {
         format!("{XR_NET6}::254")
@@ -150,6 +162,7 @@ fn route_via(ctx: &NetCtx<'_>, cidr: &str) -> String {
     }
 }
 
+/// 按 `cidr` 的地址族执行 `ip` 或 `ip -6`。
 fn ipx(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) -> crate::sys::exec::Output {
     if is_ip6_cidr(cidr) {
         ctx.ip6(args)
@@ -163,6 +176,7 @@ fn ipx_run(ctx: &NetCtx<'_>, cidr: &str, args: &[&str]) {
     crate::sys::exec::note_exec_result(&ipx(ctx, cidr, args));
 }
 
+/// 安装一条 `VPN` 路由：`ndc` 模式下经 `ndc network route add`，否则写入 97 号表；再加一条优先级 4801 的"去往该网段查本地网络表"规则。
 pub(crate) fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
     let mode = fs::read_to_string(ctx.env.run_dir().join("net.mode")).unwrap_or_default();
@@ -186,6 +200,7 @@ pub(crate) fn route_add(ctx: &NetCtx<'_>, cidr: &str) {
     );
 }
 
+/// 撤销一条 `VPN` 路由（`ndc` 与 97 号表两处都删）及其 4801 规则。
 pub(crate) fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
     let via = route_via(ctx, cidr);
     ctx.ndc_run(&["network", "route", "remove", "local", XR_IF, cidr, &via]);
@@ -193,6 +208,7 @@ pub(crate) fn route_del(ctx: &NetCtx<'_>, cidr: &str) {
     ipx_run(ctx, cidr, &["rule", "del", "pref", "4801", "to", cidr]);
 }
 
+/// 字节序列的简单指纹（31 进制累乘 + 长度），用于判断路由文件是否变化。
 #[must_use]
 pub(crate) fn cksum_crc_like(bytes: &[u8]) -> String {
     // Simple deterministic fingerprint matching cksum presence/absence semantics for net_watch
@@ -203,12 +219,14 @@ pub(crate) fn cksum_crc_like(bytes: &[u8]) -> String {
     format!("{crc} {}", bytes.len())
 }
 
+/// 路由文件的指纹；文件不存在时为 `none`。
 #[must_use]
 pub(crate) fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
     fs::read(guest_routes_file(ctx))
         .map_or_else(|_| "none".to_owned(), |bytes| cksum_crc_like(&bytes))
 }
 
+/// 让已安装路由与 [`routes_valid`] 一致：删多余、补缺失，写 `run/routes.active` 与 `run/vpn.cksum`；变化时写调试日志。
 pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
     let want = routes_valid(ctx);
     let active_path = ctx.env.run_dir().join("routes.active");
@@ -255,6 +273,7 @@ pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
     );
 }
 
+/// 补回 `run/routes.active` 中在 97 号表里找不到的路由（被外部删除时）。
 pub(crate) fn routes_reassert(ctx: &NetCtx<'_>) {
     let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) else {
         return;
@@ -272,6 +291,7 @@ pub(crate) fn routes_reassert(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 撤销 `run/routes.active` 中的全部路由并删除该文件。
 pub(crate) fn routes_clear(ctx: &NetCtx<'_>) {
     let active_path = ctx.env.run_dir().join("routes.active");
     if let Ok(active) = fs::read_to_string(&active_path) {

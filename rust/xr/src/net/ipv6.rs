@@ -1,3 +1,5 @@
+//! `IPv6`：发现上游可共享前缀、为虚拟机安装邻居代理（NDP proxy），以及 `ip6tables` 不可用时的 nft 转发规则回退。
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -12,11 +14,13 @@ use crate::net::vpn_routes::tether_ifaces;
 use crate::sys::exec::note_status;
 use crate::sys::fsx;
 
+/// 客机已上报 `IPv6` 可用（`guest/guest/ipv6` 内容为 1）时返回 true。
 #[must_use]
 pub(crate) fn vm_v6(env: &Env) -> bool {
     fs::read_to_string(env.run_dir().join("guest/guest/ipv6")).is_ok_and(|text| text.trim() == "1")
 }
 
+/// 接口上的全局 `IPv6` 地址（带前缀长度），排除链路本地与 ULA。
 #[must_use]
 pub(crate) fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     if iface.is_empty() {
@@ -36,6 +40,9 @@ pub(crate) fn v6_iface_globals(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     res
 }
 
+/// 在上游出口与共享网络接口上寻找可共享给虚拟机的 `IPv6` 前缀（48–64 位，上游出口优先）。
+///
+/// 返回 `(前缀, 前缀所在接口, 已占用地址列表)`；找不到时返回 `None`。
 #[must_use]
 pub(crate) fn v6_discover(
     ctx: &NetCtx<'_>,
@@ -110,6 +117,7 @@ pub(crate) fn v6_discover(
     Some((best, best_if, busy))
 }
 
+/// 关闭安卓的热点硬件卸载（`settings`、`ndc`、`setprop` 三处），避免卸载路径绕过邻居代理；失败只计数。
 pub(crate) fn v6_tether_offload_off(ctx: &NetCtx<'_>) {
     for (prog, args) in [
         (
@@ -129,6 +137,7 @@ pub(crate) fn v6_tether_offload_off(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 写内核参数前把原值保存到 `orig_path`（只在第一次保存），以便撤销时恢复。
 fn v6_sysw_save(ctx: &NetCtx<'_>, path: &Path, val: &str, orig_path: &Path) {
     if !orig_path.is_file() {
         let orig = fs::read_to_string(path).unwrap_or_default();
@@ -137,6 +146,7 @@ fn v6_sysw_save(ctx: &NetCtx<'_>, path: &Path, val: &str, orig_path: &Path) {
     ctx.sysw_run(path, val);
 }
 
+/// 把上游 `IPv6` 出口接口名写给客机（`guest/host/ipv6.wan`），空串表示没有。
 pub(crate) fn v6_write_wan(env: &Env, wan: &str) {
     let host_dir = env.run_dir().join("guest/host");
     fsx::mkdirs_logged(env, &host_dir);
@@ -148,6 +158,7 @@ pub(crate) fn v6_write_wan(env: &Env, wan: &str) {
     fsx::write_logged(env, host_dir.join("ipv6.wan"), content);
 }
 
+/// 撤销 `IPv6` 邻居代理：删除代理表项与路由、恢复被改过的内核参数，删除 `run/net.v6*` 状态；已安装时记一行 INFO 说明原因。
 pub(crate) fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     let run = ctx.env.run_dir();
     let addr = fs::read_to_string(run.join("net.v6vm"))
@@ -203,6 +214,9 @@ pub(crate) fn v6_proxy_remove(ctx: &NetCtx<'_>, reason: Option<&str>) {
     fsx::remove_logged(ctx.env, run.join("net.v6pfx"));
 }
 
+/// 为虚拟机安装 `IPv6` 邻居代理：选前缀与地址、打开转发与 `proxy_ndp`、加代理表项与 `/128` 路由，成功返回 true。
+///
+/// 前缀或地址未变时只补齐表项；无可用前缀或地址时撤销并返回 false。
 #[must_use]
 pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     let run = ctx.env.run_dir();
@@ -296,6 +310,7 @@ pub(crate) fn v6_proxy_install(ctx: &NetCtx<'_>, outs6: &[String]) -> bool {
     true
 }
 
+/// 上游出口与共享网络接口上全部全局 `IPv6` 地址的拼接串，用于判断地址是否变化。
 #[must_use]
 pub(crate) fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
     let mut ifaces = outs6.to_vec();
@@ -309,6 +324,7 @@ pub(crate) fn v6_src_fingerprint(ctx: &NetCtx<'_>, outs6: &[String]) -> String {
     addrs.join(" ")
 }
 
+/// 按客机 `IPv6` 状态安装或撤销邻居代理，并写调试日志。
 pub(crate) fn v6_proxy_sync(ctx: &NetCtx<'_>, outs6: &[String]) {
     let guest_v6 = fs::read_to_string(ctx.env.run_dir().join("guest/guest/ipv6"))
         .unwrap_or_else(|_| "未上报".to_owned());
@@ -348,6 +364,7 @@ fn nft_run(args: &[&str]) {
     }
 }
 
+/// 执行 `nft`（输出丢弃），成功返回 true。
 fn nft_cmd(args: &[&str]) -> bool {
     Command::new("nft")
         .args(args)
@@ -358,6 +375,7 @@ fn nft_cmd(args: &[&str]) -> bool {
         .is_ok_and(|exit_status| exit_status.success())
 }
 
+/// 建立 nft 表 `inet xr_v6` 与转发链作为 `ip6tables` 的替代，成功时写 `run/net.fwd6nft` 并返回 true。
 #[must_use]
 pub(crate) fn v6_nft_setup(env: &Env) -> bool {
     if !nft_cmd(&["list", "tables"]) {
@@ -378,6 +396,7 @@ pub(crate) fn v6_nft_setup(env: &Env) -> bool {
     true
 }
 
+/// 删除 nft 表 `inet xr_v6`（仅在 `run/net.fwd6nft` 存在时）。
 pub(crate) fn v6_nft_teardown(env: &Env) {
     let marker = env.run_dir().join("net.fwd6nft");
     if !marker.is_file() {
@@ -387,6 +406,7 @@ pub(crate) fn v6_nft_teardown(env: &Env) {
     fsx::remove_logged(env, marker);
 }
 
+/// 按网关形态重建 nft 转发链中的 `IPv6` 规则（仅在使用 nft 回退时）。
 pub(crate) fn v6_nft_sync(ctx: &NetCtx<'_>, gw_mode: &str, outs6: &[String], ex: &[String]) {
     let run = ctx.env.run_dir();
     if !run.join("net.fwd6nft").is_file() {

@@ -1,3 +1,7 @@
+//! 手机侧网络：`xr0` 的创建与拆除、上游跟随、策略路由与网关模式、转发与 NAT 规则、MTU/MSS，以及 `net status` 状态。
+//!
+//! 由 `xr net up|down|watch|sync|status` 调用；`watch` 每 10 秒对账一次，`sync` 在网络变化时由守护进程触发。
+
 pub mod common;
 pub(crate) mod hotspot;
 pub(crate) mod ipv6;
@@ -32,11 +36,16 @@ use crate::sys::spawn;
 use crate::sys::{LockWait, PathLock, send_signal};
 use crate::traffic::{acct_hooks, acct_present, acct_present6, acct_setup, acct_teardown};
 
+/// 网关模式（`global`）下全局路由规则的优先级。
 const GW_PREF: &str = "19100";
+/// 网关模式使用的路由表号。
 const GW_TABLE: &str = "233";
+/// `IPv6` 拦截规则（热点等接口的 `IPv6` 指向 `xr0`）的优先级。
 const REJ6_PREF: &str = "19060";
+/// `IPv6` 拦截使用的路由表号。
 const REJ6_TABLE: &str = "235";
 
+/// 接口名属于蜂窝数据网卡（`rmnet`、`ccmni`、`seth` 及其 `v4-` 464XLAT 接口）时返回 true。
 fn is_cell_iface(name: &str) -> bool {
     name.starts_with("rmnet")
         || name.starts_with("ccmni")
@@ -45,6 +54,7 @@ fn is_cell_iface(name: &str) -> bool {
         || name.starts_with("v4-ccmni")
 }
 
+/// 获取网络操作的进程间锁 `run/.net.lock`（最多等待约 60 秒，持有者进程已退出时接管）。
 fn net_lock(env: &Env) -> PathLock {
     PathLock::acquire(
         env,
@@ -57,6 +67,7 @@ fn net_lock(env: &Env) -> PathLock {
     )
 }
 
+/// 当前默认上游接口：取 `ip rule` 中 `fwmark 0x0/0xffff iif lo lookup <接口>` 的表名，找不到时返回空串。
 #[must_use]
 pub(crate) fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     let out = ctx.ip(&["rule"]);
@@ -70,6 +81,7 @@ pub(crate) fn upstream_iface(ctx: &NetCtx<'_>) -> String {
     String::new()
 }
 
+/// 上游的 `IPv4` 出口接口集合：上游自身加上其路由表中默认路由的 `dev`，排序去重。
 #[must_use]
 pub(crate) fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
@@ -93,6 +105,7 @@ pub(crate) fn upstream_out(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 上游的 `IPv6` 出口接口集合：上游自身（`v4-` 接口除外）加上其 `IPv6` 默认路由的 `dev`（同样排除 `v4-`）。
 #[must_use]
 pub(crate) fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     if up.is_empty() {
@@ -119,6 +132,7 @@ pub(crate) fn upstream_out6(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().collect()
 }
 
+/// 按 `XR_EXPOSE` 计算需要开放管理访问的接口：`lan` 为共享网络接口，`all` 再加上游；蜂窝网卡始终排除。
 #[must_use]
 pub(crate) fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     let mut set = BTreeSet::new();
@@ -141,6 +155,7 @@ pub(crate) fn expose_ifaces(ctx: &NetCtx<'_>, up: &str) -> Vec<String> {
     set.into_iter().filter(|i| !is_cell_iface(i)).collect()
 }
 
+/// `xr0` 应使用的 MTU：出口接口 MTU 与上游默认路由 `mtu` 中的最小值，不低于 1280、不高于 1500。
 #[must_use]
 pub(crate) fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     let mut min_mtu: u32 = 1500;
@@ -177,6 +192,7 @@ pub(crate) fn upstream_mtu(ctx: &NetCtx<'_>, up: &str, outs: &[String]) -> u32 {
     min_mtu.max(1280)
 }
 
+/// 在 mangle 表的 `XR_MSS` 链为 `xr0` 和各出口接口设置 TCP MSS 钳制（`IPv4`、`IPv6` 各一份），并确保 `POSTROUTING` 第一条跳到该链。
 pub(crate) fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
     let mut targets = vec![XR_IF.to_owned()];
     targets.extend_from_slice(outs);
@@ -224,6 +240,7 @@ pub(crate) fn mss_rules(ctx: &NetCtx<'_>, outs: &[String]) {
     }
 }
 
+/// 删除 `IPv4`、`IPv6` 的 `XR_MSS` 链及其在 `POSTROUTING` 中的跳转。
 pub(crate) fn mss_clear(ctx: &NetCtx<'_>) {
     for use_v6 in [false, true] {
         let run_t = |args: &[&str]| {
@@ -239,6 +256,7 @@ pub(crate) fn mss_clear(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 把 `xr0` 的 MTU 调到跟随上游的值（变化时记 INFO），写 `run/net.mtu` 和给客机的 `guest/host/mtu`，并刷新 MSS 钳制。
 pub(crate) fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     let mt = upstream_mtu(ctx, up, outs);
     let mt_s = mt.to_string();
@@ -269,6 +287,7 @@ pub(crate) fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     mss_rules(ctx, outs);
 }
 
+/// 给客机推送当前时间：`guest/host/time` 缺失、损坏、晚于现在或已过 30 分钟时写入当前 Unix 秒。
 pub(crate) fn time_push(env: &Env) {
     let host_dir = env.run_dir().join("guest/host");
     if !host_dir.is_dir() {
@@ -293,6 +312,7 @@ pub(crate) fn time_push(env: &Env) {
     fsx::write_logged(env, time_file, format!("{now}\n"));
 }
 
+/// 确保 `FORWARD` 链第一条是跳到 `XR_FWD`，否则删除所有旧跳转后插到第一位。
 fn fwd_first(ctx: &NetCtx<'_>) {
     let out = ctx.ipt(&["-S", "FORWARD"]);
     if out.stdout.lines().nth(1) == Some("-A FORWARD -j XR_FWD") {
@@ -302,6 +322,7 @@ fn fwd_first(ctx: &NetCtx<'_>) {
     ctx.ipt_run(&["-I", "FORWARD", "1", "-j", "XR_FWD"]);
 }
 
+/// 确保 nat 表 `POSTROUTING` 中有跳到 `XR_NAT` 的规则，没有时插到第一位。
 fn nat_first(ctx: &NetCtx<'_>) {
     if !ctx
         .ipt(&["-t", "nat", "-C", "POSTROUTING", "-j", "XR_NAT"])
@@ -311,6 +332,7 @@ fn nat_first(ctx: &NetCtx<'_>) {
     }
 }
 
+/// 确保 `IPv6` `FORWARD` 链第一条是跳到 `XR_FWD6`，否则删除所有旧跳转后插到第一位。
 fn fwd6_first(ctx: &NetCtx<'_>) {
     let out = ctx.ip6t(&["-S", "FORWARD"]);
     if out.stdout.lines().nth(1) == Some("-A FORWARD -j XR_FWD6") {
@@ -320,6 +342,7 @@ fn fwd6_first(ctx: &NetCtx<'_>) {
     ctx.ip6t_run(&["-I", "FORWARD", "1", "-j", "XR_FWD6"]);
 }
 
+/// `ip6tables` 的 nat 表是否可用；结果缓存到 `run/net.ip6nat`，之后直接读缓存。
 #[must_use]
 pub(crate) fn ip6_nat_ok(env: &Env) -> bool {
     let cache = env.run_dir().join("net.ip6nat");
@@ -340,6 +363,7 @@ pub(crate) fn ip6_nat_ok(env: &Env) -> bool {
     ok
 }
 
+/// `IPv6` nat 可用时删除所有残留的 `POSTROUTING` → `XR_NAT6` 跳转（当前版本不做 `IPv6` NAT）。
 fn nat6_first(ctx: &NetCtx<'_>) {
     if !ip6_nat_ok(ctx.env) {
         return;
@@ -350,10 +374,12 @@ fn nat6_first(ctx: &NetCtx<'_>) {
     {}
 }
 
+/// 是否应启用网关：模式为 `global` 且虚拟机已就绪。
 fn want_gateway(ctx: &NetCtx<'_>) -> bool {
     ctx.cfg.mode() == "global" && vm_is_ready(ctx.env)
 }
 
+/// 应使用的网关形态：`off`（不接管）、`v6`（虚拟机有 `IPv6` 且邻居代理已安装，`IPv6` 也走虚拟机）或 `block`（`IPv6` 出网被拦截）。
 fn gw_want(ctx: &NetCtx<'_>) -> &'static str {
     if !want_gateway(ctx) {
         "off"
@@ -364,6 +390,7 @@ fn gw_want(ctx: &NetCtx<'_>) -> &'static str {
     }
 }
 
+/// 网关形态变化时写进日志的原因说明：模式、虚拟机状态、客机上报的 `IPv6` 与邻居代理是否安装。
 fn gw_reason(ctx: &NetCtx<'_>) -> String {
     let vm_st = if vm_alive(ctx.env) {
         fs::read_to_string(ctx.env.run_dir().join("state")).unwrap_or_else(|_| "booting".to_owned())
@@ -385,6 +412,7 @@ fn gw_reason(ctx: &NetCtx<'_>) -> String {
     )
 }
 
+/// 把接口 `dev` 的非默认 `IPv4` 路由复制到网关路由表，让直连网段不经虚拟机。
 fn copy_dev_routes(ctx: &NetCtx<'_>, dev: &str) {
     if dev.is_empty() || dev == XR_IF {
         return;
@@ -403,6 +431,7 @@ fn copy_dev_routes(ctx: &NetCtx<'_>, dev: &str) {
     }
 }
 
+/// 把接口 `dev` 在 `main`、`local_network` 表中的 `IPv6` 单播路由（去掉 `expires`）复制到网关路由表。
 fn copy_dev_routes6(ctx: &NetCtx<'_>, dev: &str) {
     if dev.is_empty() || dev == XR_IF {
         return;
@@ -437,6 +466,7 @@ fn copy_dev_routes6(ctx: &NetCtx<'_>, dev: &str) {
     }
 }
 
+/// 安装网关：重建网关路由表（直连路由 + 默认路由经虚拟机），添加全局规则；按形态设置 `IPv6` 默认路由或拦截规则，写 `run/net.gw`。
 fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]) {
     ctx.ip_run(&["route", "flush", "table", GW_TABLE]);
     let tethers = tether_ifaces(ctx);
@@ -497,6 +527,7 @@ fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]
     );
 }
 
+/// 拆除网关：删除网关与 `IPv6` 拦截的规则和路由表，删除 `run/net.gw`。
 fn gw_remove(ctx: &NetCtx<'_>) {
     while ctx.ip(&["rule", "del", "pref", GW_PREF]).success() {}
     ctx.ip_run(&["route", "flush", "table", GW_TABLE]);
@@ -507,6 +538,7 @@ fn gw_remove(ctx: &NetCtx<'_>) {
     fsx::remove_logged(ctx.env, ctx.env.run_dir().join("net.gw"));
 }
 
+/// 重建 `xr0` 入站的策略路由：先删优先级 18800、18900 的旧规则，上游存在时加回"查本地网络表"和"查上游表"两条。
 fn rules_set(ctx: &NetCtx<'_>, use_v6: bool, up: &str) {
     let run_ip = |args: &[&str]| {
         if use_v6 { ctx.ip6(args) } else { ctx.ip(args) }
@@ -525,6 +557,7 @@ fn rules_set(ctx: &NetCtx<'_>, use_v6: bool, up: &str) {
     ]));
 }
 
+/// 同步 `IPv6`：记录出口与虚拟机 `IPv6` 状态，维护 `XR_FWD6` 转发规则与 nft 回退规则。
 fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
     let run = ctx.env.run_dir();
     let outs6_str = if outs6.is_empty() {
@@ -665,6 +698,7 @@ fn sync_v6(ctx: &NetCtx<'_>, gw: &str, outs6: &[String], ex: &[String]) {
     v6_nft_sync(ctx, gw, outs6, ex);
 }
 
+/// 一次完整对账（调用方已持有网络锁）：跟随上游、开放接口、网关形态、路由、流量计数、热点与 `IPv6`，变化时记日志。
 fn sync_all_unlocked(env: &Env) {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
@@ -886,6 +920,7 @@ fn sync_all_unlocked(env: &Env) {
     }
 }
 
+/// `xr0` 存在时推送时间并在网络锁内做一次完整对账。
 pub(crate) fn sync(env: &Env) {
     if !env.sysnet.join(XR_IF).is_dir() {
         return;
@@ -895,6 +930,7 @@ pub(crate) fn sync(env: &Env) {
     sync_all_unlocked(env);
 }
 
+/// `xr net up`：创建并配置 `xr0`，打开转发，建立 `XR_FWD`/`XR_NAT` 等链并做首次对账；返回进程退出码（失败为 1）。
 #[must_use]
 pub(crate) fn up(env: &Env) -> i32 {
     if env.ensure_dirs().is_err() {
@@ -1006,6 +1042,7 @@ pub(crate) fn up(env: &Env) -> i32 {
     0
 }
 
+/// `xr net watch`：`xr0` 存在期间每 10 秒比对上游、出口、MTU、路由文件等指纹，有变化时完整对账，否则只补齐被外部删除的规则。
 #[must_use]
 pub(crate) fn watch(env: &Env) -> i32 {
     while env.sysnet.join(XR_IF).is_dir() {
@@ -1171,6 +1208,7 @@ pub(crate) fn watch(env: &Env) -> i32 {
     0
 }
 
+/// `xr net down`：停止对账循环，拆除网关、`IPv6` 代理、路由、链与 `xr0`，清理 `run/net.*` 状态文件；返回退出码。
 #[must_use]
 pub(crate) fn down(env: &Env) -> i32 {
     let cfg = Config::load(env);
@@ -1261,19 +1299,30 @@ pub(crate) fn down(env: &Env) -> i32 {
     0
 }
 
+/// `xr net status` 输出的网络状态（序列化为 JSON，字段名即 JSON 键）。
 #[derive(Debug, Serialize)]
 pub(crate) struct StatusJson {
+    /// 网络状态 `run/net.mode`，未启动时为 `down`。
     pub(crate) mode: String,
+    /// 当前上游接口，未知时为空串。
     pub(crate) up_if: String,
+    /// 管理访问开放范围 `XR_EXPOSE`。
     pub(crate) expose: String,
+    /// 开放管理访问的接口列表。
     pub(crate) expose_if: Vec<String>,
+    /// 虚拟机在 `xr0` 上的地址 `<前缀>.254`。
     pub(crate) vm_ip: String,
+    /// 手机在 `xr0` 上的地址 `<前缀>.1`。
     pub(crate) host_ip: String,
+    /// 网关形态 `off`、`v6` 或 `block`。
     pub(crate) gw: String,
+    /// 被接管的热点接口名，未接管时为空串。
     pub(crate) hotspot: String,
+    /// 热点网段（网关地址/前缀），未接管时为空串。
     pub(crate) hotspot_net: String,
 }
 
+/// 从 `run/net.*` 状态文件与配置汇总网络状态。
 pub(crate) fn status(env: &Env) -> StatusJson {
     let cfg = Config::load(env);
     let run = env.run_dir();
@@ -1318,11 +1367,13 @@ pub(crate) fn status(env: &Env) -> StatusJson {
     }
 }
 
+/// 网络状态的 JSON 文本；序列化失败时返回 `{"mode":"down"}`。
 #[must_use]
 pub fn status_json(env: &Env) -> String {
     serde_json::to_string(&status(env)).unwrap_or_else(|_| "{\"mode\":\"down\"}".to_owned())
 }
 
+/// `xr net` 子命令分发：`up`、`down`、`watch`、`sync`、`status`，其他参数打印用法并返回 2。
 pub(crate) fn run_net_cli(env: &Env, args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("up") => up(env),
