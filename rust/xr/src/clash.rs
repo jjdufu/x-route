@@ -152,6 +152,16 @@ type PendingMap = HashMap<String, (u64, Value)>;
 /// ws 归属登记：键 -> (客户端号, 另一侧的 `ws_id`)。
 type WsOwnerMap = HashMap<String, (u64, String)>;
 
+/// 客户端发来的一行请求的要素。
+struct ClientMsg {
+    /// 发来请求的客户端号。
+    client_id: u64,
+    /// 请求的 `op`（缺省为空串）。
+    op: String,
+    /// 请求的原 `id`（可能没有）。
+    orig_id: Option<Value>,
+}
+
 /// 复用进程的共享状态。
 struct MuxState {
     /// 客机控制口连接（未连接时为 `None`）。
@@ -359,6 +369,141 @@ impl MuxState {
         }
     }
 
+    /// 客户端 `ws_open`：给 ws 分配复用编号，登记到本连接映射、`active_ws`、`ws_by_key` 与客户端名下，并改写 `ws_id`。
+    ///
+    /// 缺 `ws_id` 时返回 false（整行丢弃）。
+    fn on_ws_open(
+        &self,
+        client_id: u64,
+        ws_map: &mut HashMap<String, String>,
+        obj: &mut Map<String, Value>,
+    ) -> bool {
+        let orig_ws = obj
+            .get("ws_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if orig_ws.is_empty() {
+            return false;
+        }
+        let mux_ws = format!("w{}", self.next_seq());
+        let _reopened_local: Option<String> = ws_map.insert(orig_ws.clone(), mux_ws.clone());
+        if let Ok(mut active) = self.active_ws.lock() {
+            let _stale_active: Option<(u64, String)> =
+                active.insert(mux_ws.clone(), (client_id, orig_ws.clone()));
+        }
+        if let Ok(mut by_key) = self.ws_by_key.lock() {
+            let _reopened_key: Option<(u64, String)> =
+                by_key.insert(orig_ws, (client_id, mux_ws.clone()));
+        }
+        if let Ok(mut clients) = self.clients.lock()
+            && let Some(ch) = clients.get_mut(&client_id)
+        {
+            ch.ws_ids.extend(std::iter::once(mux_ws.clone()));
+        }
+        let _orig_ws_id: Option<Value> = obj.insert("ws_id".to_owned(), Value::String(mux_ws));
+        true
+    }
+
+    /// 注销一个 ws：删 `ws_by_key`、`active_ws` 与原主人名下的登记；`notify_owner` 时通知原主人已关闭（code 1000）。
+    fn close_ws(&self, owner_cid: u64, orig_ws: &str, mux_ws: &str, notify_owner: bool) {
+        if let Ok(mut by_key) = self.ws_by_key.lock() {
+            let _closed_key: Option<(u64, String)> = by_key.remove(orig_ws);
+        }
+        if let Ok(mut active) = self.active_ws.lock() {
+            let _closed_active: Option<(u64, String)> = active.remove(mux_ws);
+        }
+        if let Ok(mut clients) = self.clients.lock()
+            && let Some(ch) = clients.get_mut(&owner_cid)
+        {
+            ch.ws_ids.retain(|owned| owned != mux_ws);
+        }
+        if notify_owner {
+            self.send_to_client(
+                owner_cid,
+                json!({"op": "ws_close", "ws_id": orig_ws, "code": 1000_i32, "reason": "closed"})
+                    .to_string(),
+            );
+        }
+    }
+
+    /// 客户端 `ws_send`/`ws_close`：先查本连接映射，查不到再按登记表找外部客户端打开的 ws；`ws_close` 时注销该 ws，最后改写 `ws_id`。
+    ///
+    /// 找不到归属时返回 `None`（整行丢弃，必要的回复已发出）；否则返回该 ws 是否属于外部客户端。
+    fn on_ws_send_or_close(
+        &self,
+        msg: &ClientMsg,
+        ws_map: &mut HashMap<String, String>,
+        obj: &mut Map<String, Value>,
+    ) -> Option<bool> {
+        let is_close = msg.op == "ws_close";
+        let orig_ws = obj
+            .get("ws_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let local_mapped = if is_close {
+            ws_map.remove(&orig_ws)
+        } else {
+            ws_map.get(&orig_ws).cloned()
+        };
+        let is_local = local_mapped.is_some();
+        let (owner_cid, mux_ws) =
+            local_mapped
+                .map(|mapped| (msg.client_id, mapped))
+                .or_else(|| {
+                    self.resolve_external_ws(msg.client_id, msg.orig_id.as_ref(), &msg.op, &orig_ws)
+                })?;
+        if is_close {
+            self.close_ws(owner_cid, &orig_ws, &mux_ws, !is_local);
+        }
+        let _orig_ws_id: Option<Value> = obj.insert("ws_id".to_owned(), Value::String(mux_ws));
+        Some(!is_local)
+    }
+
+    /// 改写请求 `id`：控制外部 ws 时去掉 `id`（由复用进程直接回复）；带 `id` 的其它请求改为 `r<序号>` 并登记，返回该编号。
+    fn rewrite_req_id(
+        &self,
+        msg: &ClientMsg,
+        obj: &mut Map<String, Value>,
+        is_ext_ws_ctl: bool,
+    ) -> Option<String> {
+        if is_ext_ws_ctl {
+            let _orig_req_id: Option<Value> = obj.remove("id");
+            return None;
+        }
+        let oid = msg.orig_id.as_ref()?;
+        let mid = format!("r{}", self.next_seq());
+        if let Ok(mut pending) = self.pending_reqs.lock() {
+            let _reused_mid: Option<(u64, Value)> =
+                pending.insert(mid.clone(), (msg.client_id, oid.clone()));
+        }
+        let _orig_req_id: Option<Value> = obj.insert("id".to_owned(), Value::String(mid.clone()));
+        Some(mid)
+    }
+
+    /// 客机未连接、请求没发出去：注销登记的请求编号，带 `id` 时回复 503。
+    fn on_unsent(&self, msg: ClientMsg, mux_req_id: Option<String>) {
+        if let Some(mid) = mux_req_id
+            && let Ok(mut pending) = self.pending_reqs.lock()
+        {
+            let _unsent: Option<(u64, Value)> = pending.remove(&mid);
+        }
+        if let Some(oid) = msg.orig_id {
+            let mut err = Map::new();
+            err.extend([
+                ("id".to_owned(), oid),
+                ("ok".to_owned(), Value::Bool(false)),
+                ("status".to_owned(), Value::from(503_i32)),
+                (
+                    "error".to_owned(),
+                    Value::String("hvc1 channel not connected".to_owned()),
+                ),
+            ]);
+            self.send_to_client(msg.client_id, Value::Object(err).to_string());
+        }
+    }
+
     /// 处理客户端发来的一行：改写 `id` 与 `ws_id` 并登记后转发给客机。
     ///
     /// 客机未连接时直接回复 503 错误；发送或关闭外部客户端打开的 ws 时由复用进程直接回复 ok。
@@ -373,141 +518,48 @@ impl MuxState {
         let Some(obj) = val.as_object_mut() else {
             return;
         };
+        let msg = ClientMsg {
+            client_id,
+            op: obj
+                .get("op")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            orig_id: obj.get("id").cloned(),
+        };
 
-        let op = obj
-            .get("op")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        let orig_id = obj.get("id").cloned();
-
-        let mut external_ws_owner: Option<(u64, String, String)> = None;
-
-        match op.as_str() {
+        let is_ext_ws_ctl = match msg.op.as_str() {
             "ws_open" => {
-                let orig_ws = obj
-                    .get("ws_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                if orig_ws.is_empty() {
+                if !self.on_ws_open(client_id, ws_map, obj) {
                     return;
                 }
-                let mux_ws = format!("w{}", self.next_seq());
-                let _reopened_local: Option<String> =
-                    ws_map.insert(orig_ws.clone(), mux_ws.clone());
-                if let Ok(mut active) = self.active_ws.lock() {
-                    let _stale_active: Option<(u64, String)> =
-                        active.insert(mux_ws.clone(), (client_id, orig_ws.clone()));
-                }
-                if let Ok(mut by_key) = self.ws_by_key.lock() {
-                    let _reopened_key: Option<(u64, String)> =
-                        by_key.insert(orig_ws, (client_id, mux_ws.clone()));
-                }
-                if let Ok(mut clients) = self.clients.lock()
-                    && let Some(ch) = clients.get_mut(&client_id)
-                {
-                    ch.ws_ids.extend(std::iter::once(mux_ws.clone()));
-                }
-                let _orig_ws_id: Option<Value> =
-                    obj.insert("ws_id".to_owned(), Value::String(mux_ws));
+                false
             }
             "ws_send" | "ws_close" => {
-                let orig_ws = obj
-                    .get("ws_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                let local_mapped = if op == "ws_close" {
-                    ws_map.remove(&orig_ws)
-                } else {
-                    ws_map.get(&orig_ws).cloned()
-                };
-                let is_local = local_mapped.is_some();
-                let owner = local_mapped.map(|mapped| (client_id, mapped)).or_else(|| {
-                    self.resolve_external_ws(client_id, orig_id.as_ref(), &op, &orig_ws)
-                });
-                let Some((owner_cid, mux_ws)) = owner else {
+                let Some(external) = self.on_ws_send_or_close(&msg, ws_map, obj) else {
                     return;
                 };
-                if !is_local {
-                    external_ws_owner = Some((owner_cid, orig_ws.clone(), mux_ws.clone()));
-                }
-                if op == "ws_close" {
-                    if let Ok(mut by_key) = self.ws_by_key.lock() {
-                        let _closed_key: Option<(u64, String)> = by_key.remove(&orig_ws);
-                    }
-                    if let Ok(mut active) = self.active_ws.lock() {
-                        let _closed_active: Option<(u64, String)> = active.remove(&mux_ws);
-                    }
-                    if let Ok(mut clients) = self.clients.lock()
-                        && let Some(ch) = clients.get_mut(&owner_cid)
-                    {
-                        ch.ws_ids.retain(|owned| owned != &mux_ws);
-                    }
-                    if external_ws_owner.is_some() {
-                        self.send_to_client(
-                            owner_cid,
-                            json!({"op": "ws_close", "ws_id": orig_ws, "code": 1000_i32, "reason": "closed"})
-                                .to_string(),
-                        );
-                    }
-                }
-                let _orig_ws_id: Option<Value> =
-                    obj.insert("ws_id".to_owned(), Value::String(mux_ws));
+                external
             }
-            _ => {}
-        }
-
-        let is_ext_ws_ctl = external_ws_owner.is_some() && (op == "ws_send" || op == "ws_close");
-        let mux_req_id = if is_ext_ws_ctl {
-            let _orig_req_id: Option<Value> = obj.remove("id");
-            None
-        } else if let Some(oid) = &orig_id {
-            let mid = format!("r{}", self.next_seq());
-            if let Ok(mut pending) = self.pending_reqs.lock() {
-                let _reused_mid: Option<(u64, Value)> =
-                    pending.insert(mid.clone(), (client_id, oid.clone()));
-            }
-            let _orig_req_id: Option<Value> =
-                obj.insert("id".to_owned(), Value::String(mid.clone()));
-            Some(mid)
-        } else {
-            None
+            _ => false,
         };
+        let mux_req_id = self.rewrite_req_id(&msg, obj, is_ext_ws_ctl);
 
         let Ok(line) = serde_json::to_string(&val) else {
             return;
         };
         let written = self.write_hvc_line(&line);
         if is_ext_ws_ctl {
-            if let Some(oid) = orig_id {
+            if let Some(oid) = msg.orig_id {
                 self.send_to_client(
                     client_id,
-                    json!({"id": oid, "ok": written || op == "ws_close"}).to_string(),
+                    json!({"id": oid, "ok": written || msg.op == "ws_close"}).to_string(),
                 );
             }
             return;
         }
         if !written {
-            if let Some(mid) = mux_req_id
-                && let Ok(mut pending) = self.pending_reqs.lock()
-            {
-                let _unsent: Option<(u64, Value)> = pending.remove(&mid);
-            }
-            if let Some(oid) = orig_id {
-                let mut err = Map::new();
-                err.extend([
-                    ("id".to_owned(), oid),
-                    ("ok".to_owned(), Value::Bool(false)),
-                    ("status".to_owned(), Value::from(503_i32)),
-                    (
-                        "error".to_owned(),
-                        Value::String("hvc1 channel not connected".to_owned()),
-                    ),
-                ]);
-                self.send_to_client(client_id, Value::Object(err).to_string());
-            }
+            self.on_unsent(msg, mux_req_id);
         }
     }
 }
