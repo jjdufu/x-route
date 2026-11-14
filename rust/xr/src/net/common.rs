@@ -8,6 +8,7 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::env::{Env, is_executable};
 use crate::log::log_info;
+use crate::sys::fsx;
 
 #[derive(Debug, Clone)]
 pub struct NetCtx<'a> {
@@ -96,7 +97,7 @@ impl<'a> NetCtx<'a> {
         let is_mock = self.env.proc_dir != Path::new("/proc");
         if is_mock {
             if let Some(p) = path.parent() {
-                let _ = fs::create_dir_all(p);
+                fsx::mkdirs_logged(self.env, p);
             }
         }
         let ok = OpenOptions::new()
@@ -122,6 +123,13 @@ impl<'a> NetCtx<'a> {
         ok
     }
 
+    /// 与 [`Self::sysw`] 相同，只关心成败：写入失败时计数（调试日志已由 `sysw` 写过），不返回结果。
+    pub fn sysw_run(&self, path: &Path, val: &str) {
+        if !self.sysw(path, val) {
+            crate::log::note_failure(&crate::log::FAILURES.fs);
+        }
+    }
+
     pub fn lnt(&self) -> &'static str {
         let mode = fs::read_to_string(self.env.run_dir().join("net.mode")).unwrap_or_default();
         if mode.trim() == "ndc" {
@@ -141,7 +149,7 @@ pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
         return;
     }
     let exe = env.self_exe();
-    let _ = Command::new(exe)
+    let child = Command::new(exe)
         .args(["internal", "diag-snap", reason])
         .env("MODDIR", &env.moddir)
         .env("XR_DATA", &env.xr_data)
@@ -149,6 +157,7 @@ pub fn trigger_diag_snap_bg(env: &Env, cfg: &Config, reason: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+    crate::sys::exec::note_spawn(env, cfg, "diag-snap", child);
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -186,17 +195,17 @@ pub fn read_quad(path: &Path) -> [u64; 4] {
     vals
 }
 
-pub fn write_quad(path: &Path, vals: [u64; 4]) {
+pub fn write_quad(env: &Env, path: &Path, vals: [u64; 4]) {
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fsx::mkdirs_logged(env, parent);
     }
     let pid = std::process::id();
     let tmp = path.with_extension(format!("tmp.{pid}"));
     let line = format!("{} {} {} {}\n", vals[0], vals[1], vals[2], vals[3]);
     if fs::write(&tmp, line).is_ok() {
-        let _ = fs::rename(&tmp, path);
+        fsx::rename_logged(env, &tmp, path);
     } else {
-        let _ = fs::remove_file(&tmp);
+        fsx::remove_logged(env, &tmp);
     }
 }
 

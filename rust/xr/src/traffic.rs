@@ -117,8 +117,8 @@ pub fn acct_total(ctx: &NetCtx<'_>) -> [u64; 4] {
 
 fn acct_fold(ctx: &NetCtx<'_>) {
     let total = combine_quad_add(read_quad(&ctx.env.acct_base_file()), acct_live(ctx));
-    write_quad(&ctx.env.acct_base_file(), total);
-    write_quad(&ctx.env.acct_snap_file(), total);
+    write_quad(ctx.env, &ctx.env.acct_base_file(), total);
+    write_quad(ctx.env, &ctx.env.acct_snap_file(), total);
 }
 
 fn acct_rules(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str, lan_list: &[String]) {
@@ -223,7 +223,7 @@ pub fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
             read_quad(&ctx.env.acct_base_file()),
             read_quad(&ctx.env.acct_snap_file()),
         );
-        write_quad(&ctx.env.acct_base_file(), merged);
+        write_quad(ctx.env, &ctx.env.acct_base_file(), merged);
         let since = ctx.env.acct_since_file();
         if !since.is_file() {
             fsx::write_logged(ctx.env, &since, format!("{}\n", unix_now()).as_bytes());
@@ -299,7 +299,7 @@ pub fn acct_snapshot(ctx: &NetCtx<'_>) {
     let total = acct_total(ctx);
     let snap_file = ctx.env.acct_snap_file();
     if total != read_quad(&snap_file) {
-        write_quad(&snap_file, total);
+        write_quad(ctx.env, &snap_file, total);
     }
 }
 
@@ -313,8 +313,8 @@ pub fn acct_reset(ctx: &NetCtx<'_>) {
         ctx.ip6t_run(&["-Z", "XR_ACCT6_UP"]);
         ctx.ip6t_run(&["-Z", "XR_ACCT6_DN"]);
     }
-    write_quad(&ctx.env.acct_base_file(), [0; 4]);
-    write_quad(&ctx.env.acct_snap_file(), [0; 4]);
+    write_quad(ctx.env, &ctx.env.acct_base_file(), [0; 4]);
+    write_quad(ctx.env, &ctx.env.acct_snap_file(), [0; 4]);
     fsx::write_logged(
         ctx.env,
         &ctx.env.acct_since_file(),

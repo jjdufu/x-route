@@ -39,7 +39,7 @@ fn test_human_bytes_and_quads() {
 
     let env = temp_env("quad");
     let qfile = env.run_dir().join("quad.test");
-    write_quad(&qfile, [1, 2, 3, 4]);
+    write_quad(&env, &qfile, [1, 2, 3, 4]);
     assert_eq!(read_quad(&qfile), [1, 2, 3, 4]);
 }
 

@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
 use crate::config::Config;
 use crate::env::Env;
@@ -161,6 +161,39 @@ pub(crate) fn note_exec_result(res: &ExecResult) {
 /// 执行命令，只关心成败：非 0 退出或无法执行时计数，调用方不会得到结果。
 pub fn xr_run(env: &Env, cfg: &Config, prog: &Path, args: &[&str], pass_stderr: bool) {
     note_exec_result(&xr_exec(env, cfg, prog, args, pass_stderr));
+}
+
+/// 处理不经 [`xr_exec`] 直接运行并等待的命令结果：非 0 退出或无法执行时计数，
+/// 无法执行时（调试开关打开）写调试日志。调用方继续执行。
+pub(crate) fn note_status(env: &Env, cfg: &Config, what: &str, res: std::io::Result<ExitStatus>) {
+    match res {
+        Ok(status) => {
+            if !status.success() {
+                note_failure(&FAILURES.exec);
+            }
+        }
+        Err(err) => {
+            note_failure(&FAILURES.exec);
+            dlog(env, cfg, "cmd", &format!("{what} 无法执行：{err}"));
+        }
+    }
+}
+
+/// 处理后台启动、不等待的命令：启动成功时（调试开关打开）记下子进程 pid，子进程句柄随即释放，
+/// 与原来不等待的语义相同；启动失败时计数并写调试日志。
+pub(crate) fn note_spawn(env: &Env, cfg: &Config, what: &str, res: std::io::Result<Child>) {
+    match res {
+        Ok(child) => dlog(
+            env,
+            cfg,
+            "cmd",
+            &format!("{what} 已在后台启动 pid={}", child.id()),
+        ),
+        Err(err) => {
+            note_failure(&FAILURES.exec);
+            dlog(env, cfg, "cmd", &format!("{what} 无法启动：{err}"));
+        }
+    }
 }
 
 pub fn xr_exec_quiet(env: &Env, cfg: &Config, prog: &Path, args: &[&str]) -> ExecResult {
