@@ -18,8 +18,12 @@ use crate::daemon::keepalive::{
     vm_stopping, xr_vm_alive,
 };
 use crate::env::Env;
+use crate::log::note_ok;
+use crate::log::note_rc;
 use crate::log::{debug_expire, log_err, log_info, rotate_all_logs, unix_now};
 use crate::net::common::NetCtx;
+use crate::sys::fsx;
+use crate::sys::send_signal_logged;
 use crate::sys::spawn::spawn_self_detached;
 use crate::sys::{is_pid_running, proc_cmdline, send_signal, shutdown_note, sys_shutting_down};
 use crate::traffic::acct_snapshot;
@@ -39,11 +43,15 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
 
     let run = env.run_dir();
     log_info(env, "vm", "检测到 OpenWrt 重启请求，正在重新拉起服务");
-    let _ = fs::write(run.join("stopping"), format!("{}\n", std::process::id()));
+    fsx::write_logged(
+        env,
+        run.join("stopping"),
+        format!("{}\n", std::process::id()),
+    );
     if let Ok(wp) = fs::read_to_string(run.join("fuse_watch.pid")) {
         let wp = wp.trim();
         if !wp.is_empty() && is_pid_running(env, wp) {
-            let _ = send_signal(wp, Signal::TERM);
+            send_signal_logged(env, wp, Signal::TERM);
         }
     }
     crate::clash::stop_clash_mux(env);
@@ -59,13 +67,13 @@ fn handle_guest_reboot(env: &Env, reset_times: &mut Vec<u64>) -> bool {
         env.fuse_file(),
         env.boot_log(),
     ] {
-        let _ = fs::remove_file(p);
+        fsx::remove_logged(env, p);
     }
-    let _ = run_net_hook(env, "down");
-    let _ = fs::remove_file(run.join("stopping"));
+    note_rc(env, "run_net_hook", run_net_hook(env, "down"));
+    fsx::remove_logged(env, run.join("stopping"));
 
-    let _ = vm_start_exec(env);
-    let _ = fs::write(run.join("notify.force"), "");
+    note_rc(env, "vm_start_exec", vm_start_exec(env));
+    fsx::write_logged(env, run.join("notify.force"), "");
     notify_update(env);
     true
 }
@@ -100,7 +108,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
     if is_pid_running(env, &wp) {
         if let Some(cmd) = proc_cmdline(env, &wp) {
             if cmd.contains("watchdog") || cmd.contains("xr") {
-                let _ = cgroup_escape(env, &wp);
+                note_ok(env, "cgroup_escape", cgroup_escape(env, &wp));
                 return true;
             }
         }
@@ -115,7 +123,7 @@ pub fn ensure_watchdog(env: &Env) -> bool {
             .trim()
             .to_string();
         if is_pid_running(env, &p) {
-            let _ = cgroup_escape(env, &p);
+            note_ok(env, "cgroup_escape", cgroup_escape(env, &p));
             return true;
         }
         thread::sleep(Duration::from_secs(1));
@@ -128,15 +136,17 @@ pub fn ensure_daemon(env: &Env) -> bool {
     if env.daemon_foreground {
         return true;
     }
-    let _ = env.ensure_dirs();
+    if let Err(err) = env.ensure_dirs() {
+        fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
+    }
     if daemon_running(env) {
         cgroup_escape_tree(env, std::process::id());
-        let _ = ensure_watchdog(env);
+        note_ok(env, "ensure_watchdog", ensure_watchdog(env));
         return true;
     }
     let run = env.run_dir();
-    let _ = fs::remove_file(run.join("daemon.ready"));
-    let _ = fs::remove_file(run.join("daemon.res"));
+    fsx::remove_logged(env, run.join("daemon.ready"));
+    fsx::remove_logged(env, run.join("daemon.res"));
     if spawn_self_detached(env, &["internal", "daemon"]).is_err() {
         log_err(env, "daemon", "守护进程未能启动");
         return false;
@@ -144,7 +154,7 @@ pub fn ensure_daemon(env: &Env) -> bool {
     for _ in 0..10 {
         if run.join("daemon.ready").is_file() && daemon_running(env) {
             cgroup_escape_tree(env, std::process::id());
-            let _ = ensure_watchdog(env);
+            note_ok(env, "ensure_watchdog", ensure_watchdog(env));
             return true;
         }
         thread::sleep(Duration::from_secs(1));
@@ -161,8 +171,8 @@ pub fn daemon_send(env: &Env, cmd: &str) -> i32 {
         return 1;
     }
     let run = env.run_dir();
-    let _ = fs::remove_file(run.join("daemon.res"));
-    let _ = fs::write(run.join("daemon.cmd"), format!("{cmd}\n"));
+    fsx::remove_logged(env, run.join("daemon.res"));
+    fsx::write_logged(env, run.join("daemon.cmd"), format!("{cmd}\n"));
     let p = daemon_pid(env);
     if !send_signal(&p, Signal::USR1) {
         return 1;
@@ -199,28 +209,40 @@ pub fn vm_stop(env: &Env) -> i32 {
 fn clean_daemon_pid(env: &Env, self_pid: &str) {
     let run = env.run_dir();
     if daemon_pid(env) == self_pid {
-        let _ = fs::remove_file(run.join("daemon.pid"));
-        let _ = fs::remove_file(run.join("daemon.ready"));
+        fsx::remove_logged(env, run.join("daemon.pid"));
+        fsx::remove_logged(env, run.join("daemon.ready"));
     }
 }
 
 pub fn daemon_loop(env: &Env) -> i32 {
-    let _ = env.ensure_dirs();
+    if let Err(err) = env.ensure_dirs() {
+        fsx::record_failure(env, "ensure_dirs", &env.xr_data, &err);
+    }
     let run = env.run_dir();
     let self_pid = std::process::id().to_string();
-    let _ = fs::write(run.join("daemon.pid"), format!("{self_pid}\n"));
-    let _ = cgroup_escape(env, &self_pid);
+    fsx::write_logged(env, run.join("daemon.pid"), format!("{self_pid}\n"));
+    note_ok(env, "cgroup_escape", cgroup_escape(env, &self_pid));
 
     let hup = Arc::new(AtomicBool::new(false));
     let usr = Arc::new(AtomicBool::new(false));
     let term = Arc::new(AtomicBool::new(false));
-    let _ = flag::register(SIGHUP, Arc::clone(&hup));
-    let _ = flag::register(SIGUSR1, Arc::clone(&usr));
-    let _ = flag::register(SIGUSR2, Arc::clone(&usr));
-    let _ = flag::register(SIGTERM, Arc::clone(&term));
-    let _ = flag::register(SIGINT, Arc::clone(&term));
+    if let Err(err) = flag::register(SIGHUP, Arc::clone(&hup)) {
+        log_err(env, "daemon", &format!("信号注册失败 SIGHUP: {err}"));
+    }
+    if let Err(err) = flag::register(SIGUSR1, Arc::clone(&usr)) {
+        log_err(env, "daemon", &format!("信号注册失败 SIGUSR1: {err}"));
+    }
+    if let Err(err) = flag::register(SIGUSR2, Arc::clone(&usr)) {
+        log_err(env, "daemon", &format!("信号注册失败 SIGUSR2: {err}"));
+    }
+    if let Err(err) = flag::register(SIGTERM, Arc::clone(&term)) {
+        log_err(env, "daemon", &format!("信号注册失败 SIGTERM: {err}"));
+    }
+    if let Err(err) = flag::register(SIGINT, Arc::clone(&term)) {
+        log_err(env, "daemon", &format!("信号注册失败 SIGINT: {err}"));
+    }
 
-    let _ = fs::write(run.join("daemon.cmd"), "");
+    fsx::write_logged(env, run.join("daemon.cmd"), "");
     for f in [
         "notify.on",
         "notify.idle",
@@ -228,9 +250,9 @@ pub fn daemon_loop(env: &Env) -> i32 {
         "notify.ts",
         "notify.warned",
     ] {
-        let _ = fs::remove_file(run.join(f));
+        fsx::remove_logged(env, run.join(f));
     }
-    let _ = fs::write(run.join("daemon.ready"), "ready\n");
+    fsx::write_logged(env, run.join("daemon.ready"), "ready\n");
     let cg = cgroup_path(env, &self_pid).unwrap_or_default();
     log_info(env, "daemon", &format!("已启动 pid={self_pid} cgroup={cg}"));
 
@@ -244,10 +266,10 @@ pub fn daemon_loop(env: &Env) -> i32 {
                 log_info(env, "daemon", "收到 TERM，守护进程退出");
             }
             if !xr_vm_alive(env) {
-                let _ = fs::remove_file(run.join("state"));
-                let _ = fs::remove_file(run.join("ready_at"));
-                let _ = fs::remove_file(run.join("crosvm.pid"));
-                let _ = fs::remove_file(run.join("stopping"));
+                fsx::remove_logged(env, run.join("state"));
+                fsx::remove_logged(env, run.join("ready_at"));
+                fsx::remove_logged(env, run.join("crosvm.pid"));
+                fsx::remove_logged(env, run.join("stopping"));
                 routes_emergency_down(env);
             }
             clean_daemon_pid(env, &self_pid);
@@ -259,7 +281,7 @@ pub fn daemon_loop(env: &Env) -> i32 {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            let _ = fs::write(run.join("daemon.cmd"), "");
+            fsx::write_logged(env, run.join("daemon.cmd"), "");
             if !cmd.is_empty() {
                 let rc = match cmd.as_str() {
                     "start" => {
@@ -272,25 +294,25 @@ pub fn daemon_loop(env: &Env) -> i32 {
                     }
                     "ping" => 0,
                     "quit" => {
-                        let _ = vm_stop_exec(env, false);
+                        note_rc(env, "vm_stop_exec", vm_stop_exec(env, false));
                         let cfg = Config::load(env);
                         let ctx = NetCtx::new(env, &cfg);
                         acct_snapshot(&ctx);
                         notify_cancel(env);
                         clean_daemon_pid(env, &self_pid);
-                        let _ = fs::remove_file(run.join("daemon.cmd"));
-                        let _ = fs::write(run.join("daemon.res"), "0\n");
+                        fsx::remove_logged(env, run.join("daemon.cmd"));
+                        fsx::write_logged(env, run.join("daemon.res"), "0\n");
                         return 0;
                     }
                     _ => 2,
                 };
-                let _ = fs::write(run.join("daemon.res"), format!("{rc}\n"));
+                fsx::write_logged(env, run.join("daemon.res"), format!("{rc}\n"));
                 if term.load(Ordering::Relaxed) && !sys_shutting_down(env) {
                     log_info(env, "daemon", "停止流程完成，响应 TERM 退出");
                     clean_daemon_pid(env, &self_pid);
                     return 0;
                 }
-                let _ = fs::write(run.join("notify.force"), "");
+                fsx::write_logged(env, run.join("notify.force"), "");
                 notify_update(env);
             }
         }
@@ -334,13 +356,14 @@ pub fn daemon_loop(env: &Env) -> i32 {
                         });
                     if let (Some(r0), Some(now)) = (since, crate::vm::mono_now(env)) {
                         if now.saturating_sub(r0) >= cfg.stable_sec() {
-                            let _ = fs::remove_file(env.fuse_file());
-                            let _ = fs::remove_file(env.boot_log());
-                            let _ = fs::write(
+                            fsx::remove_logged(env, env.fuse_file());
+                            fsx::remove_logged(env, env.boot_log());
+                            fsx::write_logged(
+                                env,
                                 env.last_good_file(),
                                 format!("{}\n", crate::config::config_hash(env)),
                             );
-                            let _ = fs::write(run.join("state"), "stable\n");
+                            fsx::write_logged(env, run.join("state"), "stable\n");
                             log_info(env, "vm", "稳定，熔断已解除，last_good 已更新");
                         }
                     }
