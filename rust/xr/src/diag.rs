@@ -217,37 +217,49 @@ pub fn redact(env: &Env, input: &str) -> String {
     mask_vpn_hosts(env, mask_patterns(strip_secret_blocks(input)))
 }
 
-/// 手机网络快照：路由规则与路由表、`iptables`/`ip6tables` 规则、接口与无线状态等命令输出。
-#[must_use]
-pub fn phone(env: &Env) -> String {
-    let mut out = String::new();
-    let ip_bin = env.sysbin_cmd("ip");
-    let iptables_bin = env.sysbin_cmd("iptables");
-    let ip6t_bin = env.sysbin_cmd("ip6tables");
-    let wifi_bin = env.sysbin_cmd("iw");
-    let now = Local::now().format("%Y-%m-%d %H:%M:%S");
-    out.push_str("### 手机网络快照 ");
-    out.push_str(&now.to_string());
-    out.push('\n');
+/// 网桥目录 `br` 下 `brif` 中的端口名，以空格连接；没有端口时为"无"。
+fn bridge_ports(br: &Path) -> String {
+    let mut ports = Vec::new();
+    if let Ok(brd) = fs::read_dir(br.join("brif")) {
+        for entry in brd.flatten() {
+            ports.push(entry.file_name().to_string_lossy().into_owned());
+        }
+    }
+    if ports.is_empty() {
+        "无".to_owned()
+    } else {
+        ports.join(" ")
+    }
+}
 
+/// 把 `text` 中含任一 `needles` 的行依次追加到 `out`。
+fn push_lines_with(out: &mut String, text: &str, needles: &[&str]) {
+    for line in text.lines() {
+        if needles.iter().any(|needle| line.contains(needle)) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
+
+/// 无线接口 `n` 的 `iw dev info` 摘要（接口、类型、`SSID`、信道）与 `station dump` 摘要（设备、空闲与连接时长、信号）。
+fn diag_wireless(out: &mut String, wifi_bin: &Path, n: &str) {
+    let info = sys_cmd_output(wifi_bin, &["dev", n, "info"]);
+    push_lines_with(out, &info, &["Interface", "type", "ssid", "channel"]);
+    let st = sys_cmd_output(wifi_bin, &["dev", n, "station", "dump"]);
+    push_lines_with(
+        out,
+        &st,
+        &["Station", "inactive time", "connected time", "signal:"],
+    );
+}
+
+/// 快照的路由部分：`ip -4/-6 rule`、固定表与上游表的 `IPv4`/`IPv6` 路由、接口地址与链路、邻居与代理邻居。
+fn diag_routes(out: &mut String, ip_bin: &Path, up: &str) {
     let ip_s = ip_bin.to_string_lossy().into_owned();
-    dsec(
-        &mut out,
-        &format!("{ip_s} -4 rule"),
-        &ip_bin,
-        &["-4", "rule"],
-    );
-    dsec(
-        &mut out,
-        &format!("{ip_s} -6 rule"),
-        &ip_bin,
-        &["-6", "rule"],
-    );
+    dsec(out, &format!("{ip_s} -4 rule"), ip_bin, &["-4", "rule"]);
+    dsec(out, &format!("{ip_s} -6 rule"), ip_bin, &["-6", "rule"]);
 
-    let up = fs::read_to_string(env.run_dir().join("net.up_if"))
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
     let mut tables = vec![
         "main".to_owned(),
         "local_network".to_owned(),
@@ -260,38 +272,31 @@ pub fn phone(env: &Env) -> String {
     }
     for tbl in &tables {
         dsec(
-            &mut out,
+            out,
             &format!("{ip_s} -4 route show table {tbl}"),
-            &ip_bin,
+            ip_bin,
             &["-4", "route", "show", "table", tbl],
         );
         dsec(
-            &mut out,
+            out,
             &format!("{ip_s} -6 route show table {tbl}"),
-            &ip_bin,
+            ip_bin,
             &["-6", "route", "show", "table", tbl],
         );
     }
+    dsec(out, &format!("{ip_s} -br addr"), ip_bin, &["-br", "addr"]);
+    dsec(out, &format!("{ip_s} -br link"), ip_bin, &["-br", "link"]);
     dsec(
-        &mut out,
-        &format!("{ip_s} -br addr"),
-        &ip_bin,
-        &["-br", "addr"],
-    );
-    dsec(
-        &mut out,
-        &format!("{ip_s} -br link"),
-        &ip_bin,
-        &["-br", "link"],
-    );
-    dsec(
-        &mut out,
+        out,
         &format!("{ip_s} -6 neigh show proxy"),
-        &ip_bin,
+        ip_bin,
         &["-6", "neigh", "show", "proxy"],
     );
-    dsec(&mut out, &format!("{ip_s} neigh"), &ip_bin, &["neigh"]);
+    dsec(out, &format!("{ip_s} neigh"), ip_bin, &["neigh"]);
+}
 
+/// 快照的防火墙部分：`iptables` 与 `ip6tables` 中本模块相关的链。
+fn diag_iptables(out: &mut String, iptables_bin: &Path, ip6t_bin: &Path) {
     let iptables_path = iptables_bin.to_string_lossy().into_owned();
     for args in [
         &["-w", "-S", "FORWARD"][..],
@@ -303,9 +308,9 @@ pub fn phone(env: &Env) -> String {
         &["-w", "-S", "XR_HS"],
     ] {
         dsec(
-            &mut out,
+            out,
             &format!("{iptables_path} {}", args.join(" ")),
-            &iptables_bin,
+            iptables_bin,
             args,
         );
     }
@@ -318,39 +323,30 @@ pub fn phone(env: &Env) -> String {
         &["-w", "-S", "OUTPUT"],
         &["-w", "-S", "XR_HS6"],
     ] {
-        dsec(
-            &mut out,
-            &format!("{ip6t_s} {}", args.join(" ")),
-            &ip6t_bin,
-            args,
-        );
+        dsec(out, &format!("{ip6t_s} {}", args.join(" ")), ip6t_bin, args);
     }
+}
 
+/// 快照的"网桥"一节：每座 `xrbr*` 网桥及其端口。
+fn diag_bridges(out: &mut String, env: &Env) {
     out.push_str("## 网桥\n");
     if let Ok(rd) = fs::read_dir(&env.sysnet) {
         for ent in rd.flatten() {
             let name = ent.file_name().to_string_lossy().into_owned();
-            if name.starts_with("xrbr") && ent.path().is_dir() {
-                let mut ports = Vec::new();
-                if let Ok(brd) = fs::read_dir(ent.path().join("brif")) {
-                    for entry in brd.flatten() {
-                        ports.push(entry.file_name().to_string_lossy().into_owned());
-                    }
-                }
-                let ps = if ports.is_empty() {
-                    "无".to_owned()
-                } else {
-                    ports.join(" ")
-                };
-                out.push_str(&name);
-                out.push_str(": 端口 ");
-                out.push_str(&ps);
-                out.push('\n');
+            if !name.starts_with("xrbr") || !ent.path().is_dir() {
+                continue;
             }
+            out.push_str(&name);
+            out.push_str(": 端口 ");
+            out.push_str(&bridge_ports(&ent.path()));
+            out.push('\n');
         }
     }
     out.push('\n');
+}
 
+/// 快照的"sysctl"一节：转发开关，以及本模块接口、上游与热点接口的 `IPv6` 参数。
+fn diag_sysctl(out: &mut String, env: &Env, up: &str) {
     out.push_str("## sysctl\n");
     for path in [
         "/proc/sys/net/ipv4/ip_forward",
@@ -387,33 +383,17 @@ pub fn phone(env: &Env) -> String {
         }
     }
     out.push('\n');
+}
 
+/// 快照的"热点"一节：无线接口信息与已连设备、网络共享卸载开关与 `dumpsys tethering` 摘要（最多 60 行）。
+fn diag_hotspot(out: &mut String, env: &Env, wifi_bin: &Path) {
     out.push_str("## 热点\n");
     if let Ok(rd) = fs::read_dir(&env.sysnet) {
         for ent in rd.flatten() {
             let path = ent.path();
             if path.join("wireless").is_dir() || path.join("phy80211").is_dir() {
                 let n = ent.file_name().to_string_lossy().into_owned();
-                let info = sys_cmd_output(&wifi_bin, &["dev", &n, "info"]);
-                for info_line in info.lines() {
-                    if ["Interface", "type", "ssid", "channel"]
-                        .iter()
-                        .any(|needle| info_line.contains(needle))
-                    {
-                        out.push_str(info_line);
-                        out.push('\n');
-                    }
-                }
-                let st = sys_cmd_output(&wifi_bin, &["dev", &n, "station", "dump"]);
-                for entry_line in st.lines() {
-                    if ["Station", "inactive time", "connected time", "signal:"]
-                        .iter()
-                        .any(|needle_key| entry_line.contains(needle_key))
-                    {
-                        out.push_str(entry_line);
-                        out.push('\n');
-                    }
-                }
+                diag_wireless(out, wifi_bin, &n);
             }
         }
     }
@@ -449,7 +429,10 @@ pub fn phone(env: &Env) -> String {
         }
     }
     out.push('\n');
+}
 
+/// 快照的"DNS"一节：含 `dns` 的系统属性（最多 20 行）与私人 DNS 模式。
+fn diag_dns(out: &mut String) {
     out.push_str("## DNS\n");
     let gp = sys_cmd_output(Path::new("getprop"), &[]);
     let mut dcount = 0_usize;
@@ -472,7 +455,10 @@ pub fn phone(env: &Env) -> String {
     out.push_str(pdns.trim());
     out.push('\n');
     out.push('\n');
+}
 
+/// 快照的"运行状态"一节：状态、客机文件与 `run/net.*`，每个最多 300 字节、换行换成空格。
+fn diag_run_state(out: &mut String, env: &Env) {
     out.push_str("## 运行状态\n");
     let run = env.run_dir();
     let mut status_files = vec![
@@ -506,6 +492,32 @@ pub fn phone(env: &Env) -> String {
         }
     }
     out.push('\n');
+}
+
+/// 手机网络快照：路由规则与路由表、`iptables`/`ip6tables` 规则、接口与无线状态等命令输出。
+#[must_use]
+pub fn phone(env: &Env) -> String {
+    let mut out = String::new();
+    let ip_bin = env.sysbin_cmd("ip");
+    let iptables_bin = env.sysbin_cmd("iptables");
+    let ip6t_bin = env.sysbin_cmd("ip6tables");
+    let wifi_bin = env.sysbin_cmd("iw");
+    let now = Local::now().format("%Y-%m-%d %H:%M:%S");
+    out.push_str("### 手机网络快照 ");
+    out.push_str(&now.to_string());
+    out.push('\n');
+
+    let up = fs::read_to_string(env.run_dir().join("net.up_if"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    diag_routes(&mut out, &ip_bin, &up);
+    diag_iptables(&mut out, &iptables_bin, &ip6t_bin);
+    diag_bridges(&mut out, env);
+    diag_sysctl(&mut out, env, &up);
+    diag_hotspot(&mut out, env, &wifi_bin);
+    diag_dns(&mut out);
+    diag_run_state(&mut out, env);
     out
 }
 
