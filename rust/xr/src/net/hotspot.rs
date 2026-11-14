@@ -23,7 +23,7 @@ pub fn vm_alive(env: &Env) -> bool {
     if !is_pid_running(env, trimmed) {
         return false;
     }
-    proc_cmdline(env, trimmed).is_none_or(|c| c.contains("crosvm"))
+    proc_cmdline(env, trimmed).is_none_or(|cmdline| cmdline.contains("crosvm"))
 }
 
 #[must_use]
@@ -63,7 +63,7 @@ pub fn hs_tap_down(ctx: &NetCtx<'_>) {
 pub fn hs_master(env: &Env, iface: &str) -> String {
     fs::read_link(env.sysnet.join(iface).join("master"))
         .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .and_then(|path| path.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_default()
 }
 
@@ -125,7 +125,7 @@ pub fn hs_guest_cmd(env: &Env, cmd: &str, timeout_sec: u64) -> bool {
     };
     let guest_file = env.run_dir().join("guest/guest/hotspot");
     for _ in 0..timeout_sec {
-        if fs::read_to_string(&guest_file).is_ok_and(|s| s.trim() == expect) {
+        if fs::read_to_string(&guest_file).is_ok_and(|text| text.trim() == expect) {
             return true;
         }
         thread::sleep(Duration::from_secs(1));
@@ -193,7 +193,7 @@ pub fn hs_gw_cidr(ctx: &NetCtx<'_>, iface: &str, android_cidr: &str) -> String {
     if !hf.is_empty() {
         if let Some(hc) = hs_subnet_clash(ctx.env, ctx.cfg.net_prefix(), hf, Some(iface)) {
             let expected = format!("{hf} {hc}");
-            if fs::read_to_string(&clash_file).map_or(true, |s| s.trim() != expected) {
+            if fs::read_to_string(&clash_file).map_or(true, |text| text.trim() != expected) {
                 log_err(
                     ctx.env,
                     "hotspot",
@@ -234,7 +234,7 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         .stdout
         .lines()
         .next()
-        .and_then(|l| l.split_whitespace().nth(3))
+        .and_then(|route_line| route_line.split_whitespace().nth(3))
         .unwrap_or("")
         .to_owned();
     if cidr.is_empty() {
@@ -257,16 +257,16 @@ pub fn hs_bridge(ctx: &NetCtx<'_>, iface: &str) -> bool {
         .stdout
         .lines()
         .next()
-        .and_then(|l| l.split_whitespace().nth(3))
+        .and_then(|entry_line| entry_line.split_whitespace().nth(3))
         .unwrap_or("")
         .to_owned();
     let neigh_out = ctx.ip(&["-4", "neigh", "show", "dev", iface]);
     let clients: Vec<String> = neigh_out
         .stdout
         .lines()
-        .filter(|l| !l.contains("FAILED") && !l.contains("INCOMPLETE"))
-        .filter_map(|l| l.split_whitespace().next())
-        .filter(|ip| !ip.is_empty() && ip.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+        .filter(|row| !row.contains("FAILED") && !row.contains("INCOMPLETE"))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|ip| !ip.is_empty() && ip.bytes().all(|byte| byte.is_ascii_digit() || byte == b'.'))
         .map(str::to_owned)
         .collect();
     let cl_str = clients.join(" ");
@@ -535,7 +535,7 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
         .stdout
         .lines()
         .next()
-        .and_then(|l| l.split_whitespace().nth(3))
+        .and_then(|row| row.split_whitespace().nth(3))
         .unwrap_or("")
         .to_owned();
     let hc = fs::read_to_string(run.join("net.hs_cidr"))
@@ -567,7 +567,7 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
                 .ip(&["rule"])
                 .stdout
                 .lines()
-                .any(|l| l.starts_with(&format!("{HS_PREF4}:")))
+                .any(|line| line.starts_with(&format!("{HS_PREF4}:")))
         {
             hs_route4(ctx, &gw, &cidr);
         }
@@ -575,7 +575,8 @@ pub fn hs_sync(ctx: &NetCtx<'_>) {
     }
 
     let fail_sig = format!("{want_if} {cidr} {gw}");
-    if fs::read_to_string(run.join("net.hs_fail")).is_ok_and(|s| s.trim() == fail_sig.trim()) {
+    if fs::read_to_string(run.join("net.hs_fail")).is_ok_and(|text| text.trim() == fail_sig.trim())
+    {
         return;
     }
     if !have.is_empty() {
