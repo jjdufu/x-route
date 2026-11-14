@@ -8,14 +8,27 @@ use crate::net::common::{
     write_quad,
 };
 use crate::sys::DirLock;
+use crate::sys::fsx;
 
-fn acct_lock(ctx: &NetCtx<'_>) -> DirLock {
-    DirLock::acquire(ctx.env.run_dir().join("acct.lock"), 30, 100, false)
+fn acct_lock<'env>(ctx: &NetCtx<'env>) -> DirLock<'env> {
+    DirLock::acquire(ctx.env, ctx.env.run_dir().join("acct.lock"), 30, 100, false)
+}
+
+/// `run/routes.active` 中按地址族筛出的非空行（`want_v6` 为真时取含 `:` 的行）。
+fn active_routes(ctx: &NetCtx<'_>, want_v6: bool) -> Vec<String> {
+    let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) else {
+        return Vec::new();
+    };
+    active
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && line.contains(':') == want_v6)
+        .map(str::to_owned)
+        .collect()
 }
 
 pub fn acct_lan4(ctx: &NetCtx<'_>) -> Vec<String> {
-    let mut set = BTreeSet::new();
-    for base in [
+    let mut set: BTreeSet<String> = [
         "10.0.0.0/8",
         "172.16.0.0/12",
         "192.168.0.0/16",
@@ -24,35 +37,22 @@ pub fn acct_lan4(ctx: &NetCtx<'_>) -> Vec<String> {
         "127.0.0.0/8",
         "224.0.0.0/4",
         "255.255.255.255/32",
-    ] {
-        set.insert(base.to_string());
-    }
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
     let pfx = ctx.cfg.net_prefix();
-    if !pfx.is_empty() {
-        set.insert(format!("{pfx}.0/24"));
-    }
-    if let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) {
-        for line in active.lines().map(str::trim).filter(|s| !s.is_empty()) {
-            if !line.contains(':') {
-                set.insert(line.to_string());
-            }
-        }
-    }
+    set.extend((!pfx.is_empty()).then(|| format!("{pfx}.0/24")));
+    set.extend(active_routes(ctx, false));
     set.into_iter().collect()
 }
 
 pub fn acct_lan6(ctx: &NetCtx<'_>) -> Vec<String> {
-    let mut set = BTreeSet::new();
-    for base in ["fc00::/7", "fe80::/10", "ff00::/8", "::1/128"] {
-        set.insert(base.to_string());
-    }
-    if let Ok(active) = fs::read_to_string(ctx.env.run_dir().join("routes.active")) {
-        for line in active.lines().map(str::trim).filter(|s| !s.is_empty()) {
-            if line.contains(':') {
-                set.insert(line.to_string());
-            }
-        }
-    }
+    let mut set: BTreeSet<String> = ["fc00::/7", "fe80::/10", "ff00::/8", "::1/128"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    set.extend(active_routes(ctx, true));
     set.into_iter().collect()
 }
 
@@ -125,23 +125,23 @@ fn acct_rules(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str, lan_list: &[String])
     let up = format!("{prefix}_UP");
     let dn = format!("{prefix}_DN");
     if use_v6 {
-        let _ = ctx.ip6t(&["-F", &up]);
-        let _ = ctx.ip6t(&["-F", &dn]);
+        ctx.ip6t_run(&["-F", &up]);
+        ctx.ip6t_run(&["-F", &dn]);
         for c in lan_list {
-            let _ = ctx.ip6t(&["-A", &up, "-d", c, "-j", "RETURN"]);
-            let _ = ctx.ip6t(&["-A", &dn, "-s", c, "-j", "RETURN"]);
+            ctx.ip6t_run(&["-A", &up, "-d", c, "-j", "RETURN"]);
+            ctx.ip6t_run(&["-A", &dn, "-s", c, "-j", "RETURN"]);
         }
-        let _ = ctx.ip6t(&["-A", &up, "-j", "RETURN"]);
-        let _ = ctx.ip6t(&["-A", &dn, "-j", "RETURN"]);
+        ctx.ip6t_run(&["-A", &up, "-j", "RETURN"]);
+        ctx.ip6t_run(&["-A", &dn, "-j", "RETURN"]);
     } else {
-        let _ = ctx.ipt(&["-F", &up]);
-        let _ = ctx.ipt(&["-F", &dn]);
+        ctx.ipt_run(&["-F", &up]);
+        ctx.ipt_run(&["-F", &dn]);
         for c in lan_list {
-            let _ = ctx.ipt(&["-A", &up, "-d", c, "-j", "RETURN"]);
-            let _ = ctx.ipt(&["-A", &dn, "-s", c, "-j", "RETURN"]);
+            ctx.ipt_run(&["-A", &up, "-d", c, "-j", "RETURN"]);
+            ctx.ipt_run(&["-A", &dn, "-s", c, "-j", "RETURN"]);
         }
-        let _ = ctx.ipt(&["-A", &up, "-j", "RETURN"]);
-        let _ = ctx.ipt(&["-A", &dn, "-j", "RETURN"]);
+        ctx.ipt_run(&["-A", &up, "-j", "RETURN"]);
+        ctx.ipt_run(&["-A", &dn, "-j", "RETURN"]);
     }
 }
 
@@ -157,17 +157,17 @@ fn acct_new(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) -> bool {
         return false;
     }
     if use_v6 {
-        let _ = ctx.ip6t(&["-N", &dn]);
-        let _ = ctx.ip6t(&["-N", prefix]);
-        let _ = ctx.ip6t(&["-F", prefix]);
-        let _ = ctx.ip6t(&["-A", prefix, "-i", XR_IF, "-j", &up]);
-        let _ = ctx.ip6t(&["-A", prefix, "-o", XR_IF, "-j", &dn]);
+        ctx.ip6t_run(&["-N", &dn]);
+        ctx.ip6t_run(&["-N", prefix]);
+        ctx.ip6t_run(&["-F", prefix]);
+        ctx.ip6t_run(&["-A", prefix, "-i", XR_IF, "-j", &up]);
+        ctx.ip6t_run(&["-A", prefix, "-o", XR_IF, "-j", &dn]);
     } else {
-        let _ = ctx.ipt(&["-N", &dn]);
-        let _ = ctx.ipt(&["-N", prefix]);
-        let _ = ctx.ipt(&["-F", prefix]);
-        let _ = ctx.ipt(&["-A", prefix, "-i", XR_IF, "-j", &up]);
-        let _ = ctx.ipt(&["-A", prefix, "-o", XR_IF, "-j", &dn]);
+        ctx.ipt_run(&["-N", &dn]);
+        ctx.ipt_run(&["-N", prefix]);
+        ctx.ipt_run(&["-F", prefix]);
+        ctx.ipt_run(&["-A", prefix, "-i", XR_IF, "-j", &up]);
+        ctx.ipt_run(&["-A", prefix, "-o", XR_IF, "-j", &dn]);
     }
     true
 }
@@ -178,26 +178,26 @@ fn acct_hooks_one(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
             .ip6t(&["-C", "INPUT", "-i", XR_IF, "-j", prefix])
             .success()
         {
-            let _ = ctx.ip6t(&["-I", "INPUT", "1", "-i", XR_IF, "-j", prefix]);
+            ctx.ip6t_run(&["-I", "INPUT", "1", "-i", XR_IF, "-j", prefix]);
         }
         if !ctx
             .ip6t(&["-C", "OUTPUT", "-o", XR_IF, "-j", prefix])
             .success()
         {
-            let _ = ctx.ip6t(&["-I", "OUTPUT", "1", "-o", XR_IF, "-j", prefix]);
+            ctx.ip6t_run(&["-I", "OUTPUT", "1", "-o", XR_IF, "-j", prefix]);
         }
     } else {
         if !ctx
             .ipt(&["-C", "INPUT", "-i", XR_IF, "-j", prefix])
             .success()
         {
-            let _ = ctx.ipt(&["-I", "INPUT", "1", "-i", XR_IF, "-j", prefix]);
+            ctx.ipt_run(&["-I", "INPUT", "1", "-i", XR_IF, "-j", prefix]);
         }
         if !ctx
             .ipt(&["-C", "OUTPUT", "-o", XR_IF, "-j", prefix])
             .success()
         {
-            let _ = ctx.ipt(&["-I", "OUTPUT", "1", "-o", XR_IF, "-j", prefix]);
+            ctx.ipt_run(&["-I", "OUTPUT", "1", "-o", XR_IF, "-j", prefix]);
         }
     }
 }
@@ -226,7 +226,7 @@ pub fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
         write_quad(&ctx.env.acct_base_file(), merged);
         let since = ctx.env.acct_since_file();
         if !since.is_file() {
-            let _ = fs::write(since, format!("{}\n", unix_now()));
+            fsx::write_logged(ctx.env, &since, format!("{}\n", unix_now()).as_bytes());
         }
     }
     let sig_file = ctx.env.run_dir().join("acct.sig");
@@ -239,7 +239,7 @@ pub fn acct_setup(ctx: &NetCtx<'_>, with_v6: bool) {
         if with_v6 {
             acct_rules(ctx, true, "XR_ACCT6", &l6);
         }
-        let _ = fs::write(sig_file, format!("{sig}\n"));
+        fsx::write_logged(ctx.env, &sig_file, format!("{sig}\n").as_bytes());
     }
     drop(lock);
     acct_hooks(ctx);
@@ -258,10 +258,10 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
             .success()
         {}
         for c in [prefix, &up, &dn] {
-            let _ = ctx.ip6t(&["-F", c]);
+            ctx.ip6t_run(&["-F", c]);
         }
         for c in [prefix, &up, &dn] {
-            let _ = ctx.ip6t(&["-X", c]);
+            ctx.ip6t_run(&["-X", c]);
         }
     } else {
         while ctx
@@ -273,10 +273,10 @@ fn acct_drop(ctx: &NetCtx<'_>, use_v6: bool, prefix: &str) {
             .success()
         {}
         for c in [prefix, &up, &dn] {
-            let _ = ctx.ipt(&["-F", c]);
+            ctx.ipt_run(&["-F", c]);
         }
         for c in [prefix, &up, &dn] {
-            let _ = ctx.ipt(&["-X", c]);
+            ctx.ipt_run(&["-X", c]);
         }
     }
 }
@@ -288,7 +288,7 @@ pub fn acct_teardown(ctx: &NetCtx<'_>) {
     }
     acct_drop(ctx, false, "XR_ACCT");
     acct_drop(ctx, true, "XR_ACCT6");
-    let _ = fs::remove_file(ctx.env.run_dir().join("acct.sig"));
+    fsx::remove_logged(ctx.env, &ctx.env.run_dir().join("acct.sig"));
 }
 
 pub fn acct_snapshot(ctx: &NetCtx<'_>) {
@@ -306,16 +306,20 @@ pub fn acct_snapshot(ctx: &NetCtx<'_>) {
 pub fn acct_reset(ctx: &NetCtx<'_>) {
     let _lock = acct_lock(ctx);
     if acct_present(ctx) {
-        let _ = ctx.ipt(&["-Z", "XR_ACCT_UP"]);
-        let _ = ctx.ipt(&["-Z", "XR_ACCT_DN"]);
+        ctx.ipt_run(&["-Z", "XR_ACCT_UP"]);
+        ctx.ipt_run(&["-Z", "XR_ACCT_DN"]);
     }
     if acct_present6(ctx) {
-        let _ = ctx.ip6t(&["-Z", "XR_ACCT6_UP"]);
-        let _ = ctx.ip6t(&["-Z", "XR_ACCT6_DN"]);
+        ctx.ip6t_run(&["-Z", "XR_ACCT6_UP"]);
+        ctx.ip6t_run(&["-Z", "XR_ACCT6_DN"]);
     }
     write_quad(&ctx.env.acct_base_file(), [0; 4]);
     write_quad(&ctx.env.acct_snap_file(), [0; 4]);
-    let _ = fs::write(ctx.env.acct_since_file(), format!("{}\n", unix_now()));
+    fsx::write_logged(
+        ctx.env,
+        &ctx.env.acct_since_file(),
+        format!("{}\n", unix_now()).as_bytes(),
+    );
 }
 
 pub fn acct_summary(ctx: &NetCtx<'_>) -> TrafficSummary {

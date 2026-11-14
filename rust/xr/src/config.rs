@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::cidr::{hs_subnet_clash, hs_subnet_valid, in_range, valid_ip4};
 use crate::env::Env;
+use crate::sys::fsx;
 
 pub const KEYS: [&str; 25] = [
     "XR_NET_PREFIX",
@@ -82,28 +83,26 @@ fn unquote_shell_val(raw: &str) -> String {
     trimmed.to_string()
 }
 
+/// 解析配置文件的一行：跳过空行、注释和未知键，返回 `(键, 去引号后的值)`。
+fn conf_line_entry(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let (raw_key, raw_val) = trimmed.split_once('=')?;
+    let key = raw_key.trim();
+    KEYS.contains(&key)
+        .then(|| (key.to_owned(), unquote_shell_val(raw_val)))
+}
+
 impl Config {
     pub fn load(env: &Env) -> Self {
-        let mut values = BTreeMap::new();
-        for key in KEYS {
-            if let Ok(v) = std::env::var(key) {
-                values.insert(key.to_string(), v);
-            }
-        }
+        let mut values: BTreeMap<String, String> = KEYS
+            .iter()
+            .filter_map(|key| std::env::var(key).ok().map(|val| ((*key).to_owned(), val)))
+            .collect();
         if let Ok(content) = fs::read_to_string(env.conf_file()) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                let Some((k, v)) = trimmed.split_once('=') else {
-                    continue;
-                };
-                let key = k.trim();
-                if KEYS.contains(&key) {
-                    values.insert(key.to_string(), unquote_shell_val(v));
-                }
-            }
+            values.extend(content.lines().filter_map(conf_line_entry));
         }
         Self { values }
     }
@@ -256,11 +255,12 @@ impl Config {
             hasher.update(b";");
         }
         let digest = hasher.finalize();
-        let mut out = String::with_capacity(16);
-        for byte in digest.iter().take(8) {
-            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{byte:02x}"));
-        }
-        out
+        digest
+            .iter()
+            .take(8)
+            .flat_map(|byte| [byte >> 4_u8, byte & 0x0f_u8])
+            .filter_map(|nibble| char::from_digit(u32::from(nibble), 16))
+            .collect()
     }
 }
 
@@ -409,7 +409,7 @@ pub fn set_kv(env: &Env, key: &str, val: &str) -> bool {
         Ok(())
     })();
     if write_res.is_err() {
-        let _ = fs::remove_file(&tmp);
+        fsx::remove_logged(env, &tmp);
         return false;
     }
     rustix::fs::sync();

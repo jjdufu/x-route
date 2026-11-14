@@ -1,11 +1,7 @@
-use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use crate::config::{Config, valid_kv};
 use crate::env::Env;
 use crate::log::{log_err, log_info};
-use crate::sys::ce_ready;
+use crate::sys::{ce_ready, fsx};
 
 #[derive(Debug, Clone)]
 pub struct ShareSpec {
@@ -57,11 +53,8 @@ pub fn share_prepare(env: &Env, cfg: &Config) -> ShareSpec {
             "#!/system/bin/sh\n{bb} mount --make-rslave / || exit 1\n{bb} mount --bind \"{path}\" \"{path}\" || exit 1\n{bb} mount -o remount,bind,ro,nosuid,nodev,noexec \"{path}\" || exit 1\nexec \"$@\"\n"
         );
         let ro_path = env.run_dir().join("share-ro.sh");
-        let _ = fs::write(&ro_path, script);
-        #[cfg(unix)]
-        {
-            let _ = fs::set_permissions(&ro_path, fs::Permissions::from_mode(0o700));
-        }
+        fsx::write_logged(env, &ro_path, script.as_bytes());
+        fsx::chmod_logged(env, &ro_path, 0o700);
         res.spec = base;
         res.mode = "ro".to_string();
         res.wrap = vec![

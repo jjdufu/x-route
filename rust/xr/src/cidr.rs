@@ -194,8 +194,7 @@ pub fn norm_route(raw: &str) -> Option<String> {
             if !(1..=128).contains(&plen) {
                 return None;
             }
-            ip6_expand(addr)?;
-            return Some(format!("{addr}/{plen}"));
+            return ip6_expand(addr).map(|_expanded| format!("{addr}/{plen}"));
         }
         if mask_or_len.contains('.') {
             if !valid_ip4(addr) {
@@ -223,8 +222,7 @@ pub fn norm_route(raw: &str) -> Option<String> {
         return Some(format!("{raw}/32"));
     }
     if raw.contains(':') {
-        ip6_expand(raw)?;
-        return Some(format!("{raw}/128"));
+        return ip6_expand(raw).map(|_expanded| format!("{raw}/128"));
     }
     None
 }

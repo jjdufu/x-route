@@ -6,6 +6,7 @@ use flate2::read::GzDecoder;
 use crate::config::{Config, set_kv};
 use crate::env::Env;
 use crate::log::{log_err, log_info};
+use crate::sys::fsx;
 use crate::vm::vm_running;
 
 pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
@@ -37,7 +38,9 @@ pub fn disk_expand(env: &Env, new_mb_str: &str) -> i32 {
         log_err(env, "vm", "扩容失败");
         return 1;
     }
-    let _ = file.sync_all();
+    if let Err(err) = file.sync_all() {
+        fsx::record_failure(env, "sync", &rootfs, &err);
+    }
     log_info(
         env,
         "vm",
@@ -63,7 +66,7 @@ pub fn disk_reset(env: &Env) -> i32 {
         let gz_file = File::open(&gz_path)?;
         let mut decoder = GzDecoder::new(gz_file);
         let mut out = File::create(&tmp_path)?;
-        io::copy(&mut decoder, &mut out)?;
+        let _decompressed: u64 = io::copy(&mut decoder, &mut out)?;
         let target_bytes = cfg
             .vm_disk_size_mb()
             .checked_mul(1_048_576)
@@ -74,11 +77,11 @@ pub fn disk_reset(env: &Env) -> i32 {
         Ok(())
     })();
     if ok.is_err() {
-        let _ = fs::remove_file(&tmp_path);
+        fsx::remove_logged(env, &tmp_path);
         log_err(env, "vm", "重置失败");
         return 1;
     }
-    let _ = fs::remove_file(env.last_good_file());
+    fsx::remove_logged(env, &env.last_good_file());
     log_info(env, "vm", "系统盘已重置");
     0
 }
