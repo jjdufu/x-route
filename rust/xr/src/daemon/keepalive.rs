@@ -28,8 +28,8 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
     }
     let root = &env.cgroup_root;
     let mut v2_ok = false;
-    for f in [root.join("cgroup.procs"), root.join("system/cgroup.procs")] {
-        if fs::write(&f, format!("{trimmed}\n")).is_ok() {
+    for procs_file in [root.join("cgroup.procs"), root.join("system/cgroup.procs")] {
+        if fs::write(&procs_file, format!("{trimmed}\n")).is_ok() {
             v2_ok = true;
         }
     }
@@ -37,7 +37,7 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
         let uid0 = root.join("uid_0/cgroup.procs");
         fsx::write_logged(env, &uid0, format!("{trimmed}\n"));
     }
-    for f in [
+    for name in [
         "/dev/memcg/system/cgroup.procs",
         "/dev/cpuset/system-background/cgroup.procs",
         "/dev/cpuset/system-background/tasks",
@@ -46,9 +46,9 @@ pub fn cgroup_escape(env: &Env, pid: &str) -> bool {
         "/dev/stune/background/cgroup.procs",
         "/dev/stune/background/tasks",
     ] {
-        let p = Path::new(f);
-        if p.exists() {
-            fsx::write_logged(env, p, format!("{trimmed}\n"));
+        let path = Path::new(name);
+        if path.exists() {
+            fsx::write_logged(env, path, format!("{trimmed}\n"));
         }
     }
     let oom = env.proc_base.join(trimmed).join("oom_score_adj");
@@ -63,7 +63,7 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
         cgroup_escape(env, &self_pid.to_string()),
     );
     let run = env.run_dir();
-    for f in [
+    for name in [
         "crosvm.pid",
         "net_watch.pid",
         "fuse_watch.pid",
@@ -71,8 +71,8 @@ pub fn cgroup_escape_tree(env: &Env, self_pid: u32) {
         "daemon.pid",
         "notifier.pid",
     ] {
-        if let Ok(p) = fs::read_to_string(run.join(f)) {
-            let trimmed = p.trim();
+        if let Ok(pid_text) = fs::read_to_string(run.join(name)) {
+            let trimmed = pid_text.trim();
             if !trimmed.is_empty() {
                 note_ok(env, "cgroup_escape", cgroup_escape(env, trimmed));
             }
@@ -97,14 +97,14 @@ pub fn cgroup_path(env: &Env, pid: &str) -> Option<String> {
 
 #[must_use]
 pub fn cgroup_in_apps(env: &Env, pid: &str) -> bool {
-    let Some(p) = cgroup_path(env, pid) else {
+    let Some(cg) = cgroup_path(env, pid) else {
         return false;
     };
-    p.starts_with("/apps/")
-        || p.starts_with("apps/")
-        || p.contains("/apps/uid_")
-        || p.contains("/uid_") && p.contains("/pid_")
-        || p.contains("suki")
+    cg.starts_with("/apps/")
+        || cg.starts_with("apps/")
+        || cg.contains("/apps/uid_")
+        || cg.contains("/uid_") && cg.contains("/pid_")
+        || cg.contains("suki")
 }
 
 #[must_use]
@@ -113,14 +113,14 @@ pub fn xr_vm_alive(env: &Env) -> bool {
         return true;
     }
     let pid = fs::read_to_string(env.run_dir().join("crosvm.pid")).unwrap_or_default();
-    let p = pid.trim();
-    if p.is_empty() || !env.proc_base.join(p).is_dir() {
+    let trimmed = pid.trim();
+    if trimmed.is_empty() || !env.proc_base.join(trimmed).is_dir() {
         return false;
     }
-    if !is_pid_running(env, p) {
+    if !is_pid_running(env, trimmed) {
         return false;
     }
-    proc_cmdline(env, p).is_some_and(|c| c.contains("crosvm"))
+    proc_cmdline(env, trimmed).is_some_and(|cmdline| cmdline.contains("crosvm"))
 }
 
 #[must_use]
@@ -135,8 +135,8 @@ pub fn vm_stopping(env: &Env) -> bool {
 
 #[must_use]
 pub fn notify_state(env: &Env) -> &'static str {
-    let s = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
-    match s.trim() {
+    let text = fs::read_to_string(env.run_dir().join("state")).unwrap_or_default();
+    match text.trim() {
         "stable" => "运行中",
         "ready" => "已就绪",
         _ => "启动中",
@@ -145,19 +145,19 @@ pub fn notify_state(env: &Env) -> &'static str {
 
 #[must_use]
 pub fn notify_payload(env: &Env, cfg: &Config) -> String {
-    let m = cfg.notify_traffic();
+    let mode = cfg.notify_traffic();
     let ctx = NetCtx::new(env, cfg);
     let [wu, wd, lu, ld] = acct_total(&ctx);
-    format!("{} {m} {wu} {wd} {lu} {ld}", notify_state(env))
+    format!("{} {mode} {wu} {wd} {lu} {ld}", notify_state(env))
 }
 
 pub fn screen_on(env: &Env) -> bool {
-    if let Some(s) = &env.screen_override {
-        return s == "on";
+    if let Some(raw) = &env.screen_override {
+        return raw == "on";
     }
     if let Ok(out) = Command::new("dumpsys").arg("power").output() {
-        let s = String::from_utf8_lossy(&out.stdout);
-        for line in s.lines() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
             if let Some(pos) = line.find("mWakefulness=") {
                 let rest = line
                     .get(pos.saturating_add("mWakefulness=".len())..)
@@ -175,11 +175,11 @@ pub fn screen_on(env: &Env) -> bool {
 #[must_use]
 pub fn notifier_running(env: &Env) -> bool {
     let pid = fs::read_to_string(env.run_dir().join("notifier.pid")).unwrap_or_default();
-    let p = pid.trim();
-    if p.is_empty() || !is_pid_running(env, p) {
+    let trimmed = pid.trim();
+    if trimmed.is_empty() || !is_pid_running(env, trimmed) {
         return false;
     }
-    proc_cmdline(env, p).is_some_and(|c| c.contains("xrnotify"))
+    proc_cmdline(env, trimmed).is_some_and(|cmdline| cmdline.contains("xrnotify"))
 }
 
 fn notifier_exec(env: &Env, mode: &str) {
@@ -249,8 +249,8 @@ fn notifier_req(env: &Env, payload: &str) -> bool {
 fn notifier_wait(env: &Env, expected: &str) -> bool {
     let ack = env.run_dir().join("notify.ack");
     for _ in 0..env.notify_wait {
-        if let Ok(a) = fs::read_to_string(&ack) {
-            let trimmed = a.trim();
+        if let Ok(ack_text) = fs::read_to_string(&ack) {
+            let trimmed = ack_text.trim();
             if trimmed == expected {
                 return true;
             }
@@ -278,14 +278,14 @@ pub fn notify_cancel(env: &Env) {
         if notifier_req(env, "cancel") && notifier_wait(env, "ok cancel") {
             done = true;
         }
-        if let Ok(p) = fs::read_to_string(run.join("notifier.pid")) {
-            send_signal_logged(env, p.trim(), Signal::TERM);
+        if let Ok(pid_text) = fs::read_to_string(run.join("notifier.pid")) {
+            send_signal_logged(env, pid_text.trim(), Signal::TERM);
         }
     }
     if !done && env.notifier_jar.is_file() {
         notifier_exec(env, "cancel");
     }
-    for f in [
+    for name in [
         "notifier.pid",
         "notify.req",
         "notify.ack",
@@ -293,7 +293,7 @@ pub fn notify_cancel(env: &Env) {
         "notify.last",
         "notify.ts",
     ] {
-        fsx::remove_logged(env, run.join(f));
+        fsx::remove_logged(env, run.join(name));
     }
 }
 
@@ -319,7 +319,7 @@ pub fn notify_update(env: &Env) {
     let now = unix_now();
     let ts = fs::read_to_string(run.join("notify.ts"))
         .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
+        .and_then(|text| text.trim().parse::<u64>().ok())
         .unwrap_or(0);
     if run.join("notify.on").is_file() && !force && now.saturating_sub(ts) < env.notify_interval {
         return;
@@ -391,16 +391,16 @@ pub fn vm_guest_reset_pending(env: &Env) -> bool {
     if !matches!(st.trim(), "ready" | "stable") {
         return false;
     }
-    fs::read_to_string(env.vmm_log()).is_ok_and(|s| vmm_has_guest_reset(&s))
+    fs::read_to_string(env.vmm_log()).is_ok_and(|text| vmm_has_guest_reset(&text))
 }
 
 #[must_use]
 pub fn vm_exit_reason(env: &Env) -> String {
-    let p = fs::read_to_string(env.run_dir().join("crosvm.pid"))
+    let pid_text = fs::read_to_string(env.run_dir().join("crosvm.pid"))
         .unwrap_or_default()
         .trim()
         .to_owned();
-    if !p.is_empty() && is_pid_running(env, &p) {
+    if !pid_text.is_empty() && is_pid_running(env, &pid_text) {
         return "crosvm 仍在运行".to_owned();
     }
     if let Ok(vmm) = fs::read_to_string(env.vmm_log()) {
@@ -433,13 +433,13 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             return;
         }
         crate::clash::stop_clash_mux(env);
-        for p in [
+        for file_path in [
             run.join("state"),
             run.join("ready_at"),
             run.join("crosvm.pid"),
             run.join("guest/guest/openclash.status"),
         ] {
-            fsx::remove_logged(env, p);
+            fsx::remove_logged(env, file_path);
         }
         routes_emergency_down(env);
         crate::sys::wakelock_off(env);
@@ -456,7 +456,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
         }
         log_info(env, "daemon", "补全未完成的停止清理");
         crate::clash::stop_clash_mux(env);
-        for p in [
+        for path in [
             run.join("state"),
             run.join("ready_at"),
             run.join("crosvm.pid"),
@@ -465,7 +465,7 @@ pub fn emergency_teardown(env: &Env, why: &str) {
             env.fuse_file(),
             env.boot_log(),
         ] {
-            fsx::remove_logged(env, p);
+            fsx::remove_logged(env, path);
         }
         routes_emergency_down(env);
         crate::sys::wakelock_off(env);
@@ -500,8 +500,8 @@ pub fn stale_gateway(env: &Env) -> bool {
     }
     if xr_vm_alive(env) {
         let car = env.sysnet.join("xr0/carrier");
-        if let Ok(c) = fs::read_to_string(car)
-            && c.trim() == "0"
+        if let Ok(carrier_text) = fs::read_to_string(car)
+            && carrier_text.trim() == "0"
         {
             return true;
         }
