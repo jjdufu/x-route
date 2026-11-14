@@ -1,3 +1,5 @@
+//! 诊断与日志导出：采集手机与客机的网络快照、脱敏后写入调试日志，以及打包导出日志或诊断包。
+
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write as _;
@@ -21,6 +23,7 @@ use crate::sys::exec::note_spawn;
 use crate::sys::fsx;
 use crate::sys::{LockWait, PathLock};
 
+/// 运行命令并返回标准输出加标准错误的文本；无法运行时返回空串。
 fn sys_cmd_output(bin: &Path, args: &[&str]) -> String {
     match Command::new(bin).args(args).output() {
         Ok(result) => {
@@ -38,6 +41,7 @@ fn sys_cmd_output(bin: &Path, args: &[&str]) -> String {
     }
 }
 
+/// 向 `out` 追加一节 `## 标题` 加命令输出。
 fn dsec(out: &mut String, title: &str, bin: &Path, args: &[&str]) {
     out.push_str("## ");
     out.push_str(title);
@@ -50,6 +54,7 @@ fn dsec(out: &mut String, title: &str, bin: &Path, args: &[&str]) {
     out.push('\n');
 }
 
+/// 从 `VPN` 配置中收集 `remote` 主机名（含旧版单文件与下发给客机的副本），供脱敏时替换。
 #[must_use]
 pub fn vpn_hosts(env: &Env) -> Vec<String> {
     let mut hosts = BTreeSet::new();
@@ -88,6 +93,7 @@ pub fn vpn_hosts(env: &Env) -> Vec<String> {
     hosts.into_iter().collect()
 }
 
+/// 脱敏：隐去证书与密钥块、`OpenVPN` 内联密钥段、网址、密码类键值和 `VPN` 服务器地址。
 #[must_use]
 pub fn redact(env: &Env, input: &str) -> String {
     let mut out = Vec::new();
@@ -180,6 +186,7 @@ pub fn redact(env: &Env, input: &str) -> String {
     text
 }
 
+/// 手机网络快照：路由规则与路由表、`iptables`/`ip6tables` 规则、接口与无线状态等命令输出。
 #[must_use]
 pub fn phone(env: &Env) -> String {
     let mut out = String::new();
@@ -503,6 +510,9 @@ pub(crate) fn guest(env: &Env, wait_secs: u64) -> Result<String, String> {
     ))
 }
 
+/// 调试模式开启时采集一次快照（手机，以及就绪时的客机）并脱敏追加到 `debug.log`，然后按大小轮转。
+///
+/// `guest_wait_secs` 为等待客机应答的最长秒数；同一时刻只有一个快照在写。
 pub(crate) fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
@@ -547,6 +557,7 @@ pub(crate) fn snap(env: &Env, reason: &str, guest_wait_secs: u64) {
     rotate_debug(env);
 }
 
+/// 调试模式开启时在后台采集快照（`xr internal diag-snap`）；找不到 `bin/xr` 时在当前进程直接采集。
 pub(crate) fn snap_bg(env: &Env, reason: &str) {
     let cfg = Config::load(env);
     if !cfg.debug_on() {
@@ -566,6 +577,7 @@ pub(crate) fn snap_bg(env: &Env, reason: &str) {
     }
 }
 
+/// 与网络、热点、本模块和界面相关的 `logcat` 行（关键字过滤，最多最后 4000 行）。
 #[must_use]
 pub(crate) fn logcat() -> String {
     let out = sys_cmd_output(
@@ -603,6 +615,7 @@ pub(crate) fn logcat() -> String {
     filtered.get(skip..).unwrap_or(&[]).join("\n")
 }
 
+/// 导出目录：测试覆盖目录，或 `/data/media/0/Download`、`/sdcard/Download`，都没有时尝试创建前者。
 #[must_use]
 pub(crate) fn download_dir(env: &Env) -> Option<PathBuf> {
     if let Some(dir) = &env.download_override {
@@ -625,6 +638,7 @@ pub(crate) fn download_dir(env: &Env) -> Option<PathBuf> {
     None
 }
 
+/// 把 `root_dir/folder_name` 下的文件打包为 `out_zip`（压缩包内保留 `folder_name/` 目录），成功返回 true。
 fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> bool {
     let Ok(file) = File::create(out_zip) else {
         return false;
@@ -658,6 +672,9 @@ fn write_zip_from_dir(out_zip: &Path, root_dir: &Path, folder_name: &str) -> boo
     zw.finish().is_ok()
 }
 
+/// 导出日志（`is_diag` 为 false）或诊断包到下载目录，返回 JSON 结果：成功时含压缩包路径。
+///
+/// 内容含摘要（版本、机型、状态 `status_json_str` 与失败计数）和各日志；诊断包另含手机与客机快照、`logcat`、热点状态、去掉注释的配置、调试日志与通知器日志；文本均先脱敏。
 #[must_use]
 pub(crate) fn export_pack(env: &Env, prefix: &str, is_diag: bool, status_json_str: &str) -> String {
     let Some(dest) = download_dir(env) else {
