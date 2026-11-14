@@ -217,6 +217,12 @@ if (!/id="btn-uninstall" class="danger"/.test(html) || !/id="gone" class="gone" 
   if (iC < 0 || iR < 0 || iX < 0 || !(iC < iR && iR < iX) || !/Download/.test(u) || !/, true\)\) return;/.test(u)) fail("卸载应先确认、再换静态页、最后请求删除");
   if (!/gone = true;/.test(u) || !/if \(gone\) return Promise\.resolve\(\);/.test(main) || !/clearTimeout\(timer\);\n  if \(gone\) return;/.test(main)) fail("卸载后应停止一切轮询"); }
 if (/animation|transition/.test(blk(".gone"))) fail("已卸载页应是静态的");
+if (!/id="btn-gone-close"[^>]*hidden/.test(html)) fail("已卸载页应有初始隐藏的关闭按钮");
+{ const u = main.slice(main.indexOf("async function uninstallNow"), main.indexOf("// ---- 累计流量"));
+  const iB = u.indexOf("btn-gone-close"), iX = u.indexOf('await xr("uninstall-now", "confirm")');
+  if (iB < 0 || iB < iX) fail("关闭按钮应在卸载请求返回后才显示"); }
+if (!/import \{[^}]*\bexit\b[^}]*\} from "kernelsu-alt"/.test(main)) fail("应使用 kernelsu-alt 的 exit 关闭 WebUI");
+if (!/\$\("btn-gone-close"\)\.onclick = closeWebui;/.test(main)) fail("关闭按钮应绑定 closeWebui");
 
 // 异地组网（合并在网络页）：导入即展示多配置卡片，每张卡片直接独立启动 / 停止 / 删除，无下拉框选择
 if (!html.includes('id="tpl-vpn"') || !html.includes('id="vpn-list"') || !html.includes('id="vpn-empty"') || !/function renderVpn/.test(main)) fail("异地组网应支持空状态与多配置列表渲染");

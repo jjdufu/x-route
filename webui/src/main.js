@@ -14,7 +14,7 @@ import "@material/web/focus/md-focus-ring.js";
 import "@material/web/select/outlined-select.js";
 import "@material/web/select/select-option.js";
 import "@material/web/textfield/outlined-text-field.js";
-import { exec, spawn, isKsuWebui } from "kernelsu-alt";
+import { exec, exit, spawn, isKsuWebui } from "kernelsu-alt";
 import "./style.css";
 import { ICONS } from "./icons.js";
 import {
@@ -829,6 +829,16 @@ async function uninstallNow() {
   } else {
     $("gone-text").textContent = "XRouter 已从模块列表移除，正在后台清理数据，无需重启。可以关闭此页面。";
   }
+  $("btn-gone-close").hidden = false;   // 卸载请求返回后（成功或失败）才允许关闭
+}
+
+// 关闭 WebUI：优先 kernelsu-alt 的 exit()，其次 ksu.exit()，最后 window.close()；仍未关闭时提示按返回键
+function closeWebui() {
+  haptic();
+  try { if (isKsuWebui()) { exit(); return; } } catch { /* 管理器不支持 exit 时继续兜底 */ }
+  try { if (globalThis.ksu && typeof globalThis.ksu.exit === "function") { globalThis.ksu.exit(); return; } } catch { /* 忽略 */ }
+  window.close();
+  setTimeout(() => { $("gone-text").textContent += " 如未自动关闭，请按返回键退出。"; }, 400);
 }
 
 // ---- 累计流量：状态页仅展示总计，点击弹窗查看详情与分源转发 ----
@@ -1090,6 +1100,7 @@ function bind() {
   bindBackAndHaptic();
   bindPager();
   goPage(0);
+  $("btn-gone-close").onclick = closeWebui;
 
   $("btn-theme").addEventListener("click", cycleTheme);
   $("power").addEventListener("click", power);

@@ -1482,6 +1482,12 @@ md-switch {
 .gone.bad md-icon {
   color: var(--md-sys-color-error);
 }
+.gone-close {
+  margin-top: 10px;
+}
+.gone-close[hidden] {
+  display: none;
+}
 
 /* ---- Split-Routing (OpenClash Zashboard Embedded Page & Status) ---- */
 .sub.bad {
