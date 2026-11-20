@@ -946,7 +946,7 @@ let cfgBusy = false;
 function cfgState(d) {
   if (!(d && d.vm && d.vm.running)) return { ok: false, note: "服务未运行，需先启动" };
   if (d.guest_stats && d.guest_stats.reason === "unsupported") return { ok: false, note: "当前系统盘不支持" };
-  return { ok: true, note: "明文 zip，保存在 Download" };
+  return { ok: true, note: "" };
 }
 function renderCfgButtons(d) {
   const s = cfgState(d);

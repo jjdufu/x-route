@@ -1155,6 +1155,44 @@ pub(crate) fn run_clash_ws_close(env: &Env, ws_id: &str) -> i32 {
     )
 }
 
+/// 后台异步通知客机 `OpenClash` 关闭全部现有活动连接（切网后避免继续复用旧链路），通道未就绪时静默返回。
+pub(crate) fn close_connections_async(env: &Env) {
+    let rpc_sock = env.run_dir().join("clash-rpc.sock");
+    if !rpc_sock.exists() {
+        return;
+    }
+    let env_bg = env.clone();
+    if let Err(err) = thread::Builder::new()
+        .name("xr-clash-close".to_owned())
+        .spawn(move || {
+            let Ok(mut stream) = UnixStream::connect(&rpc_sock) else {
+                return;
+            };
+            note_sock(
+                &env_bg,
+                "clash-close 读超时",
+                stream.set_read_timeout(Some(Duration::from_secs(2))),
+            );
+            note_sock(
+                &env_bg,
+                "clash-close 写超时",
+                stream.set_write_timeout(Some(Duration::from_secs(2))),
+            );
+            let cmd = "{\"id\":\"net_switch\",\"op\":\"req\",\"method\":\"DELETE\",\"path\":\"/connections\"}\n";
+            if stream.write_all(cmd.as_bytes()).is_err() || stream.flush().is_err() {
+                return;
+            }
+            let mut br = BufReader::new(stream);
+            let mut line = String::new();
+            if let Err(err) = br.read_line(&mut line) {
+                dlog_env(&env_bg, "clash", &format!("clash-close 读应答失败：{err}"));
+            }
+        })
+    {
+        dlog_env(env, "clash", &format!("启动清理连接线程失败：{err}"));
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

@@ -186,10 +186,19 @@ fn drop_nat_chains(env: &Env, iptables_bin: &Path, ip6tables_cmd: &Path) {
     ) {}
     sys_run(env, iptables_bin, &["-w", "-t", "nat", "-F", "XR_NAT"]);
     sys_run(env, iptables_bin, &["-w", "-t", "nat", "-X", "XR_NAT"]);
+    while sys_ok(
+        iptables_bin,
+        &["-w", "-t", "nat", "-D", "OUTPUT", "-j", "XR_DNS"],
+    ) {}
+    sys_run(env, iptables_bin, &["-w", "-t", "nat", "-F", "XR_DNS"]);
+    sys_run(env, iptables_bin, &["-w", "-t", "nat", "-X", "XR_DNS"]);
 
     while sys_ok(ip6tables_cmd, &["-w", "-D", "FORWARD", "-j", "XR_FWD6"]) {}
     sys_run(env, ip6tables_cmd, &["-w", "-F", "XR_FWD6"]);
     sys_run(env, ip6tables_cmd, &["-w", "-X", "XR_FWD6"]);
+    while sys_ok(ip6tables_cmd, &["-w", "-D", "OUTPUT", "-j", "XR_OUT6"]) {}
+    sys_run(env, ip6tables_cmd, &["-w", "-F", "XR_OUT6"]);
+    sys_run(env, ip6tables_cmd, &["-w", "-X", "XR_OUT6"]);
     while sys_ok(
         ip6tables_cmd,
         &["-w", "-t", "nat", "-D", "POSTROUTING", "-j", "XR_NAT6"],

@@ -18,9 +18,14 @@ mkdir -p "$ST"
 
 upstream() {
   m="$({ tr -dc '0-9' < "${CTL}/host/mtu"; } 2>/dev/null)"
-  [ -n "$m" ] || m="$(cat "${SYS}/eth0/mtu" 2>/dev/null)"
+  eth="$(cat "${SYS}/eth0/mtu" 2>/dev/null)"
+  case "$eth" in ''|*[!0-9]*) eth="" ;; esac
+  [ -n "$m" ] || m="$eth"
   case "$m" in ''|*[!0-9]*) m=1500 ;; esac
   [ "$m" -ge 1280 ] && [ "$m" -le 1500 ] || m=1500
+  if [ "${XRG_ETH0_CAP:-0}" = 1 ] && [ -n "$eth" ] && [ "$eth" -ge 1280 ] && [ "$eth" -le 1500 ] && [ "$eth" -lt "$m" ]; then
+    m="$eth"
+  fi
   echo "$m"
 }
 

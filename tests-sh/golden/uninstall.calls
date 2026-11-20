@@ -11,6 +11,8 @@ iptables -X XR_FWD
 iptables -t nat -D POSTROUTING -j XR_NAT
 iptables -t nat -F XR_NAT
 iptables -t nat -X XR_NAT
+iptables -t nat -D OUTPUT -j XR_DNS
+iptables -t nat -S XR_DNS
 ip6tables -D FORWARD -j XR_FWD6
 ip6tables -F XR_FWD6
 ip6tables -X XR_FWD6
@@ -67,6 +69,8 @@ iptables -X XR_FWD
 iptables -t nat -D POSTROUTING -j XR_NAT
 iptables -t nat -F XR_NAT
 iptables -t nat -X XR_NAT
+iptables -t nat -D OUTPUT -j XR_DNS
+iptables -t nat -S XR_DNS
 ip6tables -D FORWARD -j XR_FWD6
 ip6tables -F XR_FWD6
 ip6tables -X XR_FWD6
@@ -116,9 +120,15 @@ iptables -X XR_FWD
 iptables -t nat -D POSTROUTING -j XR_NAT
 iptables -t nat -F XR_NAT
 iptables -t nat -X XR_NAT
+iptables -t nat -D OUTPUT -j XR_DNS
+iptables -t nat -F XR_DNS
+iptables -t nat -X XR_DNS
 ip6tables -D FORWARD -j XR_FWD6
 ip6tables -F XR_FWD6
 ip6tables -X XR_FWD6
+ip6tables -D OUTPUT -j XR_OUT6
+ip6tables -F XR_OUT6
+ip6tables -X XR_OUT6
 ip6tables -t nat -D POSTROUTING -j XR_NAT6
 ip6tables -t nat -F XR_NAT6
 ip6tables -t nat -X XR_NAT6

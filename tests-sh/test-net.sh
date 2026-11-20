@@ -259,4 +259,32 @@ t0="$(( $(date +%s) - 60 ))"; echo "$t0" > "$RUN/guest/host/time"; $NET sync; ch
 tf="$(( $(date +%s) + 86400 ))"; echo "$tf" > "$RUN/guest/host/time"; $NET sync; chk '[ "$(cat "$RUN/guest/host/time")" -lt "$tf" ]'
 
 rst
+
+# 切换与预备态修复回归：未就绪不降 xr0 MTU、就绪后下沉；全局 DNS 劫持/SNAT/IPv6 拒绝、孤立非 SYN 包 RST、上游切换递增 net.gen
+rm -f "$RUN/state" "$RUN/crosvm.pid" "$RUN/guest/guest/ipv6"
+set_kv XR_MODE global
+echo "default via 10.114.199.189 dev rmnet_data2 proto static mtu 1410" > "$MOCK/rt.rmnet_data2"
+echo "11000:	from all fwmark 0x0/0xffff iif lo lookup rmnet_data2" > "$MOCK/iprule"
+mkdir -p "$T/sysnet/xr0"; echo 1500 > "$T/sysnet/xr0/mtu"; : > "$MOCK/calls"; $NET up
+chk '! grep -q "^ip link set xr0 mtu " "$MOCK/calls" && [ "$(cat "$T/sysnet/xr0/mtu")" = 1500 ] && [ "$(cat "$RUN/guest/host/mtu")" = 1410 ]'
+echo ready > "$RUN/state"; echo 4321 > "$RUN/crosvm.pid"; : > "$MOCK/calls"; $NET sync
+chk 'grep -q "^ip link set xr0 mtu 1410" "$MOCK/calls" && [ "$(cat "$RUN/net.mtu")" = 1410 ]'
+chk '[ -f "$MOCK/dns_hook" ] && grep -qx -- "-p udp --dport 53 -j DNAT --to-destination 172.29.233.254:53" "$MOCK/XR_DNS" && grep -qx -- "-p tcp --dport 53 -j DNAT --to-destination 172.29.233.254:53" "$MOCK/XR_DNS"'
+chk 'grep -qx -- "-o xr0 -p udp --dport 53 -j SNAT --to-source 172.29.233.1" "$MOCK/XR_NAT" && grep -qx -- "-o xr0 -p tcp --dport 53 -j SNAT --to-source 172.29.233.1" "$MOCK/XR_NAT"'
+chk 'grep -qx -- "-j XR_OUT6" "$MOCK/hook6.OUTPUT" && grep -qx -- "-p udp --dport 53 -j REJECT --reject-with icmp6-adm-prohibited" "$MOCK/XR_OUT6" && grep -qx -- "-p tcp --dport 53 -j REJECT --reject-with tcp-reset" "$MOCK/XR_OUT6"'
+chk 'grep -qx -- "-i xr0 -p tcp ! --syn -m conntrack --ctstate NEW -j REJECT --reject-with tcp-reset" "$FWD"'
+gen0="$(cat "$RUN/net.gen" 2>/dev/null || echo "0 none")"; g0="${gen0%% *}"
+echo "11000:	from all fwmark 0x0/0xffff iif lo lookup wlan0" > "$MOCK/iprule"; $NET sync
+gen1="$(cat "$RUN/net.gen" 2>/dev/null || echo "0 none")"; g1="${gen1%% *}"
+chk '[ "$g1" -gt "$g0" ] && [ "$(cat "$RUN/guest/host/net.gen")" = "$gen1" ]'
+# 客侧启用可用 IPv6 前缀（gw=v6）：撤掉 XR_OUT6，但保留 v4 XR_DNS
+printf '%s\n' "2: wlan0    inet6 2409:8a00:1:2:1111:2222:3333:4444/64 scope global" > "$MOCK/addr6.wlan0"
+echo "default via fe80::1 dev wlan0 proto ra metric 1024 pref medium" > "$MOCK/rt6.wlan0"
+echo "2409:8a00:1:2::/64 proto kernel metric 256 pref medium" > "$MOCK/devrt6.main.wlan0"
+echo "1" > "$RUN/guest/guest/ipv6"; $NET sync
+chk '[ "$(cat "$RUN/net.gw")" = v6 ] && ! grep -qx -- "-j XR_OUT6" "$MOCK/hook6.OUTPUT" 2>/dev/null && [ -f "$MOCK/dns_hook" ]'
+# 切回旁路模式：撤掉 XR_DNS、端口 53 SNAT 与 ! --syn tcp-reset
+set_kv XR_MODE bypass; $NET sync
+chk '[ ! -f "$MOCK/dns_hook" ] && ! grep -q -- "--dport 53" "$MOCK/XR_NAT" && ! grep -q -- "tcp-reset" "$FWD"'
+$NET down
 if [ "$fail" = 0 ]; then echo "test-net OK"; else echo "test-net FAILED"; exit 1; fi

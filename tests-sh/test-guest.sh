@@ -56,6 +56,7 @@ echo 1500 > "$T/ctl/host/mtu"; $TM proto tun1 bogus; $TM apply
 chk '[ "$(cat "$T/sys/tun0/mtu")" = 1432 ] && [ "$(cat "$T/sys/tun1/mtu")" = 1412 ]'
 echo 1300 > "$T/ctl/host/mtu"; $TM apply; chk '[ "$(cat "$T/sys/tun0/mtu")" = 1280 ]'
 echo 9000 > "$T/ctl/host/mtu"; echo 1400 > "$T/sys/eth0/mtu"; $TM apply; chk '[ "$(cat "$T/sys/tun0/mtu")" = 1432 ]'
+XRG_ETH0_CAP=1 $TM apply; chk '[ "$(cat "$T/sys/tun0/mtu")" = 1332 ]'
 rm -f "$T/ctl/host/mtu"; $TM apply; chk '[ "$(cat "$T/sys/tun0/mtu")" = 1332 ]'
 # 隧道消失：清掉记录与规则
 rm -rf "$T/sys/tun0"; $TM apply; chk '[ ! -f "$T/tun/tun0.proto" ] && ! grep -q tun0 "$T/nft.last"'

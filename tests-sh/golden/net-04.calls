@@ -112,6 +112,10 @@ ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
 ip6tables -A XR_FWD6 -o xr0 -j DROP
 ip6tables -A XR_FWD6 -i xr0 -j DROP
 ip6tables -S FORWARD
+iptables -t nat -D OUTPUT -j XR_DNS
+iptables -t nat -S XR_DNS
+ip6tables -D OUTPUT -j XR_OUT6
+ip6tables -S XR_OUT6
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100
@@ -172,6 +176,10 @@ ip6tables -A XR_FWD6 -i rmnet_data2 -o xr0 -j DROP
 ip6tables -A XR_FWD6 -o xr0 -j DROP
 ip6tables -A XR_FWD6 -i xr0 -j DROP
 ip6tables -S FORWARD
+iptables -t nat -D OUTPUT -j XR_DNS
+iptables -t nat -S XR_DNS
+ip6tables -D OUTPUT -j XR_OUT6
+ip6tables -S XR_OUT6
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100

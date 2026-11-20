@@ -34,6 +34,14 @@ case "$t:$*" in
   "nat:-C POSTROUTING -j XR_NAT") [ -f "$MOCK/nat_hook" ]; exit ;;
   "nat:-I POSTROUTING 1 -j XR_NAT") : > "$MOCK/nat_hook" ;;
   "nat:-D POSTROUTING -j XR_NAT") [ -f "$MOCK/nat_hook" ] && rm -f "$MOCK/nat_hook" && exit 0; exit 1 ;;
+  "nat:-C OUTPUT -j XR_DNS") [ -f "$MOCK/dns_hook" ]; exit ;;
+  "nat:-I OUTPUT 1 -j XR_DNS") : > "$MOCK/dns_hook" ;;
+  "nat:-D OUTPUT -j XR_DNS") [ -f "$MOCK/dns_hook" ] && rm -f "$MOCK/dns_hook" && exit 0; exit 1 ;;
+  "nat:-S XR_DNS") [ -f "$MOCK/XR_DNS" ] || exit 1; echo "-N XR_DNS"; sed "s/^/-A XR_DNS /" "$MOCK/XR_DNS"; exit 0 ;;
+  "nat:-N XR_DNS") [ -f "$MOCK/XR_DNS" ] && exit 1; : > "$MOCK/XR_DNS" ;;
+  "nat:-F XR_DNS") : > "$MOCK/XR_DNS" ;;
+  "nat:-X XR_DNS") rm -f "$MOCK/XR_DNS" ;;
+  "nat:-A XR_DNS "*) shift 2; echo "$*" >> "$MOCK/XR_DNS" ;;
   "filter:-F XR_FWD") : > "$MOCK/XR_FWD" ;;
   "nat:-F XR_NAT") : > "$MOCK/XR_NAT" ;;
   "filter:-X XR_FWD") rm -f "$MOCK/XR_FWD" ;;

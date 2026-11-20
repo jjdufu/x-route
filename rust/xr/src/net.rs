@@ -9,12 +9,17 @@ pub mod vpn_routes;
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::{BufRead as _, BufReader};
 use std::iter;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use signal_hook::consts::SIGTERM;
+use signal_hook::flag;
 
 use crate::config::Config;
 use crate::env::{Env, HS_BR, HS_TAP, XR_IF, XR_NET6};
@@ -271,6 +276,8 @@ pub(crate) fn mss_clear(ctx: &NetCtx<'_>) {
 }
 
 /// 把 `xr0` 的 MTU 调到跟随上游的值（变化时记 INFO），写 `run/net.mtu` 和给客机的 `guest/host/mtu`，并刷新 MSS 钳制。
+///
+/// 虚拟机尚未就绪前保持 `xr0` 为 `1500`，防止 `crosvm` 在 `VIRTIO_NET_F_MTU` 协商阶段把客机 `eth0` 上限锁死在蜂窝 MTU。
 pub(crate) fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
     let mt = upstream_mtu(ctx, up, outs);
     let mt_s = mt.to_string();
@@ -278,7 +285,10 @@ pub(crate) fn mtu_sync(ctx: &NetCtx<'_>, up: &str, outs: &[String]) {
         .unwrap_or_default()
         .trim()
         .to_owned();
-    if cur != mt_s && ctx.ip(&["link", "set", XR_IF, "mtu", &mt_s]).success() {
+    if (mt >= 1500 || vm_is_ready(ctx.env))
+        && cur != mt_s
+        && ctx.ip(&["link", "set", XR_IF, "mtu", &mt_s]).success()
+    {
         let cur_disp = if cur.is_empty() { "?" } else { &cur };
         let up_disp = if up.is_empty() { "无" } else { up };
         log::info(
@@ -728,9 +738,80 @@ fn detect_upstream(ctx: &NetCtx<'_>) -> SyncPlan {
     SyncPlan { up, outs, outs6 }
 }
 
-/// 上游或出口与上次记录不同（或尚无记录）时：更新 `ndc ipfwd` 登记与策略路由规则，写回记录，记日志并在切换时后台抓诊断快照。
-fn follow_upstream(ctx: &NetCtx<'_>, plan: &SyncPlan) {
+/// 上游切换后通知客机重置长连接并尝试清理本地连接跟踪（`net.gen` 供客机 `xrouter-vpn` 清 `OpenWrt` `conntrack` 与重连 `OpenVPN`）。
+fn notify_upstream_switch(ctx: &NetCtx<'_>, up: &str) {
+    let env = ctx.env;
+    let run = env.run_dir();
+    let gen_file = run.join("net.gen");
+    let next_gen = fs::read_to_string(&gen_file)
+        .ok()
+        .and_then(|text| {
+            text.split_whitespace()
+                .next()
+                .and_then(|num| num.parse::<u64>().ok())
+        })
+        .unwrap_or(0)
+        .saturating_add(1);
+    let up_disp = if up.is_empty() { "none" } else { up };
+    let payload = format!("{next_gen} {up_disp}\n");
+    fsx::write_logged(env, gen_file, &payload);
+    let host_dir = run.join("guest/host");
+    if host_dir.is_dir() {
+        fsx::write_logged(env, host_dir.join("net.gen"), payload);
+    }
+    crate::clash::close_connections_async(env);
+
+    // 若宿主恰好有 conntrack 命令，顺带清理 VM 网段旧跟踪条目（没有则忽略，不计错误）
+    let ct_bin = env.sysbin_cmd("conntrack");
+    if ct_bin.is_file() {
+        let net4 = format!("{}.0/24", ctx.cfg.net_prefix());
+        let status = Command::new(&ct_bin)
+            .args(["-D", "-s", &net4])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        dlog(
+            env,
+            ctx.cfg,
+            "net",
+            &format!("宿主 conntrack -D -s {net4}: {status:?}"),
+        );
+    }
+}
+
+/// 记录上游变更日志、通知连接重置并在非首次同步时触发后台诊断快照。
+fn record_upstream_change(ctx: &NetCtx<'_>, plan: &SyncPlan, old_up: &str, old_outs_raw: &str) {
     let (env, cfg) = (ctx.env, ctx.cfg);
+    let up = &plan.up;
+    let old_disp = if old_up.is_empty() { "无" } else { old_up };
+    let new_disp = if up.is_empty() { "无" } else { up.as_str() };
+    let outs_disp = or_none(&plan.outs);
+    let v6_outs_disp = or_none(&plan.outs6);
+    log::info(
+        env,
+        "net",
+        &format!("上游 {old_disp} -> {new_disp}（出口 {outs_disp}）"),
+    );
+    dlog(
+        env,
+        cfg,
+        "net",
+        &format!(
+            "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {v6_outs_disp}"
+        ),
+    );
+    if !old_up.is_empty() || !old_outs_raw.trim().is_empty() {
+        notify_upstream_switch(ctx, up);
+    }
+    if !old_up.is_empty() {
+        trigger_diag_snap_bg(env, cfg, &format!("上游变化 {old_up} -> {new_disp}"));
+    }
+}
+
+/// 上游或出口与上次记录不同（或尚无记录）时：更新 `ndc ipfwd` 登记与策略路由规则，写回记录，记日志并在切换时通知重置连接与后台抓诊断快照。
+fn follow_upstream(ctx: &NetCtx<'_>, plan: &SyncPlan) {
+    let env = ctx.env;
     let run = env.run_dir();
     let up = &plan.up;
     let up_if_file = run.join("net.up_if");
@@ -761,34 +842,7 @@ fn follow_upstream(ctx: &NetCtx<'_>, plan: &SyncPlan) {
     rules_set(ctx, true, up);
     fsx::write_logged(env, &up_if_file, format!("{up}\n"));
     fsx::write_logged(env, &up_out_file, format!("{outs_joined}\n"));
-    let old_disp = if old_up_trimmed.is_empty() {
-        "无"
-    } else {
-        old_up_trimmed
-    };
-    let new_disp = if up.is_empty() { "无" } else { up.as_str() };
-    let outs_disp = or_none(&plan.outs);
-    let v6_outs_disp = or_none(&plan.outs6);
-    log::info(
-        env,
-        "net",
-        &format!("上游 {old_disp} -> {new_disp}（出口 {outs_disp}）"),
-    );
-    dlog(
-        env,
-        cfg,
-        "net",
-        &format!(
-            "上游变化：{old_disp}({old_outs_raw}) -> {new_disp}({outs_disp})，IPv6 出口 {v6_outs_disp}"
-        ),
-    );
-    if !old_up_trimmed.is_empty() {
-        trigger_diag_snap_bg(
-            env,
-            cfg,
-            &format!("上游变化 {old_up_trimmed} -> {new_disp}"),
-        );
-    }
+    record_upstream_change(ctx, plan, old_up_trimmed, &old_outs_raw);
 }
 
 /// 在 `XR_FWD` 链末尾追加一条 `iptables` 规则（`rule` 为 `-A XR_FWD` 之后的部分）。
@@ -820,7 +874,50 @@ fn fwd_rules_ex(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &str) {
     }
 }
 
-/// 重建 `XR_FWD` 链：计数跳转、已建立连接、`xr0` 到出口、例外接口、网关模式下共享网络与 `xr0` 互通，末尾丢弃其余进出 `xr0` 的流量。
+/// 拒绝来自 `xr0` 的非 `SYN` 的 `NEW` 状态 TCP 包，防止切网清掉旧 conntrack 后孤儿重传包被捡起形成死锁。
+fn reject_orphan_tcp(ctx: &NetCtx<'_>) {
+    let rst_ok = ctx
+        .ipt(&[
+            "-A",
+            "XR_FWD",
+            "-i",
+            XR_IF,
+            "-p",
+            "tcp",
+            "!",
+            "--syn",
+            "-m",
+            "conntrack",
+            "--ctstate",
+            "NEW",
+            "-j",
+            "REJECT",
+            "--reject-with",
+            "tcp-reset",
+        ])
+        .success();
+    if !rst_ok {
+        ipt_fwd(
+            ctx,
+            &[
+                "-i",
+                XR_IF,
+                "-p",
+                "tcp",
+                "!",
+                "--syn",
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "NEW",
+                "-j",
+                "DROP",
+            ],
+        );
+    }
+}
+
+/// 重建 `XR_FWD` 链：计数跳转、已建立连接、拒绝非 SYN 的孤儿新包、`xr0` 到出口、例外接口、网关模式下共享网络与 `xr0` 互通，末尾丢弃其余进出 `xr0` 的流量。
 fn apply_forward_rules(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &str) {
     ctx.ipt_run(&["-F", "XR_FWD"]);
     if acct_present(ctx) {
@@ -836,6 +933,9 @@ fn apply_forward_rules(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &
     ];
     ipt_fwd(ctx, &[&["-o", XR_IF][..], &est[..]].concat());
     ipt_fwd(ctx, &[&["-i", XR_IF][..], &est[..]].concat());
+    if want_gateway(ctx) {
+        reject_orphan_tcp(ctx);
+    }
     for fwd_out in outs {
         ipt_fwd(ctx, &["-i", XR_IF, "-o", fwd_out, "-j", "ACCEPT"]);
     }
@@ -852,6 +952,134 @@ fn apply_forward_rules(ctx: &NetCtx<'_>, outs: &[String], ex: &[String], net4: &
     ipt_fwd(ctx, &["-o", XR_IF, "-j", "DROP"]);
     ipt_fwd(ctx, &["-i", XR_IF, "-j", "DROP"]);
     fwd_first(ctx);
+}
+
+/// 确保 nat 表 `OUTPUT` 中存在到 `XR_DNS` 的跳转，缺失时插到第一位。
+fn dns_nat_first(ctx: &NetCtx<'_>) {
+    if !ctx
+        .ipt(&["-t", "nat", "-C", "OUTPUT", "-j", "XR_DNS"])
+        .success()
+    {
+        ctx.ipt_run(&["-t", "nat", "-I", "OUTPUT", "1", "-j", "XR_DNS"]);
+    }
+}
+
+/// 删除 nat 表中的 `XR_DNS` 链及其在 `OUTPUT` 的跳转。
+fn dns_nat_clear(ctx: &NetCtx<'_>) {
+    for _ in 0_u8..16_u8 {
+        if !ctx
+            .ipt(&["-t", "nat", "-D", "OUTPUT", "-j", "XR_DNS"])
+            .success()
+        {
+            break;
+        }
+    }
+    if ctx.ipt(&["-t", "nat", "-S", "XR_DNS"]).success() {
+        ctx.ipt_run(&["-t", "nat", "-F", "XR_DNS"]);
+        ctx.ipt_run(&["-t", "nat", "-X", "XR_DNS"]);
+    }
+}
+
+/// 全局模式下把手机本机（含 `netd` 显式标记 `0x10000` 旁路 `19100` 的）53 端口 `IPv4` DNS 查询导向虚拟机，非全局或未就绪时清理。
+fn dns_nat_sync(ctx: &NetCtx<'_>, enable: bool) {
+    if !enable {
+        dns_nat_clear(ctx);
+        return;
+    }
+    if !ctx.ipt(&["-t", "nat", "-S", "XR_DNS"]).success() {
+        ctx.ipt_run(&["-t", "nat", "-N", "XR_DNS"]);
+    }
+    ctx.ipt_run(&["-t", "nat", "-F", "XR_DNS"]);
+    let net4 = format!("{}.0/24", ctx.cfg.net_prefix());
+    let via4_dns = format!("{}.254:53", ctx.cfg.net_prefix());
+    ctx.ipt_run(&[
+        "-t",
+        "nat",
+        "-A",
+        "XR_DNS",
+        "-d",
+        "127.0.0.0/8",
+        "-j",
+        "RETURN",
+    ]);
+    ctx.ipt_run(&["-t", "nat", "-A", "XR_DNS", "-d", &net4, "-j", "RETURN"]);
+    for proto in ["udp", "tcp"] {
+        ctx.ipt_run(&[
+            "-t",
+            "nat",
+            "-A",
+            "XR_DNS",
+            "-p",
+            proto,
+            "--dport",
+            "53",
+            "-j",
+            "DNAT",
+            "--to-destination",
+            &via4_dns,
+        ]);
+    }
+    dns_nat_first(ctx);
+}
+
+/// 确保 `ip6tables` 的 `OUTPUT` 中存在到 `XR_OUT6` 的跳转。
+fn out6_dns_first(ctx: &NetCtx<'_>) {
+    if !ctx.ip6t(&["-C", "OUTPUT", "-j", "XR_OUT6"]).success() {
+        ctx.ip6t_run(&["-I", "OUTPUT", "1", "-j", "XR_OUT6"]);
+    }
+}
+
+/// 删除 `ip6tables` 的 `XR_OUT6` 链及其在 `OUTPUT` 的跳转。
+fn out6_dns_clear(ctx: &NetCtx<'_>) {
+    if !ctx.env.run_dir().join("net.fwd6").is_file() {
+        return;
+    }
+    while ctx.ip6t(&["-D", "OUTPUT", "-j", "XR_OUT6"]).success() {}
+    if ctx.ip6t(&["-S", "XR_OUT6"]).success() {
+        ctx.ip6t_run(&["-F", "XR_OUT6"]);
+        ctx.ip6t_run(&["-X", "XR_OUT6"]);
+    }
+}
+
+/// `IPv6` 拦截形态（`block`）下拒绝手机本机直发到上游的 53 端口 `IPv6` DNS 查询，迫使 `netd` 快速回落 `IPv4` DNS 进虚拟机。
+fn out6_dns_sync(ctx: &NetCtx<'_>, block: bool) {
+    if !ctx.env.run_dir().join("net.fwd6").is_file() {
+        return;
+    }
+    if !block {
+        out6_dns_clear(ctx);
+        return;
+    }
+    if !ctx.ip6t(&["-S", "XR_OUT6"]).success() {
+        ctx.ip6t_run(&["-N", "XR_OUT6"]);
+    }
+    ctx.ip6t_run(&["-F", "XR_OUT6"]);
+    ctx.ip6t_run(&["-A", "XR_OUT6", "-o", XR_IF, "-j", "RETURN"]);
+    ctx.ip6t_run(&[
+        "-A",
+        "XR_OUT6",
+        "-p",
+        "udp",
+        "--dport",
+        "53",
+        "-j",
+        "REJECT",
+        "--reject-with",
+        "icmp6-adm-prohibited",
+    ]);
+    ctx.ip6t_run(&[
+        "-A",
+        "XR_OUT6",
+        "-p",
+        "tcp",
+        "--dport",
+        "53",
+        "-j",
+        "REJECT",
+        "--reject-with",
+        "tcp-reset",
+    ]);
+    out6_dns_first(ctx);
 }
 
 /// 调试日志记一行本次对账结果；`block` 模式时再记 `IPv6` 拦截说明。
@@ -888,6 +1116,47 @@ fn log_sync(ctx: &NetCtx<'_>, plan: &SyncPlan, ex: &[String], gw: &str) {
     }
 }
 
+/// 重建 `XR_NAT` 链：虚拟机网段出上游接口做 `MASQUERADE`；全局模式时给重定向进 `xr0` 的 53 端口 `DNS` 做 `SNAT`。
+fn apply_nat_rules(ctx: &NetCtx<'_>, outs: &[String], net4: &str, dns_snat: bool) {
+    ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
+    for nat_out in outs {
+        let rule = [
+            "-t",
+            "nat",
+            "-A",
+            "XR_NAT",
+            "-s",
+            net4,
+            "-o",
+            nat_out,
+            "-j",
+            "MASQUERADE",
+        ];
+        ctx.ipt_run(&rule);
+    }
+    if dns_snat {
+        let src4 = format!("{}.1", ctx.cfg.net_prefix());
+        for proto in ["udp", "tcp"] {
+            ctx.ipt_run(&[
+                "-t",
+                "nat",
+                "-A",
+                "XR_NAT",
+                "-o",
+                XR_IF,
+                "-p",
+                proto,
+                "--dport",
+                "53",
+                "-j",
+                "SNAT",
+                "--to-source",
+                &src4,
+            ]);
+        }
+    }
+}
+
 /// 一次完整对账（调用方已持有网络锁）：跟随上游、开放接口、网关形态、路由、流量计数、热点与 `IPv6`，变化时记日志。
 fn sync_all_unlocked(env: &Env) {
     let cfg = Config::load(env);
@@ -897,23 +1166,9 @@ fn sync_all_unlocked(env: &Env) {
     let plan = detect_upstream(&ctx);
     follow_upstream(&ctx, &plan);
 
+    let gw_on = want_gateway(&ctx);
     let net4 = format!("{}.0/24", cfg.net_prefix());
-    ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
-    for nat_out in &plan.outs {
-        let rule = [
-            "-t",
-            "nat",
-            "-A",
-            "XR_NAT",
-            "-s",
-            &net4,
-            "-o",
-            nat_out,
-            "-j",
-            "MASQUERADE",
-        ];
-        ctx.ipt_run(&rule);
-    }
+    apply_nat_rules(&ctx, &plan.outs, &net4, gw_on);
     mtu_sync(&ctx, &plan.up, &plan.outs);
 
     let ex = expose_ifaces(&ctx, &plan.up);
@@ -933,6 +1188,8 @@ fn sync_all_unlocked(env: &Env) {
     let gw = gw_want(&ctx);
     log_sync(&ctx, &plan, &ex, gw);
     sync_v6(&ctx, gw, &plan.outs6, &ex);
+    dns_nat_sync(&ctx, gw != "off");
+    out6_dns_sync(&ctx, gw == "block");
     if gw == "off" {
         gw_remove(&ctx);
     } else {
@@ -1231,13 +1488,20 @@ fn reassert_fallback(ctx: &NetCtx<'_>, net4: &str, net6: &str) {
     routes_reassert(ctx);
 }
 
-/// 每轮补回挂链钩子、流量计数钩子、`MSS` 规则与热点规则。
+/// 每轮补回挂链钩子、流量计数钩子、`MSS` 规则、DNS 劫持钩子与热点规则。
 fn reassert_hooks(ctx: &NetCtx<'_>, outs: &[String]) {
     fwd_first(ctx);
     nat_first(ctx);
     fwd6_first(ctx);
     nat6_first(ctx);
     acct_hooks(ctx);
+    let gw = gw_want(ctx);
+    if gw != "off" {
+        dns_nat_first(ctx);
+    }
+    if gw == "block" && ctx.env.run_dir().join("net.fwd6").is_file() {
+        out6_dns_first(ctx);
+    }
     if !ctx
         .ipt(&["-t", "mangle", "-C", "POSTROUTING", "-j", "XR_MSS"])
         .success()
@@ -1249,23 +1513,106 @@ fn reassert_hooks(ctx: &NetCtx<'_>, outs: &[String]) {
     hs_sync(ctx);
 }
 
-/// `xr net watch`：`xr0` 存在期间每 10 秒比对上游、出口、MTU、路由文件等指纹，有变化时完整对账，否则只补齐被外部删除的规则。
-#[must_use]
-pub(crate) fn watch(env: &Env) -> i32 {
-    while env.sysnet.join(XR_IF).is_dir() {
-        thread::sleep(Duration::from_secs(10));
-        if !env.sysnet.join(XR_IF).is_dir() {
-            break;
-        }
-        let cfg = Config::load(env);
-        let ctx = NetCtx::new(env, &cfg);
+/// 运行一次对账并在需要时补回规则与路由，返回本轮是否执行了定期补齐。
+fn watch_tick(env: &Env, force_reassert: bool) {
+    if !env.sysnet.join(XR_IF).is_dir() {
+        return;
+    }
+    let cfg = Config::load(env);
+    let ctx = NetCtx::new(env, &cfg);
+    if force_reassert {
         time_push(env);
-        let (up, outs) = watch_state(&ctx);
+    }
+    let (up, outs) = watch_state(&ctx);
+    if force_reassert {
         reassert_hooks(&ctx, &outs);
         let net4 = format!("{}.0/24", cfg.net_prefix());
         let net6 = format!("{XR_NET6}::/64");
         reassert_rules(&ctx, &up, &net4, &net6);
         reassert_fallback(&ctx, &net4, &net6);
+    }
+}
+
+/// 启动 `ip monitor route rule` 监听线程：路由或策略规则变动时立即唤醒对账循环；返回（唤醒接收端, 子进程句柄）。
+fn spawn_net_monitor(env: &Env) -> (mpsc::Receiver<()>, Option<std::process::Child>) {
+    let (tx, rx) = mpsc::channel();
+    let Ok(mut child) = Command::new(env.sysbin_cmd("ip"))
+        .args(["monitor", "route", "rule"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return (rx, None);
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return (rx, Some(child));
+    };
+    if let Err(err) = thread::Builder::new()
+        .name("xr-net-mon".to_owned())
+        .spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            while let Ok(n) = reader.read_line(&mut line) {
+                if n == 0 {
+                    break;
+                }
+                line.clear();
+                if tx.send(()).is_err() {
+                    break;
+                }
+            }
+        })
+    {
+        dlog_env_net(env, &format!("启动网络事件监听线程失败：{err}"));
+    }
+    (rx, Some(child))
+}
+
+/// 在仅持有 `env` 时写一条 `net` 调试日志（从配置文件读取调试开关）。
+fn dlog_env_net(env: &Env, msg: &str) {
+    let cfg = Config::load(env);
+    dlog(env, &cfg, "net", msg);
+}
+
+/// `xr net watch`：`xr0` 存在期间通过 `ip monitor` 秒级响应路由/策略规则变化，同时每 10 秒兜底对账并补齐被外部删除的规则。
+#[must_use]
+pub(crate) fn watch(env: &Env) -> i32 {
+    let term = Arc::new(AtomicBool::new(false));
+    if let Err(err) = flag::register(SIGTERM, Arc::clone(&term)) {
+        dlog_env_net(env, &format!("注册 SIGTERM 失败：{err}"));
+    }
+    let (rx, mut mon_child) = spawn_net_monitor(env);
+    let mut last_reassert = Instant::now();
+
+    while env.sysnet.join(XR_IF).is_dir() && !term.load(Ordering::Relaxed) {
+        let woke_by_event = match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(()) => {
+                // 合并 netd 连续下发多条规则/路由的突发事件
+                thread::sleep(Duration::from_millis(120));
+                while rx.try_recv().is_ok() {}
+                true
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                thread::sleep(Duration::from_secs(1));
+                false
+            }
+        };
+        if !env.sysnet.join(XR_IF).is_dir() || term.load(Ordering::Relaxed) {
+            break;
+        }
+        let due_periodic = last_reassert.elapsed() >= Duration::from_secs(10);
+        if woke_by_event || due_periodic {
+            watch_tick(env, due_periodic);
+            if due_periodic {
+                last_reassert = Instant::now();
+            }
+        }
+    }
+    if let Some(ref mut child) = mon_child {
+        drop(child.kill());
+        drop(child.wait());
     }
     0
 }
@@ -1284,7 +1631,7 @@ fn stop_watch(env: &Env, cfg: &Config) {
     }
 }
 
-/// 摘除并删除 `IPv4` 的 `XR_FWD`/`XR_NAT` 链，并按上次记录的出口撤销 `ndc ipfwd` 转发。
+/// 摘除并删除 `IPv4` 的 `XR_FWD`/`XR_NAT`/`XR_DNS` 链，并按上次记录的出口撤销 `ndc ipfwd` 转发。
 fn drop_v4_chains(ctx: &NetCtx<'_>) {
     while ctx.ipt(&["-D", "FORWARD", "-j", "XR_FWD"]).success() {}
     ctx.ipt_run(&["-F", "XR_FWD"]);
@@ -1295,6 +1642,7 @@ fn drop_v4_chains(ctx: &NetCtx<'_>) {
     {}
     ctx.ipt_run(&["-t", "nat", "-F", "XR_NAT"]);
     ctx.ipt_run(&["-t", "nat", "-X", "XR_NAT"]);
+    dns_nat_clear(ctx);
 
     if let Ok(old_outs) = fs::read_to_string(ctx.env.run_dir().join("net.up_out")) {
         for out_if in old_outs.split_whitespace() {
@@ -1303,11 +1651,12 @@ fn drop_v4_chains(ctx: &NetCtx<'_>) {
     }
 }
 
-/// 摘除并删除 `IPv6` 的 `XR_FWD6` 链，内核支持 `IPv6` `NAT` 时再删 `XR_NAT6`。
+/// 摘除并删除 `IPv6` 的 `XR_FWD6`/`XR_OUT6` 链，内核支持 `IPv6` `NAT` 时再删 `XR_NAT6`。
 fn drop_v6_chains(ctx: &NetCtx<'_>) {
     while ctx.ip6t(&["-D", "FORWARD", "-j", "XR_FWD6"]).success() {}
     ctx.ip6t_run(&["-F", "XR_FWD6"]);
     ctx.ip6t_run(&["-X", "XR_FWD6"]);
+    out6_dns_clear(ctx);
     if !ip6_nat_ok(ctx.env) {
         return;
     }

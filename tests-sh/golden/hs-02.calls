@@ -12,6 +12,8 @@ ip -6 rule add pref 18800 iif xr0 lookup 97
 ip -6 rule add pref 18900 iif xr0 lookup rmnet_data2
 iptables -t nat -F XR_NAT
 iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+iptables -t nat -A XR_NAT -o xr0 -p udp --dport 53 -j SNAT --to-source 172.29.233.1
+iptables -t nat -A XR_NAT -o xr0 -p tcp --dport 53 -j SNAT --to-source 172.29.233.1
 ip -4 route show table rmnet_data2
 ip -6 route show table rmnet_data2
 ip link set xr0 mtu 1500
@@ -72,6 +74,7 @@ iptables -S XR_ACCT_UP
 iptables -A XR_FWD -j XR_ACCT
 iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -p tcp ! --syn -m conntrack --ctstate NEW -j REJECT --reject-with tcp-reset
 iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
 iptables -A XR_FWD -i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT
 iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
@@ -135,6 +138,15 @@ ip6tables -A XR_FWD6 -i xr0 -j DROP
 ip6tables -S FORWARD
 ip6tables -D FORWARD -j XR_FWD6
 ip6tables -I FORWARD 1 -j XR_FWD6
+iptables -t nat -S XR_DNS
+iptables -t nat -N XR_DNS
+iptables -t nat -F XR_DNS
+iptables -t nat -A XR_DNS -d 127.0.0.0/8 -j RETURN
+iptables -t nat -A XR_DNS -d 172.29.233.0/24 -j RETURN
+iptables -t nat -A XR_DNS -p udp --dport 53 -j DNAT --to-destination 172.29.233.254:53
+iptables -t nat -A XR_DNS -p tcp --dport 53 -j DNAT --to-destination 172.29.233.254:53
+iptables -t nat -C OUTPUT -j XR_DNS
+iptables -t nat -I OUTPUT 1 -j XR_DNS
 ip route flush table 233
 ip route show table local_network
 ip -4 route show dev rmnet_data2
@@ -159,6 +171,8 @@ ip -4 route show table rmnet_data2
 ip -6 route show table rmnet_data2
 iptables -t nat -F XR_NAT
 iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+iptables -t nat -A XR_NAT -o xr0 -p udp --dport 53 -j SNAT --to-source 172.29.233.1
+iptables -t nat -A XR_NAT -o xr0 -p tcp --dport 53 -j SNAT --to-source 172.29.233.1
 ip -4 route show table rmnet_data2
 ip -6 route show table rmnet_data2
 ip link set xr0 mtu 1500
@@ -188,6 +202,7 @@ iptables -S XR_ACCT_UP
 iptables -A XR_FWD -j XR_ACCT
 iptables -A XR_FWD -o xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 iptables -A XR_FWD -i xr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A XR_FWD -i xr0 -p tcp ! --syn -m conntrack --ctstate NEW -j REJECT --reject-with tcp-reset
 iptables -A XR_FWD -i xr0 -o rmnet_data2 -j ACCEPT
 iptables -A XR_FWD -i wlan1 -o xr0 -d 172.29.233.0/24 -j ACCEPT
 iptables -A XR_FWD -i rmnet_data2 -o xr0 -j DROP
@@ -222,6 +237,13 @@ ip6tables -A XR_FWD6 -i wlan1 -o rmnet_data2 -j REJECT --reject-with icmp6-adm-p
 ip6tables -A XR_FWD6 -o xr0 -j DROP
 ip6tables -A XR_FWD6 -i xr0 -j DROP
 ip6tables -S FORWARD
+iptables -t nat -S XR_DNS
+iptables -t nat -F XR_DNS
+iptables -t nat -A XR_DNS -d 127.0.0.0/8 -j RETURN
+iptables -t nat -A XR_DNS -d 172.29.233.0/24 -j RETURN
+iptables -t nat -A XR_DNS -p udp --dport 53 -j DNAT --to-destination 172.29.233.254:53
+iptables -t nat -A XR_DNS -p tcp --dport 53 -j DNAT --to-destination 172.29.233.254:53
+iptables -t nat -C OUTPUT -j XR_DNS
 ip route flush table 233
 ip route show table local_network
 ip -4 route show dev rmnet_data2

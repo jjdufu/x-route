@@ -38,6 +38,11 @@ case "$t:$*" in
   "nat:-I POSTROUTING 1 -j XR_NAT6") : > "$MOCK/nat6_hook" ;;
   "nat:-D POSTROUTING -j XR_NAT6") [ -f "$MOCK/nat6_hook" ] && rm -f "$MOCK/nat6_hook" && exit 0; exit 1 ;;
   "filter:-F XR_FWD6") : > "$MOCK/XR_FWD6" ;;
+  "filter:-S XR_OUT6") [ -f "$MOCK/XR_OUT6" ] || exit 1; echo "-N XR_OUT6"; sed "s/^/-A XR_OUT6 /" "$MOCK/XR_OUT6"; exit 0 ;;
+  "filter:-N XR_OUT6") [ -f "$MOCK/XR_OUT6" ] && exit 1; : > "$MOCK/XR_OUT6" ;;
+  "filter:-F XR_OUT6") : > "$MOCK/XR_OUT6" ;;
+  "filter:-X XR_OUT6") rm -f "$MOCK/XR_OUT6" ;;
+  "filter:-A XR_OUT6 "*) shift 2; echo "$*" >> "$MOCK/XR_OUT6" ;;
   "nat:-F XR_NAT6") : > "$MOCK/XR_NAT6" ;;
   "filter:-X XR_FWD6") rm -f "$MOCK/XR_FWD6" ;;
   "nat:-X XR_NAT6") rm -f "$MOCK/XR_NAT6" ;;

@@ -121,7 +121,7 @@ apply_cmd() {
 }
 
 watch() {
-  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""; lasttun=""; lasttime=""; lastacct=""; laststats=""; lastbackup=""
+  last=""; last6=""; lastwan=""; lastdiag=""; lasths=""; lastmtu=""; lasttun=""; lasttime=""; lastacct=""; laststats=""; lastbackup=""; lastnetgen=""
   # 上报热点接管能力与状态（手机侧据此判断系统盘是否支持）
   /usr/libexec/xrouter-hotspot status > "${CTL}/guest/hotspot.tmp" && mv -f "${CTL}/guest/hotspot.tmp" "${CTL}/guest/hotspot"
   while :; do
@@ -157,10 +157,25 @@ watch() {
     mt="$(cat "${CTL}/host/mtu" 2>/dev/null)"
     if [ -n "$mt" ] && [ "$mt" != "$lastmtu" ]; then
       lastmtu="$mt"
-      /usr/libexec/xrouter-mtu "$mt"
-      cat /sys/class/net/eth0/mtu > "${CTL}/guest/mtu" 2>/dev/null
-      /usr/libexec/xrouter-tunmtu apply
+      cap=0
+      if ! /usr/libexec/xrouter-mtu "$mt"; then
+        cap=1
+        logger -t xrouter "eth0 MTU 设置 ${mt} 失败（当前 $(cat /sys/class/net/eth0/mtu 2>/dev/null)）"
+      fi
+      cat /sys/class/net/eth0/mtu > "${CTL}/guest/mtu.tmp" 2>/dev/null && mv -f "${CTL}/guest/mtu.tmp" "${CTL}/guest/mtu" 2>/dev/null
+      XRG_ETH0_CAP="$cap" /usr/libexec/xrouter-tunmtu apply
       [ -x /usr/libexec/xrouter-hotspot ] && /usr/libexec/xrouter-hotspot mtu
+    fi
+    ng="$(cat "${CTL}/host/net.gen" 2>/dev/null)"
+    if [ -n "$ng" ] && [ "$ng" != "$lastnetgen" ]; then
+      if [ -n "$lastnetgen" ]; then
+        if command -v conntrack >/dev/null 2>&1; then conntrack -F >/dev/null 2>&1 || true; fi
+        for p in $(pidof openvpn 2>/dev/null); do
+          kill -USR1 "$p" 2>/dev/null || true
+        done
+        logger -t xrouter "上游切换（${ng}），已清理 conntrack 并触发隧道重连"
+      fi
+      lastnetgen="$ng"
     fi
     ts="$(tun_sig)"
     if [ "$ts" != "$lasttun" ]; then
