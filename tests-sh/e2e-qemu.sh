@@ -35,7 +35,7 @@ chk '[ "$(echo "$out" | grep -E "^[0-9]+$" | sed -n 1p)" -gt 900 ]'
 caps="$($S sh -s < "$ROOT/tests-sh/vm-caps.sh" 2>&1)"
 echo "$caps" | sed 's/^/  caps> /'
 chk 'echo "$caps" | grep -qx CAPS_OK'
-chk 'echo "$out" | grep -qx REJECT && echo "$out" | grep -qx lan && echo "$out" | grep -qx vpn'
+chk 'echo "$out" | grep -qx ACCEPT && echo "$out" | grep -qx lan && echo "$out" | grep -qx vpn'
 # IPv6：固件默认关闭（组件仍在），开关立即生效且不重启虚拟机
 v6="$($S '/usr/libexec/xrouter-ipv6 state; uci -q get network.xr_eth0.ipv6; uci -q get dhcp.lan.ra; which odhcpd >/dev/null && echo ODHCPD; /usr/libexec/xrouter-ipv6 on; sleep 2; /usr/libexec/xrouter-ipv6 state; ip -6 -o addr show eth0 | grep -c "fd7a:7872:e9::254/64"; ip -6 route | grep -c "^default via fd7a:7872:e9::1"; nft list chain inet fw4 xrouter_onelink | grep -c "ip6 daddr != fd7a:7872:e9::/64"; /usr/libexec/xrouter-ipv6 off; /usr/libexec/xrouter-ipv6 state' </dev/null 2>&1)"
 echo "$v6" | sed 's/^/  v6> /'

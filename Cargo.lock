@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "xr"
-version = "4.1.1"
+version = "4.1.2"
 dependencies = [
  "chrono",
  "flate2",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "xr-test-support"
-version = "4.1.1"
+version = "4.1.2"
 
 [[package]]
 name = "zip"

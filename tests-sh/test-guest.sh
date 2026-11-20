@@ -308,5 +308,6 @@ echo "export 777" > "$BK/w/ctl/host/backup.cmd"
 CTL="$BK/w/ctl" sh "$BK/w/round.sh"
 chk '[ "$(cat "$BK/w/run.calls")" = "export 777" ]'
 chk 'grep -q "echo 1 > \"\${CTL}/guest/backup.cap\"" "$VPN_INIT"'
+chk 'grep -qx "set firewall\.vpn\.input=.ACCEPT." "$ROOT/openwrt/files/etc/uci-defaults/10-xrouter" && grep -qx "set firewall\.vpn\.input=.ACCEPT." "$ROOT/openwrt/files/etc/init.d/xrouter-net"'
 
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi

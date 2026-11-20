@@ -37,6 +37,7 @@ U
   # 对端只需认识已经互通的隧道地址，手机本机也能直接访问组网网段，不必改服务端
   uci -q delete firewall.vpn.masq_src
   uci -q batch <<'U'
+set firewall.vpn.input='ACCEPT'
 set firewall.vpn.forward='ACCEPT'
 set firewall.lan_vpn=forwarding
 set firewall.lan_vpn.src='lan'
