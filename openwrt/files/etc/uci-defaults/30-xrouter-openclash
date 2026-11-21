@@ -23,6 +23,11 @@ if [ -x /etc/uci-defaults/luci-openclash ]; then
 	rm -f /etc/uci-defaults/luci-openclash
 fi
 
+# 去掉 OpenClash 防火墙重载钩子硬编码的 sleep 5：避免 fw4 reload 后出现 5~6 秒透明代理规则真空期
+if [ -f /etc/init.d/openclash ]; then
+	sed -i '/^reload_service()/,/^}/s/^[[:space:]]*sleep 5$/   :/' /etc/init.d/openclash
+fi
+
 # 预装但不启动：保留 init.d 自启软链，由 openclash.config.enable=0 控制默认不拉起内核；
 # 用户后续在 LuCI 启用 OpenClash 后重启虚拟机即可正常随系统自启。
 [ -x /etc/init.d/openclash ] && /etc/init.d/openclash enable

@@ -29,6 +29,7 @@ set network.vpn=interface
 set network.vpn.proto='none'
 set network.vpn.device='tun0'
 commit network
+set dhcp.@dnsmasq[0].rebind_protection='0'
 set dhcp.lan.ignore='1'
 delete dhcp.wan
 commit dhcp
@@ -36,6 +37,7 @@ U
 
 # 3. 防火墙：只保留 lan 和 vpn 两个分区（具名 section，xrouter-net 直接引用）
 #    关闭 flow offloading / fullcone：自编内核未内建 nf_flow_table，flowtable 规则会导致整套规则加载失败
+#    vpn 分区只按 device='tun+' 匹配（不绑 network='vpn'），避免切网时 tun0 重连触发 20-firewall 热插拔重载 fw4
 while uci -q delete firewall.@zone[0]; do :; done
 while uci -q delete firewall.@forwarding[0]; do :; done
 while uci -q delete firewall.@rule[0]; do :; done
@@ -56,7 +58,6 @@ set firewall.lan.forward='ACCEPT'
 set firewall.lan.mtu_fix='1'
 set firewall.vpn=zone
 set firewall.vpn.name='vpn'
-add_list firewall.vpn.network='vpn'
 add_list firewall.vpn.device='tun+'
 set firewall.vpn.input='ACCEPT'
 set firewall.vpn.output='ACCEPT'

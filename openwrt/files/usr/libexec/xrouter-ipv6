@@ -80,7 +80,9 @@ apply() {
     uci -q get "network.${sec}" >/dev/null || { uci -q set "network.${sec}=device"; uci -q set "network.${sec}.name=${d}"; }
     uci -q set "network.${sec}.ipv6=${v}"
   done
-  # lan（eth0，手机与虚拟机之间的链路）任何时候都不发 RA / DHCPv6；热点侧由 xrouter-hotspot 按开关处理
+  filter_v6=1; [ "$v" = 1 ] && filter_v6=0
+  # lan（eth0，手机与虚拟机之间的链路）任何时候都不发 RA / DHCPv6；关闭 IPv6 时过滤 AAAA 防止应用尝试无效 IPv6 连接
+  uci -q set "dhcp.@dnsmasq[0].filter_aaaa=${filter_v6}"
   uci -q batch <<'U'
 set dhcp.lan.ra='disabled'
 set dhcp.lan.dhcpv6='disabled'
@@ -88,6 +90,7 @@ set dhcp.lan.ndp='disabled'
 U
   uci -q commit network
   uci -q commit dhcp
+  /etc/init.d/dnsmasq reload >/dev/null 2>&1 || true
   # 先落实内核开关：关闭时 netifd 重载期间也不会冒出 IPv6 地址
   [ "$v" = 0 ] && kernel_v6 0
   /etc/init.d/network reload >/dev/null 2>&1
