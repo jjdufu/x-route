@@ -1,14 +1,17 @@
 //! 常驻通知节流（间隔、强制刷新、内容不变与熄屏，状态在内存）与网关残留的去抖决策。
 
 use std::cell::Cell;
+use std::fs;
 
 use proptest::prelude::*;
-use xr_test_support::{Failure, ensure, ensure_eq};
+use tempfile::TempDir;
+use xr_test_support::{Failure, ensure, ensure_eq, ensure_ok};
 
 use super::{
     CARRIER_GRACE, NotifyMem, RESET_GRACE, ResetState, Stale, StaleAction, StaleGuard, StaleObs,
-    notify_throttled, notify_unchanged, stale_decide,
+    cgroup_escape_tree, notify_throttled, notify_unchanged, stale_decide,
 };
+use crate::log::tests::env_at;
 
 /// 非稳态（未显示或强制刷新）时不节流；初始状态（`ts == 0`）立即刷新；不足间隔节流，到间隔放行。
 ///
@@ -217,6 +220,47 @@ fn kind_of(code: u8) -> Stale {
         1 => Stale::CarrierDown,
         _ => Stale::VmDead,
     }
+}
+
+/// `run/fuse_watch.pid` 残留已退出的死 `PID` 时，`cgroup_escape_tree` 只迁移在跑进程，不写 `cgroup_escape 未成功` 调试噪音。
+///
+/// # Errors
+///
+/// 目录创建或断言不满足时返回 [`Failure`]。
+#[test]
+fn cgroup_escape_tree_skips_dead_pid() -> Result<(), Failure> {
+    let tmp = ensure_ok(TempDir::new(), "临时目录")?;
+    let mut env = env_at(&tmp.path().join("data"));
+    env.proc_base = tmp.path().join("proc");
+    env.cgroup_root = tmp.path().join("cg");
+    for dir in [
+        env.run_dir(),
+        env.xr_data.join("config"),
+        env.xr_data.join("log"),
+        env.proc_base.join("1234"),
+        env.cgroup_root.clone(),
+    ] {
+        ensure_ok(fs::create_dir_all(&dir), "建测试目录")?;
+    }
+    ensure_ok(
+        fs::write(env.xr_data.join("config/config.conf"), "XR_DEBUG=1\n"),
+        "开启调试日志",
+    )?;
+    ensure_ok(
+        fs::write(env.run_dir().join("fuse_watch.pid"), "2147483640\n"),
+        "写入死 PID",
+    )?;
+    cgroup_escape_tree(&env, 1234_u32);
+    let procs = ensure_ok(
+        fs::read_to_string(env.cgroup_root.join("cgroup.procs")),
+        "读 cgroup.procs",
+    )?;
+    ensure_eq(&procs.trim(), &"1234", "本进程已写入 cgroup.procs")?;
+    let dbg = fs::read_to_string(env.xr_data.join("log/debug.log")).unwrap_or_default();
+    ensure(
+        !dbg.contains("cgroup_escape 未成功"),
+        "死 PID 不产生 cgroup_escape 未成功日志",
+    )
 }
 
 proptest! {

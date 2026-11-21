@@ -45,6 +45,10 @@ use crate::traffic::{acct_hooks, acct_present, acct_present6, acct_setup, acct_t
 const GW_PREF: &str = "19100";
 /// 网关模式使用的路由表号。
 const GW_TABLE: &str = "233";
+/// 全局模式下本机发往 `Fake-IP` 网段的策略路由优先级（先于 `netd` 显式网络规则 `11000`–`17000`，限定 `iif lo` 防回环）。
+const FAKEIP_PREF: &str = "4802";
+/// `OpenClash` / `mihomo` 默认使用的 `Fake-IP` 网段。
+const FAKEIP_CIDR: &str = "198.18.0.0/15";
 /// `IPv6` 拦截规则（热点等接口的 `IPv6` 指向 `xr0`）的优先级。
 const REJ6_PREF: &str = "19060";
 /// `IPv6` 拦截使用的路由表号。
@@ -479,10 +483,9 @@ fn copy_dev_routes6(ctx: &NetCtx<'_>, dev: &str) {
     }
 }
 
-/// 安装网关：重建网关路由表（直连路由 + 默认路由经虚拟机），添加全局规则；按形态设置 `IPv6` 默认路由或拦截规则，写 `run/net.gw`。
-fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]) {
+/// 安装网关的 `IPv4` 路由表与策略路由（含优先于 `netd` 显式网络规则的本机 `Fake-IP` 策略路由）。
+fn gw_install_v4(ctx: &NetCtx<'_>, outs: &[String], tethers: &[String]) {
     ctx.ip_run(&["route", "flush", "table", GW_TABLE]);
-    let tethers = tether_ifaces(ctx);
     for dev4 in outs.iter().chain(tethers.iter()) {
         copy_dev_routes(ctx, dev4);
     }
@@ -491,9 +494,25 @@ fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]
     ctx.ip_run(&[
         "route", "replace", "default", "via", &via4, "dev", XR_IF, "src", &src4, "table", GW_TABLE,
     ]);
+    while ctx.ip(&["rule", "del", "pref", FAKEIP_PREF]).success() {}
+    ctx.ip_run(&[
+        "rule",
+        "add",
+        "pref",
+        FAKEIP_PREF,
+        "iif",
+        "lo",
+        "to",
+        FAKEIP_CIDR,
+        "lookup",
+        GW_TABLE,
+    ]);
     while ctx.ip(&["rule", "del", "pref", GW_PREF]).success() {}
     ctx.ip_run(&["rule", "add", "pref", GW_PREF, "lookup", GW_TABLE]);
+}
 
+/// 安装网关的 `IPv6` 路由表与拦截规则。
+fn gw_install_v6(ctx: &NetCtx<'_>, gateway: &str, outs6: &[String], tethers: &[String]) {
     ctx.ip6_run(&["route", "flush", "table", GW_TABLE]);
     for dev6 in outs6.iter().chain(tethers.iter()) {
         copy_dev_routes6(ctx, dev6);
@@ -524,7 +543,7 @@ fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]
         ctx.ip6_run(&[
             "route", "replace", "default", "dev", XR_IF, "table", REJ6_TABLE,
         ]);
-        for i in &tethers {
+        for i in tethers {
             if i == HS_BR {
                 continue;
             }
@@ -533,6 +552,13 @@ fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]
             ]);
         }
     }
+}
+
+/// 安装网关：重建网关路由表（直连路由 + 默认路由经虚拟机），添加全局规则；按形态设置 `IPv6` 默认路由或拦截规则，写 `run/net.gw`。
+fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]) {
+    let tethers = tether_ifaces(ctx);
+    gw_install_v4(ctx, outs, &tethers);
+    gw_install_v6(ctx, gateway, outs6, &tethers);
     fsx::write_logged(
         ctx.env,
         ctx.env.run_dir().join("net.gw"),
@@ -542,6 +568,7 @@ fn gw_install(ctx: &NetCtx<'_>, gateway: &str, outs: &[String], outs6: &[String]
 
 /// 拆除网关：删除网关与 `IPv6` 拦截的规则和路由表，删除 `run/net.gw`。
 fn gw_remove(ctx: &NetCtx<'_>) {
+    while ctx.ip(&["rule", "del", "pref", FAKEIP_PREF]).success() {}
     while ctx.ip(&["rule", "del", "pref", GW_PREF]).success() {}
     ctx.ip_run(&["route", "flush", "table", GW_TABLE]);
     while ctx.ip6(&["rule", "del", "pref", GW_PREF]).success() {}
@@ -1041,8 +1068,54 @@ fn out6_dns_clear(ctx: &NetCtx<'_>) {
     }
 }
 
-/// `IPv6` 拦截形态（`block`）下拒绝手机本机直发到上游的 53 端口 `IPv6` DNS 查询，迫使 `netd` 快速回落 `IPv4` DNS 进虚拟机。
-fn out6_dns_sync(ctx: &NetCtx<'_>, block: bool) {
+/// 在 `XR_OUT6` 拒绝普通应用（`UID >= 10000`）经互联网上游出口发往公网单播（`2000::/3`）的 `IPv6` 流量；
+/// 不触碰系统/电台 `UID`（`VoLTE`/`IMS`/`464XLAT`）与非互联网承载口，缺少 `xt_owner` 时自动跳过。
+fn out6_reject_apps(ctx: &NetCtx<'_>, outs6: &[String]) {
+    for out6 in outs6 {
+        let tcp_ok = ctx
+            .ip6t(&[
+                "-A",
+                "XR_OUT6",
+                "-o",
+                out6,
+                "-d",
+                "2000::/3",
+                "-m",
+                "owner",
+                "--uid-owner",
+                "10000-2147483647",
+                "-p",
+                "tcp",
+                "-j",
+                "REJECT",
+                "--reject-with",
+                "tcp-reset",
+            ])
+            .success();
+        if !tcp_ok {
+            return;
+        }
+        note_exec_result(&ctx.ip6t(&[
+            "-A",
+            "XR_OUT6",
+            "-o",
+            out6,
+            "-d",
+            "2000::/3",
+            "-m",
+            "owner",
+            "--uid-owner",
+            "10000-2147483647",
+            "-j",
+            "REJECT",
+            "--reject-with",
+            "icmp6-adm-prohibited",
+        ]));
+    }
+}
+
+/// `IPv6` 拦截形态（`block`）下拒绝本机直发上游的 53 端口 `IPv6` DNS 查询与普通应用绑定物理网络旁路的公网 `IPv6` 连接。
+fn out6_dns_sync(ctx: &NetCtx<'_>, block: bool, outs6: &[String]) {
     if !ctx.env.run_dir().join("net.fwd6").is_file() {
         return;
     }
@@ -1079,6 +1152,7 @@ fn out6_dns_sync(ctx: &NetCtx<'_>, block: bool) {
         "--reject-with",
         "tcp-reset",
     ]);
+    out6_reject_apps(ctx, outs6);
     out6_dns_first(ctx);
 }
 
@@ -1157,20 +1231,15 @@ fn apply_nat_rules(ctx: &NetCtx<'_>, outs: &[String], net4: &str, dns_snat: bool
     }
 }
 
-/// 一次完整对账（调用方已持有网络锁）：跟随上游、开放接口、网关形态、路由、流量计数、热点与 `IPv6`，变化时记日志。
+/// 一次完整对账（调用方已持有网络锁）：先铺好新出口的路由、`XR_NAT` 与 `XR_FWD` 放行，再切上游策略路由与 `MTU`，消除切网瞬间丢包窗口。
 fn sync_all_unlocked(env: &Env) {
     let cfg = Config::load(env);
     let ctx = NetCtx::new(env, &cfg);
     let run = env.run_dir();
 
     let plan = detect_upstream(&ctx);
-    follow_upstream(&ctx, &plan);
-
     let gw_on = want_gateway(&ctx);
     let net4 = format!("{}.0/24", cfg.net_prefix());
-    apply_nat_rules(&ctx, &plan.outs, &net4, gw_on);
-    mtu_sync(&ctx, &plan.up, &plan.outs);
-
     let ex = expose_ifaces(&ctx, &plan.up);
     let ex_str = if ex.is_empty() {
         String::new()
@@ -1179,9 +1248,13 @@ fn sync_all_unlocked(env: &Env) {
     };
     fsx::write_logged(env, run.join("net.expose_if"), format!("{ex_str}\n"));
 
-    routes_sync(&ctx);
+    routes_sync(&ctx, Some(&plan.up));
     acct_setup(&ctx, run.join("net.fwd6").is_file());
+    apply_nat_rules(&ctx, &plan.outs, &net4, gw_on);
     apply_forward_rules(&ctx, &plan.outs, &ex, &net4);
+
+    follow_upstream(&ctx, &plan);
+    mtu_sync(&ctx, &plan.up, &plan.outs);
 
     hs_sync(&ctx);
     v6_proxy_sync(&ctx, &plan.outs6);
@@ -1189,7 +1262,7 @@ fn sync_all_unlocked(env: &Env) {
     log_sync(&ctx, &plan, &ex, gw);
     sync_v6(&ctx, gw, &plan.outs6, &ex);
     dns_nat_sync(&ctx, gw != "off");
-    out6_dns_sync(&ctx, gw == "block");
+    out6_dns_sync(&ctx, gw == "block", &plan.outs6);
     if gw == "off" {
         gw_remove(&ctx);
     } else {
@@ -1411,7 +1484,51 @@ fn ensure_rule(ctx: &NetCtx<'_>, use_v6: bool, rules: &str, needle: &str, args: 
     }
 }
 
-/// 补回被外部删除的策略路由：4800（虚拟机网段查本地网络表），有上游时再补 18800（`xr0` 入站查本地网络表）与 18900（`xr0` 入站查上游表）。
+/// 网关已接管时补回被外部清空的 `Fake-IP` 规则（`4802`）与全局路由规则（`19100`）。
+fn reassert_gw_rules(ctx: &NetCtx<'_>, rules4: &str, rules6: &str) {
+    if gw_want(ctx) == "off"
+        || !fs::read_to_string(ctx.env.run_dir().join("net.gw"))
+            .is_ok_and(|raw| matches!(raw.trim(), "v6" | "block"))
+    {
+        return;
+    }
+    let fake_needle = format!("iif lo to {FAKEIP_CIDR} lookup {GW_TABLE}");
+    ensure_rule(
+        ctx,
+        false,
+        rules4,
+        &fake_needle,
+        &[
+            "rule",
+            "add",
+            "pref",
+            FAKEIP_PREF,
+            "iif",
+            "lo",
+            "to",
+            FAKEIP_CIDR,
+            "lookup",
+            GW_TABLE,
+        ],
+    );
+    let gw_needle = format!("lookup {GW_TABLE}");
+    ensure_rule(
+        ctx,
+        false,
+        rules4,
+        &gw_needle,
+        &["rule", "add", "pref", GW_PREF, "lookup", GW_TABLE],
+    );
+    ensure_rule(
+        ctx,
+        true,
+        rules6,
+        &gw_needle,
+        &["rule", "add", "pref", GW_PREF, "lookup", GW_TABLE],
+    );
+}
+
+/// 补回被外部删除的策略路由：4800（虚拟机网段查本地网络表）、网关接管时的 4802/19100，以及有上游时的 18800/18900。
 fn reassert_rules(ctx: &NetCtx<'_>, up: &str, net4: &str, net6: &str) {
     let tbl = ctx.lnt();
     let rules4 = ctx.ip(&["rule"]).stdout;
@@ -1432,6 +1549,7 @@ fn reassert_rules(ctx: &NetCtx<'_>, up: &str, net4: &str, net6: &str) {
         &to6,
         &["rule", "add", "pref", "4800", "to", net6, "lookup", tbl],
     );
+    reassert_gw_rules(ctx, &rules4, &rules6);
     if up.is_empty() {
         return;
     }

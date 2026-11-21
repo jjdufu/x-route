@@ -1,4 +1,5 @@
 ip link del xr1
+ip rule del pref 4802
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100

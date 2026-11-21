@@ -218,8 +218,8 @@ fn iface_addrs(ctx: &NetCtx<'_>, iface: &str) -> Vec<String> {
     addrs
 }
 
-/// 收集保留网段与本地网段。
-fn busy_nets(ctx: &NetCtx<'_>) -> BusyNets {
+/// 收集保留网段与本地网段；`up_override` 指定时直接用作当前上游，否则从 `run/net.up_if` 读取。
+fn busy_nets(ctx: &NetCtx<'_>, up_override: Option<&str>) -> BusyNets {
     let mut busy = BusyNets {
         reserved: vec![
             format!("{}.0/24", ctx.cfg.net_prefix()),
@@ -233,7 +233,8 @@ fn busy_nets(ctx: &NetCtx<'_>) -> BusyNets {
         busy.reserved
             .extend(hs_gw.split_whitespace().map(str::to_owned));
     }
-    let up = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
+    let up_file = fs::read_to_string(ctx.env.run_dir().join("net.up_if")).unwrap_or_default();
+    let up = up_override.unwrap_or_else(|| up_file.trim());
     let mut ifaces = Vec::new();
     if !up.trim().is_empty() {
         ifaces.push(up.trim().to_owned());
@@ -257,10 +258,9 @@ fn dedup_routes(raw_list: Vec<String>) -> Vec<String> {
 /// 可下发路由的上限。
 const ROUTE_LIMIT: usize = 64;
 
-/// 检查客机推送的路由：先按规范写法去重，再逐条判定；可下发的超过 64 条时，第 65 条起都记为 `Limit`。
-#[must_use]
-pub(crate) fn routes_check(ctx: &NetCtx<'_>) -> RouteCheck {
-    let busy = busy_nets(ctx);
+/// 按指定上游（`None` 时读 `run/net.up_if`）检查客机推送的路由。
+fn routes_check_with_up(ctx: &NetCtx<'_>, up_override: Option<&str>) -> RouteCheck {
+    let busy = busy_nets(ctx, up_override);
     let mut check = RouteCheck::default();
     let mut valid_set = BTreeSet::new();
     let mut pending = dedup_routes(routes_source(ctx)).into_iter();
@@ -290,6 +290,12 @@ pub(crate) fn routes_check(ctx: &NetCtx<'_>) -> RouteCheck {
     );
     check.valid = valid_set.into_iter().collect();
     check
+}
+
+/// 检查客机推送的路由：先按规范写法去重，再逐条判定；可下发的超过 64 条时，第 65 条起都记为 `Limit`。
+#[must_use]
+pub(crate) fn routes_check(ctx: &NetCtx<'_>) -> RouteCheck {
+    routes_check_with_up(ctx, None)
 }
 
 /// 筛出可以安装的 `VPN` 路由（即 `routes_check` 的 `valid`）：规范化、去重、跳过默认路由，拒绝格式错误、主机位非 0、与现有网段重叠的项，最多 64 条。
@@ -455,8 +461,8 @@ pub(crate) fn routes_file_cksum(ctx: &NetCtx<'_>) -> String {
 }
 
 /// 让已安装路由与 [`routes_check`] 的结果一致：删多余、补缺失，写 `run/routes.active`、`run/routes.rejected` 与 `run/vpn.cksum`；变化时写日志。
-pub(crate) fn routes_sync(ctx: &NetCtx<'_>) {
-    let check = routes_check(ctx);
+pub(crate) fn routes_sync(ctx: &NetCtx<'_>, up_override: Option<&str>) {
+    let check = routes_check_with_up(ctx, up_override);
     sync_rejected(ctx, &check.rejected);
     let want = check.valid;
     let active_path = ctx.env.run_dir().join("routes.active");

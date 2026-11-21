@@ -68,7 +68,7 @@ pub(crate) fn cgroup_escape(env: &Env, pid: &str) -> bool {
     true
 }
 
-/// 对本进程和 `run/` 下记录的各后台进程（`crosvm`、对账循环、看守、看门狗、守护进程、通知器）执行 [`cgroup_escape`]，失败只写调试日志。
+/// 对本进程和 `run/` 下记录的仍在运行的各后台进程（`crosvm`、对账循环、看守、看门狗、守护进程、通知器）执行 [`cgroup_escape`]，已退出的残留 `PID` 跳过。
 pub(crate) fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     note_ok(
         env,
@@ -86,7 +86,7 @@ pub(crate) fn cgroup_escape_tree(env: &Env, self_pid: u32) {
     ] {
         if let Ok(pid_text) = fs::read_to_string(run.join(name)) {
             let trimmed = pid_text.trim();
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty() && is_pid_running(env, trimmed) {
                 note_ok(env, "cgroup_escape", cgroup_escape(env, trimmed));
             }
         }

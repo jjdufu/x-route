@@ -140,7 +140,7 @@ chk 'echo "$s1" | J "d[\"traffic\"][\"source\"]==\"daemon\" and d[\"traffic\"][\
 sleep 2
 printf '%s\n' 1000 9000 > "$MOCK/cnt.XR_ACCT_UP"
 s2="$($XR status-json)"
-chk 'echo "$s2" | J "1800<=d[\"traffic\"][\"rate\"][\"total\"][\"up\"]<=2200 and d[\"traffic\"][\"rate\"][\"lan\"][\"up\"]==0 and d[\"traffic\"][\"rate\"][\"total\"][\"down\"]==0" | grep -qx True'
+chk 'echo "$s2" | J "1500<=d[\"traffic\"][\"rate\"][\"total\"][\"up\"]<=2200 and d[\"traffic\"][\"rate\"][\"total\"][\"up\"]==4000000//d[\"traffic\"][\"rate\"][\"interval_ms\"] and d[\"traffic\"][\"rate\"][\"lan\"][\"up\"]==0 and d[\"traffic\"][\"rate\"][\"total\"][\"down\"]==0" | grep -qx True'
 ls -l --time-style=+%s "$XR_DATA/config" > "$T/cfg.after" 2>/dev/null
 chk 'cmp -s "$T/cfg.before" "$T/cfg.after"'   # 速率查询不写 config 目录下任何文件
 chk '[ ! -e "$RUN/notify.ts" ] && [ ! -e "$RUN/notify.last" ]'   # 通知节流状态只在守护进程内存（需求 3）

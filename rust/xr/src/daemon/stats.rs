@@ -23,7 +23,7 @@ use crate::traffic::{acct_present, acct_total_locked};
 /// 单个连接读请求的超时。
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
 /// 没有连接时两次 `accept` 之间的休眠。
-const IDLE_SLEEP: Duration = Duration::from_millis(100);
+const IDLE_SLEEP: Duration = Duration::from_millis(20);
 
 /// 运行中的速率服务：停止标志与服务线程。
 #[derive(Debug)]

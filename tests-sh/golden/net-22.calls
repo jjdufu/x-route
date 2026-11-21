@@ -30,34 +30,6 @@ ip6tables -t nat -D POSTROUTING -j XR_NAT6
 ip rule
 ip -4 route show table rmnet_data2
 ip -6 route show table rmnet_data2
-ndc ipfwd add xr0 rmnet_data2
-ip rule del pref 18800
-ip rule del pref 18900
-ip rule add pref 18800 iif xr0 lookup local_network
-ip rule add pref 18900 iif xr0 lookup rmnet_data2
-ip -6 rule del pref 18800
-ip -6 rule del pref 18900
-ip -6 rule add pref 18800 iif xr0 lookup local_network
-ip -6 rule add pref 18900 iif xr0 lookup rmnet_data2
-iptables -t nat -F XR_NAT
-iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
-iptables -t nat -A XR_NAT -o xr0 -p udp --dport 53 -j SNAT --to-source 172.29.233.1
-iptables -t nat -A XR_NAT -o xr0 -p tcp --dport 53 -j SNAT --to-source 172.29.233.1
-ip -4 route show table rmnet_data2
-ip -6 route show table rmnet_data2
-ip link set xr0 mtu 1500
-iptables -t mangle -N XR_MSS
-iptables -t mangle -F XR_MSS
-iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-iptables -t mangle -C POSTROUTING -j XR_MSS
-iptables -t mangle -I POSTROUTING 1 -j XR_MSS
-ip6tables -t mangle -N XR_MSS
-ip6tables -t mangle -F XR_MSS
-ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-ip6tables -t mangle -C POSTROUTING -j XR_MSS
-ip6tables -t mangle -I POSTROUTING 1 -j XR_MSS
 ip route show table local_network
 ip route show table local_network
 ip -4 -o addr show dev rmnet_data2
@@ -125,6 +97,10 @@ ip6tables -C INPUT -i xr0 -j XR_ACCT6
 ip6tables -I INPUT 1 -i xr0 -j XR_ACCT6
 ip6tables -C OUTPUT -o xr0 -j XR_ACCT6
 ip6tables -I OUTPUT 1 -o xr0 -j XR_ACCT6
+iptables -t nat -F XR_NAT
+iptables -t nat -A XR_NAT -s 172.29.233.0/24 -o rmnet_data2 -j MASQUERADE
+iptables -t nat -A XR_NAT -o xr0 -p udp --dport 53 -j SNAT --to-source 172.29.233.1
+iptables -t nat -A XR_NAT -o xr0 -p tcp --dport 53 -j SNAT --to-source 172.29.233.1
 iptables -F XR_FWD
 iptables -S XR_ACCT_UP
 iptables -A XR_FWD -j XR_ACCT
@@ -142,6 +118,30 @@ iptables -A XR_FWD -i wlan1 -o rmnet_data2 -j DROP
 iptables -A XR_FWD -o xr0 -j DROP
 iptables -A XR_FWD -i xr0 -j DROP
 iptables -S FORWARD
+ndc ipfwd add xr0 rmnet_data2
+ip rule del pref 18800
+ip rule del pref 18900
+ip rule add pref 18800 iif xr0 lookup local_network
+ip rule add pref 18900 iif xr0 lookup rmnet_data2
+ip -6 rule del pref 18800
+ip -6 rule del pref 18900
+ip -6 rule add pref 18800 iif xr0 lookup local_network
+ip -6 rule add pref 18900 iif xr0 lookup rmnet_data2
+ip -4 route show table rmnet_data2
+ip -6 route show table rmnet_data2
+ip link set xr0 mtu 1500
+iptables -t mangle -N XR_MSS
+iptables -t mangle -F XR_MSS
+iptables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -C POSTROUTING -j XR_MSS
+iptables -t mangle -I POSTROUTING 1 -j XR_MSS
+ip6tables -t mangle -N XR_MSS
+ip6tables -t mangle -F XR_MSS
+ip6tables -t mangle -A XR_MSS -o xr0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -A XR_MSS -o rmnet_data2 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+ip6tables -t mangle -C POSTROUTING -j XR_MSS
+ip6tables -t mangle -I POSTROUTING 1 -j XR_MSS
 ip route show table local_network
 ip -6 -o addr show dev rmnet_data2
 ip -6 -o addr show dev wlan1
@@ -181,14 +181,18 @@ ip6tables -F XR_OUT6
 ip6tables -A XR_OUT6 -o xr0 -j RETURN
 ip6tables -A XR_OUT6 -p udp --dport 53 -j REJECT --reject-with icmp6-adm-prohibited
 ip6tables -A XR_OUT6 -p tcp --dport 53 -j REJECT --reject-with tcp-reset
+ip6tables -A XR_OUT6 -o rmnet_data2 -d 2000::/3 -m owner --uid-owner 10000-2147483647 -p tcp -j REJECT --reject-with tcp-reset
+ip6tables -A XR_OUT6 -o rmnet_data2 -d 2000::/3 -m owner --uid-owner 10000-2147483647 -j REJECT --reject-with icmp6-adm-prohibited
 ip6tables -C OUTPUT -j XR_OUT6
 ip6tables -I OUTPUT 1 -j XR_OUT6
-ip route flush table 233
 ip route show table local_network
+ip route flush table 233
 ip -4 route show dev rmnet_data2
 ip -4 route show dev wlan1
 ip route replace 192.168.43.0/24 proto kernel scope link src 192.168.43.1 dev wlan1 table 233
 ip route replace default via 172.29.233.254 dev xr0 src 172.29.233.1 table 233
+ip rule del pref 4802
+ip rule add pref 4802 iif lo to 198.18.0.0/15 lookup 233
 ip rule del pref 19100
 ip rule add pref 19100 lookup 233
 ip -6 route flush table 233
@@ -206,6 +210,7 @@ ip -6 route flush table 235
 ip -6 route replace default dev xr0 table 235
 ip -6 rule add pref 19060 iif wlan1 lookup 235
 ip link del xr1
+ip rule del pref 4802
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100

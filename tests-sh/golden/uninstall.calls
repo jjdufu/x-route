@@ -1,4 +1,5 @@
 ip link del xr1
+ip rule del pref 4802
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100
@@ -57,6 +58,7 @@ ip route flush table 97 dev xr0
 ip -6 route flush table 97 dev xr0
 ip link del xr0
 ip link del xr1
+ip rule del pref 4802
 ip rule del pref 19100
 ip route flush table 233
 ip -6 rule del pref 19100
@@ -185,6 +187,8 @@ ip rule del pref 4800
 ip -6 rule del pref 4800
 ip rule del pref 4801
 ip -6 rule del pref 4801
+ip rule del pref 4802
+ip -6 rule del pref 4802
 ip rule del pref 18800
 ip -6 rule del pref 18800
 ip rule del pref 18900

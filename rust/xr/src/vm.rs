@@ -231,10 +231,17 @@ fn wait_stable(env: &Env) {
     fsx::remove_logged(env, env.boot_log());
 }
 
-/// 启动保险丝看守：在就绪超时内等客机就绪，再在稳定期内持续确认 `crosvm` 存活；成功后拆除保险丝并写 `last_good`。
-///
-/// 期间 `crosvm` 退出或超时未就绪时调用 [`fail`] 记录原因。
-pub(crate) fn fuse_watch(env: &Env) {
+/// 若 `run/fuse_watch.pid` 记录的仍是当前进程号则将其删除，避免看守退出后留下死进程号。
+fn clear_self_fuse_pid(env: &Env) {
+    let pid_file = env.run_dir().join("fuse_watch.pid");
+    let self_pid = std::process::id().to_string();
+    if fs::read_to_string(&pid_file).is_ok_and(|raw| raw.trim() == self_pid) {
+        fsx::remove_logged(env, pid_file);
+    }
+}
+
+/// 启动保险丝看守主流程：等就绪、重建网络规则、再确认稳定期存活。
+fn fuse_watch_inner(env: &Env) {
     let ready_to = Config::load(env).ready_timeout_sec();
     if wait_ready(env, ready_to).is_break() {
         return;
@@ -248,6 +255,14 @@ pub(crate) fn fuse_watch(env: &Env) {
     }
     on_ready(env);
     wait_stable(env);
+}
+
+/// 启动保险丝看守：在就绪超时内等客机就绪，再在稳定期内持续确认 `crosvm` 存活；成功后拆除保险丝并写 `last_good`，退出前清理自身 `PID` 文件。
+///
+/// 期间 `crosvm` 退出或超时未就绪时调用 [`fail`] 记录原因。
+pub(crate) fn fuse_watch(env: &Env) {
+    fuse_watch_inner(env);
+    clear_self_fuse_pid(env);
 }
 
 /// 删除 `guest/host/vpn/` 里已没有对应非空 `config/vpn/<名>.ovpn` 的文件。

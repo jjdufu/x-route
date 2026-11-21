@@ -260,7 +260,7 @@ fn drop_bridge(env: &Env, ip_cmd: &Path, ndc: &Path) {
 /// 删除本模块的策略路由规则（`IPv4`/`IPv6` 各优先级，反复删到失败）、清空路由表，并删除虚拟网卡 `xr0`。
 fn drop_rules(env: &Env, ip_cmd: &Path) {
     for pref in [
-        "4790", "4800", "4801", "18800", "18900", "19050", "19060", "19100",
+        "4790", "4800", "4801", "4802", "18800", "18900", "19050", "19060", "19100",
     ] {
         while sys_ok(ip_cmd, &["rule", "del", "pref", pref]) {}
         while sys_ok(ip_cmd, &["-6", "rule", "del", "pref", pref]) {}
