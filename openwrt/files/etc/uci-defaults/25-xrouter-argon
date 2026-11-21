@@ -1,0 +1,62 @@
+#!/bin/sh
+# XRouter: 首次开机安装预置的 Argon 主题与中文翻译，设为默认 LuCI 主题，并关闭登录页背景图与毛玻璃模糊。
+# 构建脚本会把 apk 放到 /usr/lib/xrouter/。
+
+THEME_APK=/usr/lib/xrouter/luci-theme-argon-3.1.4-r1.apk
+I18N_APK=/usr/lib/xrouter/luci-i18n-argon-config-zh-cn-3.1.4-r1.apk
+
+if [ -f "$THEME_APK" ]; then
+	apk add --no-network --allow-untrusted --force-overwrite "$THEME_APK" || exit 1
+	rm -f "$THEME_APK"
+fi
+
+if [ -f "$I18N_APK" ]; then
+	apk add --no-network --allow-untrusted --force-overwrite "$I18N_APK" || exit 1
+	rm -f "$I18N_APK"
+fi
+
+if [ -x /etc/uci-defaults/30_luci-theme-argon ]; then
+	/etc/uci-defaults/30_luci-theme-argon || exit 1
+	rm -f /etc/uci-defaults/30_luci-theme-argon
+fi
+
+if [ -x /etc/uci-defaults/luci-i18n-argon-config-zh-cn ]; then
+	/etc/uci-defaults/luci-i18n-argon-config-zh-cn || exit 1
+	rm -f /etc/uci-defaults/luci-i18n-argon-config-zh-cn
+fi
+
+# 关闭在线壁纸与高斯模糊，登录框居中不透明：避免移动端与桌面端解码大图或 backdrop-filter 掉帧
+uci -q get argon.@global[0] >/dev/null || uci -q add argon global >/dev/null
+uci -q batch <<'U'
+set argon.@global[0].online_wallpaper='none'
+set argon.@global[0].blur='0'
+set argon.@global[0].blur_dark='0'
+set argon.@global[0].transparency='1'
+set argon.@global[0].transparency_dark='1'
+set argon.@global[0].dark_glass_mode='inherit'
+set argon.@global[0].login_style='centered'
+set argon.@global[0].mode='normal'
+commit argon
+U
+
+# 未开启在线壁纸且未上传本地背景媒体时，登录页不渲染默认 bg1.webp 大图（用户手动上传或开启在线壁纸后仍正常显示）
+LOGIN_BG=/usr/share/ucode/luci/template/themes/argon/login_background.ut
+if [ -f "$LOGIN_BG" ] && ! grep -q 'length(bgArry.bgUrl) > 0' "$LOGIN_BG"; then
+	sed -i \
+		-e 's|let bgUrl = media + "/img/bg1.webp";|let bgUrl = "";|' \
+		-e 's|<div class="main-bg" id="main-bg">.*</div>|{% if ( length(bgArry.bgUrl) > 0 ): %}&{% endif %}|' \
+		"$LOGIN_BG"
+	grep -q 'length(bgArry.bgUrl) > 0' "$LOGIN_BG" || exit 1
+fi
+
+if [ -d /www/luci-static/argon ]; then
+	uci -q delete luci.themes.Aurora
+	uci -q set luci.themes.Argon='/luci-static/argon'
+	uci -q set luci.main.mediaurlbase='/luci-static/argon'
+	uci -q commit luci
+fi
+
+rm -rf /tmp/luci-indexcache /tmp/luci-indexcache.* /var/luci-indexcache /var/luci-indexcache.* >/dev/null 2>&1
+rm -rf /tmp/luci-modulecache /var/luci-modulecache >/dev/null 2>&1
+rmdir /usr/lib/xrouter 2>/dev/null || true
+exit 0

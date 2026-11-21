@@ -7,12 +7,18 @@ firewall4
 nftables
 dropbear
 ca-bundle
-# LuCI
+# LuCI 与 Argon 主题运行依赖（主题 apk 由 build-rootfs.sh 注入，首次开机离线安装）
 luci
 luci-i18n-base-zh-cn
 luci-app-package-manager
 luci-i18n-package-manager-zh-cn
 luci-i18n-firewall-zh-cn
+wget-ssl
+jsonfilter
+ucode-mod-math
+flock
+coreutils
+coreutils-timeout
 ttyd
 luci-app-ttyd
 luci-i18n-ttyd-zh-cn

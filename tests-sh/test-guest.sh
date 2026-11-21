@@ -182,12 +182,16 @@ srv.close
 PYRB
 fi
 
-# 7. OpenClash / Aurora 首次开机离线安装（--no-network 避免无网超时阻塞 70s）与自启软链检查
-AU_DEF="$ROOT/openwrt/files/etc/uci-defaults/25-xrouter-aurora"
+# 7. OpenClash / Argon 首次开机离线安装（--no-network 避免无网超时阻塞 70s）、登录页关图去模糊、去 sleep 5 与自启软链检查
+AR_DEF="$ROOT/openwrt/files/etc/uci-defaults/25-xrouter-argon"
 OC_DEF="$ROOT/openwrt/files/etc/uci-defaults/30-xrouter-openclash"
 OC_RDY="$ROOT/openwrt/files/etc/init.d/xrouter-ready"
-chk 'grep -q "apk add --no-network " "$AU_DEF" && grep -q "apk add --no-network " "$OC_DEF"'
+chk '[ ! -e "$ROOT/openwrt/files/etc/uci-defaults/25-xrouter-aurora" ] && [ -x "$AR_DEF" ]'
+chk 'grep -q "apk add --no-network " "$AR_DEF" && grep -q "apk add --no-network " "$OC_DEF"'
 chk '! grep -En "^[[:space:]]*apk add " "$ROOT/openwrt/files/etc/uci-defaults/"* | grep -v -- "--no-network"'
+chk 'grep -q "online_wallpaper=.none." "$AR_DEF" && grep -q "blur=.0." "$AR_DEF" && grep -q "login_style=.centered." "$AR_DEF"'
+chk 'grep -q "length(bgArry.bgUrl) > 0" "$AR_DEF" && grep -q "luci.main.mediaurlbase=./luci-static/argon." "$AR_DEF"'
+chk 'grep -q "sleep 5" "$OC_DEF" && grep -q "sleep 5" "$ROOT/openwrt/files/etc/init.d/xrouter-net"'
 chk 'grep -q "/etc/init.d/openclash enable" "$OC_DEF" && ! grep -q "/etc/init.d/openclash disable" "$OC_DEF"'
 chk 'grep -q "openclash.config.enable=0" "$OC_DEF"'
 chk 'grep -q "/etc/init.d/openclash enabled" "$OC_RDY" && grep -q "/etc/init.d/openclash boot" "$OC_RDY"'
@@ -309,5 +313,8 @@ CTL="$BK/w/ctl" sh "$BK/w/round.sh"
 chk '[ "$(cat "$BK/w/run.calls")" = "export 777" ]'
 chk 'grep -q "echo 1 > \"\${CTL}/guest/backup.cap\"" "$VPN_INIT"'
 chk 'grep -qx "set firewall\.vpn\.input=.ACCEPT." "$ROOT/openwrt/files/etc/uci-defaults/10-xrouter" && grep -qx "set firewall\.vpn\.input=.ACCEPT." "$ROOT/openwrt/files/etc/init.d/xrouter-net"'
+chk '! grep -q "firewall\.vpn\.network" "$ROOT/openwrt/files/etc/uci-defaults/10-xrouter" && grep -q "delete firewall\.vpn\.network" "$ROOT/openwrt/files/etc/init.d/xrouter-net"'
+chk 'grep -q "rebind_protection=.0." "$ROOT/openwrt/files/etc/uci-defaults/10-xrouter" && grep -q "rebind_protection=.0." "$ROOT/openwrt/files/etc/init.d/xrouter-net"'
+chk 'grep -q "filter_aaaa=.1." "$ROOT/openwrt/files/etc/uci-defaults/20-xrouter-ipv6" && grep -q "filter_aaaa=" "$ROOT/openwrt/files/usr/libexec/xrouter-ipv6"'
 
 if [ "$fail" = 0 ]; then echo "test-guest OK"; else echo "test-guest FAILED"; exit 1; fi
